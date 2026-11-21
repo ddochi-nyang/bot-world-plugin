@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "bot-world",
   "name": "Bot World",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Read-only virtual office visualizer for Orca bots and live sub-workers",
   "license": "MIT",
   "author": {
@@ -11,6 +11,30 @@
   },
   "repository": "https://github.com/ddochi-nyang/bot-world-plugin",
   "icon": "assets/icon.png",
+  "cover": {
+    "path": "assets/showcase/startup-office.jpg",
+    "alt": "Bot World Wide Office Board displaying 10 Orca bots and live sub-workers in the Startup Office theme"
+  },
+  "screenshots": [
+    {
+      "path": "assets/showcase/startup-office.jpg",
+      "theme": "dark",
+      "alt": "Bot World wide .botworld office board in the Startup Office theme with 10 live bots, sub-workers, character switcher, and 24-hour event timeline",
+      "caption": "Wide .botworld office board with live bot desks, sub-worker helpers, character switcher, and 24-hour event timeline"
+    },
+    {
+      "path": "assets/showcase/corporate-office.jpg",
+      "theme": "dark",
+      "alt": "Bot World wide .botworld office board in the Corporate Office theme highlighting a Needs You approval badge, open items, and automation status",
+      "caption": "Corporate Office theme highlighting Needs You approval badges, open items, and automation status"
+    },
+    {
+      "path": "assets/showcase/redact-replay.jpg",
+      "theme": "dark",
+      "alt": "Bot World wide .botworld office board with Redact Mode enabled and 24-hour timeline replay paused at an earlier timestamp",
+      "caption": "Redact Mode privacy masking paired with 24-hour timeline scrubbing and playback"
+    }
+  ],
   "engines": {
     "orca": ">=1.4.265"
   },

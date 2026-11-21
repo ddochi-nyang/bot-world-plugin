@@ -189,7 +189,7 @@ const THEME_GEOMETRIES: Readonly<Record<ThemeId, ThemeGeometry>> = Object.freeze
       { slot: 12, x: 502, y: 565, facing: 'left', workerOffset: [40, 18] },
       { slot: 13, x: 308, y: 586, facing: 'right', workerOffset: [-42, 20] },
     ],
-    overflowGrid: { originX: 860, originY: 480, stepX: 96, stepY: 68, cols: 3 },
+    overflowGrid: { originX: 860, originY: 280, stepX: 90, stepY: 64, cols: 3 },
   },
   corporate_office: {
     id: 'corporate_office',
@@ -214,7 +214,7 @@ const THEME_GEOMETRIES: Readonly<Record<ThemeId, ThemeGeometry>> = Object.freeze
       { slot: 12, x: 794, y: 538, facing: 'left', workerOffset: [42, 16] },
       { slot: 13, x: 910, y: 578, facing: 'left', workerOffset: [42, -10] },
     ],
-    overflowGrid: { originX: 770, originY: 295, stepX: 115, stepY: 76, cols: 3 },
+    overflowGrid: { originX: 1135, originY: 245, stepX: 80, stepY: 66, cols: 2 },
   },
 });
 
@@ -285,9 +285,33 @@ export function fnv1aHash(text: string): number {
   return Number(hash % BigInt(POOL_CHARACTER_IDS.length));
 }
 
+const KEYWORD_CHARACTER_RULES: ReadonlyArray<readonly [CharacterId, RegExp]> = [
+  ['cve', /(?:cve|vuln|audit|scan|취약점|감사)/],
+  [
+    'security',
+    /(?:security|appsec|infosec|secops|(?:^|[^a-z])sec(?:$|[^a-z]|bot)|(?:^|[^a-z])o?auth(?!or)|guard|보안|인증)/,
+  ],
+  ['cost', /(?:cost|finops|billing|budget|비용)/],
+  ['iac', /(?:(?:^|[^a-z])iac(?:$|[^a-z])|infra|terraform|k8s|kubernetes|devops|인프라)/],
+  [
+    'cloud_ops',
+    /(?:cloud|(?:^|[^a-z])ops(?:$|[^a-z])|(?:^|[^a-z])sre(?:$|[^a-z])|deploy|on-?call|monitor|운영|온콜)/,
+  ],
+  ['internal_tools', /(?:tool|(?:^|[^a-z])ci(?:$|[^a-z])|cicd|ci\/cd|build|(?:^|[^a-z])auto|도구|자동화)/],
+  ['doc_review', /(?:(?:^|[^a-z])docs?(?:$|[^a-z])|document|review|(?:^|[^a-z])qa(?:$|[^a-z])|(?:^|[^a-z])test|리뷰|문서)/],
+  ['personal_assist', /(?:assist|help|plan|note|(?:^|[^a-z])pm(?:$|[^a-z])|보조|기획)/],
+  ['ddochi', /(?:coord|lead|orch|manager|조율|총괄|리더)/],
+];
+
 export function resolveCharacterId(botId: string, botName: string): CharacterId {
-  const override = NAME_OVERRIDES.get(botName.trim().toLowerCase()) ?? NAME_OVERRIDES.get(botName);
+  const normalized = botName.trim().toLowerCase();
+  const override = NAME_OVERRIDES.get(normalized) ?? NAME_OVERRIDES.get(botName);
   if (override) return override;
+  for (const [charId, pattern] of KEYWORD_CHARACTER_RULES) {
+    if (pattern.test(normalized)) {
+      return charId;
+    }
+  }
   const idx = fnv1aHash(botId);
   return POOL_CHARACTER_IDS[idx] ?? 'ddochi';
 }
@@ -311,11 +335,32 @@ export function deskPosition(theme: ThemeConfig, index: number): [number, number
     const slot = theme.botDesks[index];
     return [slot.x, slot.y, slot.workerOffset];
   }
+  const designW = Math.max(200, theme.designSize[0]);
+  const designH = Math.max(200, theme.designSize[1]);
+  const minX = 72;
+  const maxX = Math.max(minX, designW - 84);
+  const minY = 145;
+  const maxY = Math.max(minY, designH - 36);
+
   const overflowIdx = Math.max(0, index - theme.botDesks.length);
   const cols = Math.max(1, theme.overflowGrid.cols);
+  const stepX = Math.max(1, theme.overflowGrid.stepX);
+  const stepY = Math.max(1, theme.overflowGrid.stepY);
   const col = overflowIdx % cols;
-  const row = Math.floor(overflowIdx / cols);
-  const x = theme.overflowGrid.originX + col * theme.overflowGrid.stepX;
-  const y = theme.overflowGrid.originY + row * theme.overflowGrid.stepY;
+  const rawRow = Math.floor(overflowIdx / cols);
+
+  const clampedOriginY = Math.max(minY, Math.min(maxY, theme.overflowGrid.originY));
+  const usableHeight = Math.max(0, maxY - clampedOriginY);
+  const maxRows = Math.max(1, Math.floor(usableHeight / stepY) + 1);
+  const wrappedRow = rawRow % maxRows;
+  const lap = Math.floor(rawRow / maxRows);
+  const lapOffsetX = lap > 0 ? (lap % 2 === 1 ? 1 : -1) * Math.min(28, lap * 16) : 0;
+  const lapOffsetY = lap > 0 ? (lap * 14) % Math.max(16, Math.floor(stepY * 0.5)) : 0;
+
+  const rawX = theme.overflowGrid.originX + col * stepX + lapOffsetX;
+  const rawY = clampedOriginY + wrappedRow * stepY + lapOffsetY;
+
+  const x = Math.max(minX, Math.min(maxX, rawX));
+  const y = Math.max(minY, Math.min(maxY, rawY));
   return [x, y, [-38, 20]];
 }

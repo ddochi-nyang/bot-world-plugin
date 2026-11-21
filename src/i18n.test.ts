@@ -10,6 +10,7 @@ import {
   tStrings,
 } from '../shared/i18n.ts';
 import {
+  deskPosition,
   getCharacterSpecs,
   getThemeConfig,
   resolveCharacterId,
@@ -282,10 +283,23 @@ describe('i18n localization across English and Korean', () => {
   test('assets-catalog, stage-renderer badges, and motion bubbles localize in en and ko', () => {
     const enSpecs = getCharacterSpecs('en');
     const koSpecs = getCharacterSpecs('ko');
-    assert.equal(enSpecs.ddochi.displayName, 'Ddochi');
+    assert.equal(enSpecs.ddochi.displayName, 'Owl');
     assert.equal(enSpecs.ddochi.roleHint, 'Coordinator');
-    assert.equal(koSpecs.ddochi.displayName, '또치 캐릭터');
-    assert.equal(koSpecs.ddochi.roleHint, '전체 조율');
+    assert.equal(koSpecs.ddochi.displayName, '부엉이');
+    assert.equal(koSpecs.ddochi.roleHint, '조율·리더');
+    assert.equal(enSpecs.security.displayName, 'Hedgehog');
+    assert.equal(koSpecs.security.displayName, '고슴도치');
+    assert.equal(enSpecs.worker_helper.displayName, 'Worker');
+    assert.equal(koSpecs.worker_helper.displayName, '도우미');
+
+    assert.equal(
+      tStrings('en').selectBotDescEmpty,
+      'No bots yet. Create a bot in Orca and it will take a desk here automatically.'
+    );
+    assert.equal(
+      tStrings('ko').selectBotDescEmpty,
+      '아직 생성된 봇이 없습니다. Orca에서 봇을 만들면 이곳 책상에 자동으로 배치됩니다.'
+    );
 
     assert.equal(resolveCharacterId('x', 'Security'), 'security');
     assert.equal(resolveCharacterId('x', '보안'), 'security');
@@ -696,7 +710,7 @@ describe('i18n localization across English and Korean', () => {
     assert.equal(koDict.workerStateLabels.released, '해제');
     assert.equal(pickLocale({ en: 'EN', ko: 'KO' }, '__proto__' as unknown as UiLocale), 'EN');
     assert.equal(tStrings('__proto__' as unknown as UiLocale).appTitlePanel, 'Bot World');
-    assert.equal(getCharacterSpecs('constructor' as unknown as UiLocale).ddochi.displayName, 'Ddochi');
+    assert.equal(getCharacterSpecs('constructor' as unknown as UiLocale).ddochi.displayName, 'Owl');
     assert.equal(getThemeConfig('startup_office', 'toString' as unknown as UiLocale).name, 'Startup Office');
     assert.equal(typeof getHostLocale(), 'string');
 
@@ -914,6 +928,56 @@ describe('i18n localization across English and Korean', () => {
       g.Node = prevNode;
       g.HTMLInputElement = prevHtmlInput;
       g.HTMLImageElement = prevHtmlImg;
+    }
+  });
+
+  test('generalization: keyword character matching, deterministic fallback, and 25+ bot overflow deskPosition bounds', () => {
+    // Role/keyword matching across arbitrary user bot names
+    assert.equal(resolveCharacterId('b-qa', 'Backend QA'), 'doc_review');
+    assert.equal(resolveCharacterId('b-devops', 'DevOps Bot'), 'iac');
+    assert.equal(resolveCharacterId('b-finops', 'FinOps'), 'cost');
+    assert.equal(resolveCharacterId('b-sec', 'Auth Guard'), 'security');
+    assert.equal(resolveCharacterId('b-cve', 'Vuln Scanner'), 'cve');
+    assert.equal(resolveCharacterId('b-ops', 'OnCall Monitor'), 'cloud_ops');
+    assert.equal(resolveCharacterId('b-ci', 'CI Build'), 'internal_tools');
+    assert.equal(resolveCharacterId('b-pm', 'PM Planner'), 'personal_assist');
+    assert.equal(resolveCharacterId('b-lead', 'Tech Lead'), 'ddochi');
+    assert.equal(resolveCharacterId('b-ko-infra', '인프라 봇'), 'iac');
+    assert.equal(resolveCharacterId('b-ko-cost', '비용 분석'), 'cost');
+
+    // Unmatched bot names fall back deterministically by botId hash
+    const customAlpha1 = resolveCharacterId('custom-alpha-id', 'Custom Bot Alpha');
+    const customAlpha2 = resolveCharacterId('custom-alpha-id', 'Custom Bot Alpha');
+    assert.equal(customAlpha1, customAlpha2);
+    assert.notEqual(customAlpha1, 'worker_helper');
+
+    // 25+ bots (indices 0..44) stay inside designSize safe boundaries & clear of officeDoor
+    for (const themeId of ['startup_office', 'corporate_office'] as const) {
+      const theme = getThemeConfig(themeId, 'en');
+      const [designW, designH] = theme.designSize;
+      const minX = 72;
+      const maxX = designW - 84;
+      const minY = 145;
+      const maxY = designH - 36;
+
+      for (let idx = 0; idx < 45; idx++) {
+        const [x, y] = deskPosition(theme, idx);
+        assert.ok(
+          x >= minX && x <= maxX,
+          `${themeId} desk[${idx}] x=${x} out of safe bounds [${minX}, ${maxX}]`
+        );
+        assert.ok(
+          y >= minY && y <= maxY,
+          `${themeId} desk[${idx}] y=${y} out of safe bounds [${minY}, ${maxY}]`
+        );
+        if (idx >= theme.botDesks.length) {
+          const doorDist = Math.hypot(x - theme.officeDoor.x, y - theme.officeDoor.y);
+          assert.ok(
+            doorDist >= 70,
+            `${themeId} overflow desk[${idx}] (${x}, ${y}) too close to officeDoor (${theme.officeDoor.x}, ${theme.officeDoor.y}), dist=${doorDist}`
+          );
+        }
+      }
     }
   });
 });

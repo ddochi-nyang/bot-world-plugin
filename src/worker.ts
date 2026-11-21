@@ -669,9 +669,17 @@ export class BotWorldWorkerController {
     payload.events = safeEvents;
     payload.keyframes = safeKeyframes;
 
-    // Final exact budget guard across the entire serialized payload
+    this.trimPayloadToBudget(payload);
+
+    return payload;
+  }
+
+  private trimPayloadToBudget(payload: BotWorldStatePayload): void {
     let totalBytes = utf8ByteLength(payload);
-    while (totalBytes > MAX_IPC_PAYLOAD_BYTES && (payload.keyframes.length > 0 || payload.events.length > 0)) {
+    while (
+      totalBytes > MAX_IPC_PAYLOAD_BYTES &&
+      (payload.keyframes.length > 0 || payload.events.length > 0)
+    ) {
       if (payload.keyframes.length > 0) {
         payload.keyframes.splice(0, Math.max(1, Math.floor(payload.keyframes.length / 4)));
       } else if (payload.events.length > 0) {
@@ -682,7 +690,10 @@ export class BotWorldWorkerController {
 
     // If snapshot alone still exceeds MAX_IPC_PAYLOAD_BYTES, trim non-critical snapshot tails
     while (totalBytes > MAX_IPC_PAYLOAD_BYTES && payload.snapshot.recentMessages.length > 0) {
-      payload.snapshot.recentMessages.splice(0, Math.max(1, Math.floor(payload.snapshot.recentMessages.length / 2)));
+      payload.snapshot.recentMessages.splice(
+        0,
+        Math.max(1, Math.floor(payload.snapshot.recentMessages.length / 2))
+      );
       totalBytes = utf8ByteLength(payload);
     }
     if (totalBytes > MAX_IPC_PAYLOAD_BYTES) {
@@ -704,9 +715,72 @@ export class BotWorldWorkerController {
     if (totalBytes > MAX_IPC_PAYLOAD_BYTES) {
       payload.snapshot.chatIndex = {};
       payload.snapshot.runBotIndex = {};
+      totalBytes = utf8ByteLength(payload);
     }
 
-    return payload;
+    // Large-fleet defense (e.g., 40+ bots): strip bot specialties, shorten task titles, and prune remaining items
+    if (totalBytes > MAX_IPC_PAYLOAD_BYTES) {
+      for (const bot of Object.values(payload.snapshot.bots)) {
+        bot.specialty = '';
+        if (bot.currentTaskTitle !== null) {
+          bot.currentTaskTitle = truncateUiText(bot.currentTaskTitle, 48);
+        }
+        if (bot.currentTool !== null) {
+          bot.currentTool = truncateUiText(bot.currentTool, 24);
+        }
+        if (bot.status.kind === 'NeedsOwner' && bot.status.prompt !== null) {
+          bot.status = { ...bot.status, prompt: truncateUiText(bot.status.prompt, 48) };
+        } else if (bot.status.kind === 'Blocked' && bot.status.reason !== null) {
+          bot.status = { ...bot.status, reason: truncateUiText(bot.status.reason, 48) };
+        } else if (bot.status.kind === 'Error' && bot.status.message !== null) {
+          bot.status = { ...bot.status, message: truncateUiText(bot.status.message, 48) };
+        }
+      }
+      for (const [uid, it] of Object.entries(payload.snapshot.items)) {
+        if (it.status !== 'needs_you') {
+          delete payload.snapshot.items[uid];
+        } else {
+          it.title = truncateUiText(it.title, 48);
+          if (it.questionPrompt !== null) {
+            it.questionPrompt = truncateUiText(it.questionPrompt, 48);
+          }
+        }
+      }
+      totalBytes = utf8ByteLength(payload);
+    }
+    if (totalBytes > MAX_IPC_PAYLOAD_BYTES) {
+      for (const bot of Object.values(payload.snapshot.bots)) {
+        bot.currentTaskTitle = null;
+        bot.currentTool = null;
+      }
+      payload.snapshot.items = {};
+      for (const auto of Object.values(payload.snapshot.automations)) {
+        auto.name = truncateUiText(auto.name, 32);
+        auto.lastError = null;
+      }
+      totalBytes = utf8ByteLength(payload);
+    }
+    if (totalBytes > MAX_IPC_PAYLOAD_BYTES) {
+      payload.snapshot.automations = {};
+      payload.snapshot.workers = {};
+      payload.botAppearances = {};
+      totalBytes = utf8ByteLength(payload);
+    }
+    while (totalBytes > MAX_IPC_PAYLOAD_BYTES && payload.snapshot.botOrder.length > 0) {
+      const removedId = payload.snapshot.botOrder.pop();
+      if (removedId && isSafeKey(removedId)) {
+        delete payload.snapshot.bots[removedId];
+      }
+      totalBytes = utf8ByteLength(payload);
+    }
+    if (totalBytes > MAX_IPC_PAYLOAD_BYTES) {
+      const keys = Object.keys(payload.snapshot.bots);
+      while (totalBytes > MAX_IPC_PAYLOAD_BYTES && keys.length > 0) {
+        const k = keys.pop();
+        if (k) delete payload.snapshot.bots[k];
+        totalBytes = utf8ByteLength(payload);
+      }
+    }
   }
 
   private async persistPrefs(): Promise<void> {

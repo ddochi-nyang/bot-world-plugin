@@ -909,29 +909,32 @@ export class StageRenderer {
     }
 
     // Bot overlays + hitboxes
+    const isCrowdedStage = orderedBots.length > 14;
+    const npScale = isCrowdedStage ? uiScale * 0.9 : uiScale;
+    const boxWScale = isCrowdedStage ? 0.9 : 1;
     const nextHitBoxes: HitBox[] = [];
     for (const overlay of botOverlays) {
       obstacles.push(overlay.spriteRect);
-      const boxW = Math.max(96, Math.min(148, 138 * vt.scale));
+      const boxW = Math.max(96 * boxWScale, Math.min(148 * boxWScale, 138 * vt.scale * boxWScale));
       const left = Math.max(bgLeft + 4, Math.min(bgRight - boxW - 4, overlay.screenX - boxW * 0.5));
       const spriteSpan = Math.max(26 * uiScale, overlay.screenY - overlay.spriteTopY);
-      const spacerH = spriteSpan + 2 * uiScale;
+      const spacerH = spriteSpan + 2 * npScale;
       const hasCallout = overlay.status.kind === 'NeedsOwner';
-      const calloutH = hasCallout ? 20 * uiScale : 0;
-      const pillH = overlay.taskTitle ? 38 * uiScale : 24 * uiScale;
+      const calloutH = hasCallout ? 20 * npScale : 0;
+      const pillH = overlay.taskTitle ? 38 * npScale : 24 * npScale;
       const estHeight = spacerH + pillH + calloutH;
-      const desiredTop = overlay.spriteTopY - (hasCallout ? 20 * uiScale : 0);
+      const desiredTop = overlay.spriteTopY - (hasCallout ? 20 * npScale : 0);
       const top = Math.max(bgTop + 4, Math.min(bgBottom - estHeight - 4, desiredTop));
 
       if (overlay.status.kind === 'NeedsOwner') {
         const notice = s.calloutNeedsOwner(overlay.status.count);
-        drawRoundedRect(ctx, left, top, boxW, calloutH - 2, 7 * uiScale);
+        drawRoundedRect(ctx, left, top, boxW, calloutH - 2, 7 * npScale);
         ctx.fillStyle = pulseHigh ? '#facc15' : '#fbbf24';
         ctx.fill();
         ctx.strokeStyle = '#78350f';
         ctx.lineWidth = 1;
         ctx.stroke();
-        ctx.font = `700 ${Math.round(9.5 * uiScale)}px ${CANVAS_FONT_FAMILY}`;
+        ctx.font = `700 ${Math.round(9.5 * npScale)}px ${CANVAS_FONT_FAMILY}`;
         ctx.fillStyle = '#451a03';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
@@ -946,7 +949,7 @@ export class StageRenderer {
       const pillTop = top + calloutH + spacerH;
       obstacles.push([left, pillTop, boxW, pillH]);
 
-      drawRoundedRect(ctx, left, pillTop, boxW, pillH, 8 * uiScale);
+      drawRoundedRect(ctx, left, pillTop, boxW, pillH, 8 * npScale);
       ctx.fillStyle = overlay.selected ? 'rgba(15, 23, 42, 0.95)' : 'rgba(24, 24, 27, 0.88)';
       ctx.fill();
       ctx.lineWidth = overlay.selected ? 1.6 : 1;
@@ -961,26 +964,26 @@ export class StageRenderer {
 
       const badge = statusBadgeStyle(overlay.status, redactMode, locale);
       const workerTag = overlay.activeWorkerCount > 0 ? `+${overlay.activeWorkerCount}` : null;
-      ctx.font = `600 ${Math.round(9 * uiScale)}px ${CANVAS_FONT_FAMILY}`;
-      const badgeW = Math.min(boxW * 0.45, ctx.measureText(badge.text).width + 10 * uiScale);
-      const workerW = workerTag ? ctx.measureText(workerTag).width + 8 * uiScale : 0;
-      const rowY = pillTop + (overlay.taskTitle ? 11 * uiScale : pillH * 0.5);
+      ctx.font = `600 ${Math.round(9 * npScale)}px ${CANVAS_FONT_FAMILY}`;
+      const badgeW = Math.min(boxW * 0.45, ctx.measureText(badge.text).width + 10 * npScale);
+      const workerW = workerTag ? ctx.measureText(workerTag).width + 8 * npScale : 0;
+      const rowY = pillTop + (overlay.taskTitle ? 11 * npScale : pillH * 0.5);
 
-      const rightUsed = badgeW + (workerW > 0 ? workerW + 3 : 0) + 6 * uiScale;
-      const nameMaxW = Math.max(24, boxW - rightUsed - 8 * uiScale);
-      ctx.font = `600 ${Math.round(10.5 * uiScale)}px ${CANVAS_FONT_FAMILY}`;
+      const rightUsed = badgeW + (workerW > 0 ? workerW + 3 : 0) + 6 * npScale;
+      const nameMaxW = Math.max(24, boxW - rightUsed - 8 * npScale);
+      ctx.font = `600 ${Math.round(10.5 * npScale)}px ${CANVAS_FONT_FAMILY}`;
       ctx.fillStyle = '#f8fafc';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
-      ctx.fillText(truncateTextToWidth(ctx, overlay.name, nameMaxW), left + 6 * uiScale, rowY);
+      ctx.fillText(truncateTextToWidth(ctx, overlay.name, nameMaxW), left + 6 * npScale, rowY);
 
-      let cursorRight = left + boxW - 5 * uiScale;
+      let cursorRight = left + boxW - 5 * npScale;
       if (workerTag) {
         const wx = cursorRight - workerW;
-        drawRoundedRect(ctx, wx, rowY - 7 * uiScale, workerW, 14 * uiScale, 4 * uiScale);
+        drawRoundedRect(ctx, wx, rowY - 7 * npScale, workerW, 14 * npScale, 4 * npScale);
         ctx.fillStyle = '#0f766e';
         ctx.fill();
-        ctx.font = `600 ${Math.round(8.5 * uiScale)}px ${CANVAS_FONT_FAMILY}`;
+        ctx.font = `600 ${Math.round(8.5 * npScale)}px ${CANVAS_FONT_FAMILY}`;
         ctx.fillStyle = '#ccfbf1';
         ctx.textAlign = 'center';
         ctx.fillText(workerTag, wx + workerW * 0.5, rowY);
@@ -988,22 +991,22 @@ export class StageRenderer {
       }
 
       const bx = cursorRight - badgeW;
-      drawRoundedRect(ctx, bx, rowY - 7 * uiScale, badgeW, 14 * uiScale, 4 * uiScale);
+      drawRoundedRect(ctx, bx, rowY - 7 * npScale, badgeW, 14 * npScale, 4 * npScale);
       ctx.fillStyle = badge.bg;
       ctx.fill();
-      ctx.font = `600 ${Math.round(8.5 * uiScale)}px ${CANVAS_FONT_FAMILY}`;
+      ctx.font = `600 ${Math.round(8.5 * npScale)}px ${CANVAS_FONT_FAMILY}`;
       ctx.fillStyle = badge.fg;
       ctx.textAlign = 'center';
       ctx.fillText(truncateTextToWidth(ctx, badge.text, badgeW - 4), bx + badgeW * 0.5, rowY);
 
       if (overlay.taskTitle) {
-        ctx.font = `400 ${Math.round(9 * uiScale)}px ${CANVAS_FONT_FAMILY}`;
+        ctx.font = `400 ${Math.round(9 * npScale)}px ${CANVAS_FONT_FAMILY}`;
         ctx.fillStyle = '#cbd5e1';
         ctx.textAlign = 'center';
         ctx.fillText(
-          truncateTextToWidth(ctx, overlay.taskTitle, boxW - 10 * uiScale),
+          truncateTextToWidth(ctx, overlay.taskTitle, boxW - 10 * npScale),
           left + boxW * 0.5,
-          pillTop + 27 * uiScale
+          pillTop + 27 * npScale
         );
       }
 

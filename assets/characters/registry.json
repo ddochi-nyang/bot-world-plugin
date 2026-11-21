@@ -27,87 +27,87 @@
   "characters": [
     {
       "id": "ddochi",
-      "display_name": "또치 캐릭터",
-      "role_hint": "전체 조율",
+      "display_name": "부엉이",
+      "role_hint": "조율·리더",
       "sprite_path": "characters/ddochi/idle.png",
       "scale": 1.0,
       "anchor": [0.5, 0.9]
     },
     {
       "id": "security",
-      "display_name": "보안 캐릭터",
-      "role_hint": "인증·보안·패치",
+      "display_name": "고슴도치",
+      "role_hint": "보안·인증",
       "sprite_path": "characters/security/idle.png",
       "scale": 1.0,
       "anchor": [0.5, 0.9]
     },
     {
       "id": "iac",
-      "display_name": "IaC 캐릭터",
-      "role_hint": "인프라 코드·재편",
+      "display_name": "문어",
+      "role_hint": "인프라·DevOps",
       "sprite_path": "characters/iac/idle.png",
       "scale": 1.0,
       "anchor": [0.5, 0.9]
     },
     {
       "id": "cloud_ops",
-      "display_name": "클라우드 운영 캐릭터",
-      "role_hint": "클러스터·배포·관측",
+      "display_name": "여우",
+      "role_hint": "클라우드·배포",
       "sprite_path": "characters/cloud_ops/idle.png",
       "scale": 1.0,
       "anchor": [0.5, 0.9]
     },
     {
       "id": "cost",
-      "display_name": "비용 캐릭터",
-      "role_hint": "클라우드 비용·절감",
+      "display_name": "개구리",
+      "role_hint": "비용·지표",
       "sprite_path": "characters/cost/idle.png",
       "scale": 1.0,
       "anchor": [0.5, 0.9]
     },
     {
       "id": "internal_tools",
-      "display_name": "사내 도구 캐릭터",
-      "role_hint": "사내 도구·자동화",
+      "display_name": "너구리",
+      "role_hint": "도구·자동화",
       "sprite_path": "characters/internal_tools/idle.png",
       "scale": 1.0,
       "anchor": [0.5, 0.9]
     },
     {
       "id": "personal_assist",
-      "display_name": "업무 보조 캐릭터",
-      "role_hint": "개발환경·지식 정리",
+      "display_name": "펭귄",
+      "role_hint": "보조·정리",
       "sprite_path": "characters/personal_assist/idle.png",
       "scale": 1.0,
       "anchor": [0.5, 0.9]
     },
     {
       "id": "cve",
-      "display_name": "CVE 캐릭터",
-      "role_hint": "취약점 노출·영향 분석",
+      "display_name": "탐정 곰",
+      "role_hint": "취약점·감사",
       "sprite_path": "characters/cve/idle.png",
       "scale": 1.0,
       "anchor": [0.5, 0.9]
     },
     {
       "id": "doc_review",
-      "display_name": "문서 리뷰 캐릭터",
-      "role_hint": "설계·문서 사전 검토",
+      "display_name": "알파카",
+      "role_hint": "리뷰·QA",
       "sprite_path": "characters/doc_review/idle.png",
       "scale": 1.0,
       "anchor": [0.5, 0.9]
     },
     {
       "id": "bot_world",
-      "display_name": "봇 월드 캐릭터",
-      "role_hint": "가상 사무실 앱 개발",
+      "display_name": "고양이 봇",
+      "role_hint": "모니터·UI",
       "sprite_path": "characters/bot_world/idle.png",
       "scale": 1.0,
       "anchor": [0.5, 0.9]
     },
     {
       "id": "worker_helper",
-      "display_name": "워커 도우미",
+      "display_name": "도우미",
       "role_hint": "하위 작업 도우미",
       "sprite_path": "characters/worker_helper/idle.png",
       "scale": 0.72,

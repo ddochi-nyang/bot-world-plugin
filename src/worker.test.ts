@@ -496,4 +496,104 @@ describe('BotWorld worker lifecycle & panel requests', () => {
       await worker.deactivate();
     }
   });
+
+  test('large-fleet (45+ bots) payload stays within MAX_IPC_PAYLOAD_BYTES', async () => {
+    const host = mockHost({
+      settings: { defaultTheme: 'startup_office', redactMode: false, pollIntervalSec: 5 },
+    });
+    const { client } = createMockClient();
+    let controller!: BotWorldWorkerController;
+
+    const worker = await mountWorker(
+      {
+        default: async (orca) => {
+          controller = new BotWorldWorkerController(orca, client);
+          await controller.init({ disableAutoLoop: true });
+        },
+        deactivate: async () => {
+          controller.dispose();
+        },
+      },
+      { host }
+    );
+
+    try {
+      const internal = controller as unknown as {
+        session: { snapshot: WorldSnapshot };
+      };
+      const snap = createEmptySnapshot();
+      snap.runtime.connected = true;
+      snap.runtime.reachable = true;
+      for (let i = 0; i < 48; i++) {
+        const id = `fleet-bot-${i}`;
+        snap.botOrder.push(id);
+        snap.bots[id] = {
+          id,
+          name: `Custom Bot ${i}`,
+          agent: 'claude',
+          paused: false,
+          specialty: 'S'.repeat(300),
+          status: { kind: 'Working', tool: 'run_command' },
+          currentTaskTitle: `Long running task title ${i} ` + 'T'.repeat(250),
+          currentTool: 'run_command',
+          lastActivityAt: 1_700_000_000_000 + i,
+          homeChatId: `chat-${i}`,
+          needsYouCount: 0,
+          activeWorkerCount: 1,
+        };
+        snap.chatIndex[`chat-${i}`] = id;
+        snap.runBotIndex[`run-${i}`] = id;
+        snap.items[`done-item-${i}`] = {
+          uid: `done-item-${i}`,
+          number: i + 1,
+          ownerBotId: id,
+          ownerBotName: `Custom Bot ${i}`,
+          title: 'Completed item ' + 'X'.repeat(250),
+          status: 'done',
+          version: 1,
+          lastEventId: null,
+          questionPrompt: null,
+          optionsCount: 0,
+          updatedAt: 1_700_000_000_000,
+        };
+        snap.items[`open-item-${i}`] = {
+          uid: `open-item-${i}`,
+          number: 100 + i,
+          ownerBotId: id,
+          ownerBotName: `Custom Bot ${i}`,
+          title: 'Open item ' + 'Y'.repeat(250),
+          status: 'in_progress',
+          version: 1,
+          lastEventId: null,
+          questionPrompt: 'Q'.repeat(300),
+          optionsCount: 2,
+          updatedAt: 1_700_000_000_000,
+        };
+        snap.recentMessages.push({
+          id: `msg-fleet-${i}`,
+          sequence: i + 1,
+          msgType: 'status',
+          fromHandle: id,
+          toHandle: 'orca:items',
+          runId: `run-${i}`,
+          subject: 'Subject ' + 'M'.repeat(200),
+          body: 'Body ' + 'B'.repeat(4000),
+          createdAt: '2026-11-21T10:00:00Z',
+          threadId: null,
+          payload: null,
+        });
+      }
+      internal.session.snapshot = snap;
+
+      const payload = controller.buildStatePayload();
+      const bytes = new TextEncoder().encode(JSON.stringify(payload)).byteLength;
+      assert.ok(
+        bytes <= MAX_IPC_PAYLOAD_BYTES,
+        `48-bot payload ${bytes} exceeded MAX_IPC_PAYLOAD_BYTES (${MAX_IPC_PAYLOAD_BYTES})`
+      );
+      assert.equal(Object.keys(payload.snapshot.bots).length, 48);
+    } finally {
+      await worker.deactivate();
+    }
+  });
 });
