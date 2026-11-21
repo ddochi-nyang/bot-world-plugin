@@ -1,4 +1,9 @@
-import { createEventRecord, scrubWorldEvent } from './events.ts';
+import {
+  createEventRecord,
+  extractWorkerSeq,
+  isValidWorkerSeq,
+  scrubWorldEvent,
+} from './events.ts';
 import { scrubAll } from './redact.ts';
 import {
   type ActorRef,
@@ -6,6 +11,7 @@ import {
   type BotState,
   type Keyframe,
   type RuntimeHealth,
+  type UiLocale,
   type WorkerState,
   type WorldEvent,
   type WorldEventRecord,
@@ -518,6 +524,9 @@ export class TimelineBuffer {
       redactedSummary: scrubAll(record.redactedSummary),
       event: scrubWorldEvent(record.event),
     };
+    if (isValidWorkerSeq(record.workerSeq)) {
+      scrubbed.workerSeq = record.workerSeq;
+    }
     if (scrubbed.timestampMs > 0) {
       this.pruneExpired(scrubbed.timestampMs);
     }
@@ -527,8 +536,13 @@ export class TimelineBuffer {
     this.eventLog.push(scrubbed);
   }
 
-  pushEvent(event: WorldEvent, timestampMs: number, workerSeqHint = 1): WorldEventRecord {
-    const rec = createEventRecord(event, timestampMs, workerSeqHint);
+  pushEvent(
+    event: WorldEvent,
+    timestampMs: number,
+    workerSeqHint = 1,
+    locale: UiLocale = 'en'
+  ): WorldEventRecord {
+    const rec = createEventRecord(event, timestampMs, workerSeqHint, locale);
     this.pushEventRecord(rec);
     return rec;
   }
@@ -700,8 +714,19 @@ export class TimelineBuffer {
             isValidWorldEvent(rec.event)
           ) {
             const eventCopy = scrubWorldEvent(rec.event);
-            const fallbackSummaries = createEventRecord(eventCopy, rec.timestampMs);
-            buf.pushEventRecord({
+            const validWorkerSeq = isValidWorkerSeq(rec.workerSeq)
+              ? rec.workerSeq
+              : extractWorkerSeq({
+                  event: eventCopy,
+                  redactedSummary:
+                    typeof rec.redactedSummary === 'string' ? rec.redactedSummary : '',
+                });
+            const fallbackSummaries = createEventRecord(
+              eventCopy,
+              rec.timestampMs,
+              validWorkerSeq ?? 1
+            );
+            const recordToPush: WorldEventRecord = {
               timestampMs: rec.timestampMs,
               summary:
                 typeof rec.summary === 'string' && rec.summary.length > 0
@@ -712,7 +737,11 @@ export class TimelineBuffer {
                   ? rec.redactedSummary
                   : fallbackSummaries.redactedSummary,
               event: eventCopy,
-            });
+            };
+            if (validWorkerSeq !== undefined) {
+              recordToPush.workerSeq = validWorkerSeq;
+            }
+            buf.pushEventRecord(recordToPush);
           }
         } catch {
           // Skip malformed event record without crashing hydrate
@@ -743,6 +772,8 @@ export class TimelineBuffer {
     return buf;
   }
 }
+
+export { formatTimeHms } from '../shared/i18n.ts';
 
 export function formatKstHms(epochMs: number): string {
   if (!Number.isFinite(epochMs) || epochMs <= 0) {

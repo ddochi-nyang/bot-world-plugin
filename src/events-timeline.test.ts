@@ -307,8 +307,11 @@ describe('Normalization, 18-kind event diffing, and 24h replay timeline', () => 
     const scrubbed = scrubWorldEvent(unknownEv);
     assert.equal(scrubbed.kind, 'BotIdle');
     const [sum, redSum] = formatEventSummaries(unknownEv);
-    assert.equal(sum, '기록된 사건');
-    assert.equal(redSum, '기록된 사건');
+    assert.equal(sum, 'Recorded event');
+    assert.equal(redSum, 'Recorded event');
+    const [sumKo, redSumKo] = formatEventSummaries(unknownEv, 1, 'ko');
+    assert.equal(sumKo, '기록된 사건');
+    assert.equal(redSumKo, '기록된 사건');
 
     // exportBounded respects strict small budgetBytes (even below 8 keyframes / 20 events)
     const bigBuf = new TimelineBuffer();

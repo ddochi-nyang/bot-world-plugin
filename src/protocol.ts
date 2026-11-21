@@ -1,12 +1,19 @@
-import type { BotWorldStatePayload, CharacterId, ThemeId } from './types.ts';
+import type {
+  BotWorldStatePayload,
+  CharacterId,
+  LanguageSetting,
+  ThemeId,
+  UiLocale,
+} from './types.ts';
 
 declare module 'orca' {
   interface PluginRequests {
     'botWorld.getState': {
-      input?: { sinceMs?: number };
+      input?: { sinceMs?: number; locale?: string };
       output: BotWorldStatePayload;
     };
     'botWorld.refresh': {
+      input?: { locale?: string };
       output: BotWorldStatePayload;
     };
     'botWorld.setTheme': {
@@ -20,6 +27,10 @@ declare module 'orca' {
     'botWorld.setBotAppearance': {
       input: { botId: string; characterId: string };
       output: { botAppearances: Record<string, CharacterId> };
+    };
+    'botWorld.setLanguage': {
+      input: { language: LanguageSetting; hostLocale?: string };
+      output: { languageSetting: LanguageSetting; locale: UiLocale };
     };
   }
 

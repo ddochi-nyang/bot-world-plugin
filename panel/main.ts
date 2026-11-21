@@ -1,10 +1,13 @@
 import { diffSnapshots } from '../src/events.ts';
 import '../src/protocol.ts';
-import { formatKstHms } from '../src/timeline.ts';
+import { scrubAll } from '../src/redact.ts';
+import { formatTimeHms } from '../src/timeline.ts';
 import {
   type BotWorldStatePayload,
   type CharacterId,
+  type LanguageSetting,
   type ThemeId,
+  type UiLocale,
   type WorldSnapshot,
   createEmptySnapshot,
   isSafeKey,
@@ -16,6 +19,7 @@ import {
   renderEventTimelineList,
 } from '../shared/bot-detail-view.ts';
 import { clearChildren, el } from '../shared/dom.ts';
+import { effectiveLocale, getHostLocale, resolveUiLocale, tStrings } from '../shared/i18n.ts';
 import { MotionDirector, ReplayController } from '../shared/motion.ts';
 import { StageRenderer } from '../shared/stage-renderer.ts';
 
@@ -25,6 +29,9 @@ const root = document.getElementById('app');
 if (!root) {
   throw new Error('Missing #app container');
 }
+
+const initialLocale = resolveUiLocale(getHostLocale());
+const initialStrings = tStrings(initialLocale);
 
 const state: {
   payload: BotWorldStatePayload;
@@ -40,6 +47,8 @@ const state: {
     redactMode: false,
     botAppearances: {},
     pollIntervalSec: 5,
+    locale: initialLocale,
+    languageSetting: 'auto',
   },
   selectedBotId: null,
   hoveredBotId: null,
@@ -50,7 +59,12 @@ const liveMotion = new MotionDirector();
 const replay = new ReplayController();
 let prevLiveSnapshot: WorldSnapshot = createEmptySnapshot();
 
+function currentLocale(): UiLocale {
+  return effectiveLocale(state.payload.languageSetting, getHostLocale());
+}
+
 // Build static shell DOM safely
+const titleEl = el('span', { className: 'bw-title' }, initialStrings.appTitlePanel);
 const startupBtn = el(
   'button',
   {
@@ -58,7 +72,7 @@ const startupBtn = el(
     className: 'bw-seg-btn',
     onClick: () => void switchTheme('startup_office').catch(() => {}),
   },
-  '스타트업'
+  initialStrings.themeShort.startup_office
 );
 const corpBtn = el(
   'button',
@@ -67,9 +81,14 @@ const corpBtn = el(
     className: 'bw-seg-btn',
     onClick: () => void switchTheme('corporate_office').catch(() => {}),
   },
-  '대기업'
+  initialStrings.themeShort.corporate_office
 );
-const themeSeg = el('div', { className: 'bw-seg', role: 'group', ariaLabel: '사무실 테마' }, startupBtn, corpBtn);
+const themeSeg = el(
+  'div',
+  { className: 'bw-seg', role: 'group', ariaLabel: initialStrings.themeAriaLabel },
+  startupBtn,
+  corpBtn
+);
 
 const redactBtn = el(
   'button',
@@ -78,7 +97,19 @@ const redactBtn = el(
     className: 'bw-btn',
     onClick: () => void toggleRedact().catch(() => {}),
   },
-  '가림 OFF'
+  initialStrings.redactOff
+);
+
+const langBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-btn',
+    title: initialStrings.langToggleTitle,
+    ariaLabel: initialStrings.langToggleTitle,
+    onClick: () => void toggleLanguage().catch(() => {}),
+  },
+  initialStrings.langToggleText
 );
 
 const refreshBtn = el(
@@ -88,26 +119,23 @@ const refreshBtn = el(
     className: 'bw-btn',
     onClick: () => void triggerRefresh().catch(() => {}),
   },
-  '새로고침'
+  initialStrings.refresh
 );
 
-const connPill = el('span', { className: 'bw-status-pill' }, '연결 중');
+const connPill = el('span', { className: 'bw-status-pill' }, initialStrings.connecting);
 
 const toolbar = el(
   'div',
   { className: 'bw-toolbar' },
-  el('div', { className: 'bw-toolbar-group' }, el('span', { className: 'bw-title' }, '봇 월드'), connPill),
-  el('div', { className: 'bw-toolbar-group' }, themeSeg, redactBtn, refreshBtn)
+  el('div', { className: 'bw-toolbar-group' }, titleEl, connPill),
+  el('div', { className: 'bw-toolbar-group' }, themeSeg, redactBtn, langBtn, refreshBtn)
 );
 
-const boardHint = el(
-  'div',
-  { className: 'bw-hint-banner' },
-  el('span', null, '넓은 전체 사무실 · 24h 스크러버는 새 파일 → 새 봇 월드 보드(.botworld)로 여세요.')
-);
+const boardHintText = el('span', null, initialStrings.boardHint);
+const boardHint = el('div', { className: 'bw-hint-banner' }, boardHintText);
 
 const canvasEl = el('canvas', { className: 'bw-stage-canvas' }) as HTMLCanvasElement;
-const stageOverlayNote = el('div', { className: 'bw-stage-overlay-note' }, 'LIVE');
+const stageOverlayNote = el('div', { className: 'bw-stage-overlay-note' }, initialStrings.live);
 const stageWrap = el('div', { className: 'bw-stage-wrap-panel' }, canvasEl, stageOverlayNote);
 
 const botStrip = el('div', { className: 'bw-bot-strip' });
@@ -122,7 +150,7 @@ const tabDetailBtn = el(
       renderUi();
     },
   },
-  '봇 상세'
+  initialStrings.tabDetail
 );
 const tabTimelineBtn = el(
   'button',
@@ -134,7 +162,7 @@ const tabTimelineBtn = el(
       renderUi();
     },
   },
-  '사건 타임라인'
+  initialStrings.tabTimeline
 );
 const backToLiveBtn = el(
   'button',
@@ -146,7 +174,7 @@ const backToLiveBtn = el(
       renderUi();
     },
   },
-  'LIVE 복귀'
+  initialStrings.backToLive
 );
 const subTabs = el('div', { className: 'bw-subtabs' }, tabDetailBtn, tabTimelineBtn, backToLiveBtn);
 
@@ -176,38 +204,62 @@ function currentDisplayedSnapshot(): WorldSnapshot {
 }
 
 function updateStageOverlayLabel(): void {
+  const locale = currentLocale();
+  const s = tStrings(locale);
   const snap = currentDisplayedSnapshot();
   if (replay.isReplay) {
-    stageOverlayNote.textContent = `REPLAY ${formatKstHms(replay.cursorMs)}`;
+    stageOverlayNote.textContent = s.stageOverlayReplay(formatTimeHms(replay.cursorMs, locale));
     return;
   }
   if (state.hoveredBotId && isSafeKey(state.hoveredBotId) && Object.hasOwn(snap.bots, state.hoveredBotId)) {
     const b = snap.bots[state.hoveredBotId];
-    stageOverlayNote.textContent = `${b.name} · 클릭해 상세 보기`;
+    stageOverlayNote.textContent = s.stageOverlayHover(scrubAll(b.name));
     return;
   }
-  stageOverlayNote.textContent = snap.runtime.connected ? 'LIVE · 봇 클릭 선택' : '오프라인 대기';
+  stageOverlayNote.textContent = snap.runtime.connected ? s.stageOverlayLive : s.stageOverlayOffline;
+}
+
+function syncChromeLocale(locale: UiLocale): void {
+  const s = tStrings(locale);
+  document.documentElement.lang = locale;
+  document.title = s.appTitlePanel;
+  titleEl.textContent = s.appTitlePanel;
+  startupBtn.textContent = s.themeShort.startup_office;
+  corpBtn.textContent = s.themeShort.corporate_office;
+  themeSeg.setAttribute('aria-label', s.themeAriaLabel);
+  langBtn.textContent = s.langToggleText;
+  langBtn.title = s.langToggleTitle;
+  langBtn.setAttribute('aria-label', s.langToggleTitle);
+  refreshBtn.textContent = s.refresh;
+  boardHintText.textContent = s.boardHint;
+  tabDetailBtn.textContent = s.tabDetail;
+  tabTimelineBtn.textContent = s.tabTimeline;
+  backToLiveBtn.textContent = s.backToLive;
 }
 
 function renderUi(): void {
   const { activeTheme, redactMode, botAppearances, events } = state.payload;
+  const locale = currentLocale();
+  const s = tStrings(locale);
   const snap = currentDisplayedSnapshot();
+
+  syncChromeLocale(locale);
 
   startupBtn.className =
     activeTheme === 'startup_office' ? 'bw-seg-btn bw-seg-btn-active' : 'bw-seg-btn';
   corpBtn.className =
     activeTheme === 'corporate_office' ? 'bw-seg-btn bw-seg-btn-active' : 'bw-seg-btn';
 
-  redactBtn.textContent = redactMode ? '가림 ON' : '가림 OFF';
+  redactBtn.textContent = redactMode ? s.redactOn : s.redactOff;
   redactBtn.className = redactMode ? 'bw-btn bw-btn-warn' : 'bw-btn';
 
   if (snap.runtime.connected) {
-    connPill.textContent = `연결됨 · ${Object.keys(snap.bots).length}봇`;
+    connPill.textContent = s.connectedBots(Object.keys(snap.bots).length);
     connPill.className = 'bw-status-pill bw-status-online';
   } else {
     connPill.textContent = snap.runtime.retryAfterSecs
-      ? `오프라인 (${snap.runtime.retryAfterSecs}s)`
-      : '오프라인';
+      ? s.offlineRetry(snap.runtime.retryAfterSecs)
+      : s.offline;
     connPill.className = 'bw-status-pill bw-status-offline';
   }
 
@@ -234,6 +286,7 @@ function renderUi(): void {
     botAppearances,
     motion: replay.isReplay ? replay.motion : liveMotion,
     replay,
+    locale,
   });
 
   renderBotQuickPills(botStrip, {
@@ -256,6 +309,7 @@ function renderUi(): void {
       bot: selectedBot,
       redactMode,
       botAppearances,
+      locale,
       onSelectCharacter: (botId, charId) => void setBotAppearance(botId, charId).catch(() => {}),
     });
   } else {
@@ -265,9 +319,18 @@ function renderUi(): void {
       events,
       redactMode,
       limit: 60,
+      locale,
       onJumpToTime: (ts) => {
-        const theme = getThemeConfig(state.payload.activeTheme);
-        replay.seekTo(ts, state.payload.keyframes, state.payload.events, state.payload.snapshot, theme);
+        const curLocale = currentLocale();
+        const theme = getThemeConfig(state.payload.activeTheme, curLocale);
+        replay.seekTo(
+          ts,
+          state.payload.keyframes,
+          state.payload.events,
+          state.payload.snapshot,
+          theme,
+          curLocale
+        );
         renderUi();
       },
     });
@@ -276,16 +339,20 @@ function renderUi(): void {
 }
 
 function applyIncomingPayload(nextPayload: BotWorldStatePayload): void {
-  const theme = getThemeConfig(nextPayload.activeTheme);
+  const locale = effectiveLocale(nextPayload.languageSetting, getHostLocale());
+  const theme = getThemeConfig(nextPayload.activeTheme, locale);
   const hadPrev = Object.keys(prevLiveSnapshot.bots).length > 0;
   if (hadPrev && nextPayload.snapshot.initialSyncComplete) {
-    const newEvents = diffSnapshots(prevLiveSnapshot, nextPayload.snapshot, false);
+    const newEvents = diffSnapshots(prevLiveSnapshot, nextPayload.snapshot, false, locale);
     if (newEvents.length > 0) {
-      liveMotion.enqueueEvents(newEvents, nextPayload.snapshot, theme);
+      liveMotion.enqueueEvents(newEvents, nextPayload.snapshot, theme, locale);
     }
   }
   prevLiveSnapshot = nextPayload.snapshot;
   state.payload = nextPayload;
+  if (replay.isReplay) {
+    replay.resyncSnapshot(nextPayload.keyframes, nextPayload.snapshot, theme, locale);
+  }
   renderUi();
 }
 
@@ -307,9 +374,29 @@ async function toggleRedact(): Promise<void> {
     state.payload = { ...state.payload, redactMode: res.redactMode };
     renderUi();
     if (res.redactMode) {
-      const fresh = await orca.plugin.request('botWorld.getState');
+      const fresh = await orca.plugin.request('botWorld.getState', { locale: getHostLocale() });
       applyIncomingPayload(fresh);
     }
+  } catch {
+    // Ignore RPC failure
+  }
+}
+
+async function toggleLanguage(): Promise<void> {
+  const nextLanguage: LanguageSetting = currentLocale() === 'ko' ? 'en' : 'ko';
+  try {
+    const res = await orca.plugin.request('botWorld.setLanguage', {
+      language: nextLanguage,
+      hostLocale: getHostLocale(),
+    });
+    state.payload = {
+      ...state.payload,
+      languageSetting: res.languageSetting,
+      locale: res.locale,
+    };
+    renderUi();
+    const fresh = await orca.plugin.request('botWorld.getState', { locale: getHostLocale() });
+    applyIncomingPayload(fresh);
   } catch {
     // Ignore RPC failure
   }
@@ -328,7 +415,7 @@ async function setBotAppearance(botId: string, characterId: CharacterId): Promis
 async function triggerRefresh(): Promise<void> {
   refreshBtn.disabled = true;
   try {
-    const next = await orca.plugin.request('botWorld.refresh');
+    const next = await orca.plugin.request('botWorld.refresh', { locale: getHostLocale() });
     applyIncomingPayload(next);
   } catch {
     // Keep existing state when refresh fails
@@ -338,6 +425,7 @@ async function triggerRefresh(): Promise<void> {
 }
 
 async function boot(): Promise<void> {
+  renderUi();
   try {
     orca.on('theme', ({ colorScheme }) => {
       document.documentElement.classList.toggle('light', colorScheme === 'light');
@@ -347,7 +435,7 @@ async function boot(): Promise<void> {
       applyIncomingPayload(payload);
     });
 
-    const initial = await orca.plugin.request('botWorld.getState');
+    const initial = await orca.plugin.request('botWorld.getState', { locale: getHostLocale() });
     applyIncomingPayload(initial);
   } catch {
     renderUi();

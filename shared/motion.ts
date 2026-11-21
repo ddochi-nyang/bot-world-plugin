@@ -2,6 +2,7 @@ import { formatEventSummaries } from '../src/events.ts';
 import {
   type ActorRef,
   type Keyframe,
+  type UiLocale,
   type WorldEvent,
   type WorldEventRecord,
   type WorldSnapshot,
@@ -53,6 +54,8 @@ export type SpeechBubble = {
   kind: BubbleKind;
   ttl: number;
   maxTtl: number;
+  event?: WorldEvent;
+  seqHint?: number;
 };
 
 export type ParticleKind =
@@ -463,6 +466,19 @@ export class MotionDirector {
   private workerSeqById = new Map<string, number>();
   elapsedSecs = 0;
   private rngSeed = 0x9e3779b9;
+  locale: UiLocale = 'en';
+
+  setLocale(locale: UiLocale): void {
+    if (this.locale === locale) return;
+    this.locale = locale;
+    for (const b of this.bubbles) {
+      if (b.event) {
+        const [normalText, redactedText] = formatEventSummaries(b.event, b.seqHint ?? 1, locale);
+        b.normalText = normalText;
+        b.redactedText = redactedText;
+      }
+    }
+  }
 
   syncLayout(snapshot: WorldSnapshot, theme: ThemeConfig): void {
     const workerKeys = Object.values(snapshot.workers)
@@ -507,7 +523,15 @@ export class MotionDirector {
     return this.workerSeqCounter;
   }
 
-  enqueueEvents(events: WorldEvent[], snapshot: WorldSnapshot, theme: ThemeConfig): void {
+  enqueueEvents(
+    events: WorldEvent[],
+    snapshot: WorldSnapshot,
+    theme: ThemeConfig,
+    locale?: UiLocale
+  ): void {
+    if (locale) {
+      this.setLocale(locale);
+    }
     const prevWorkerSeats =
       events.length > 0 ? new Map(this.layout.workerSeats) : new Map<string, { x: number; y: number; parentBotId: string }>();
     this.syncLayout(snapshot, theme);
@@ -638,7 +662,7 @@ export class MotionDirector {
     prevWorkerSeats: Map<string, { x: number; y: number; parentBotId: string }>
   ): void {
     const seqHint = event.kind === 'WorkerStart' ? this.assignWorkerSeq(event.dispatchId) : 1;
-    const [normalText, redactedText] = formatEventSummaries(event, seqHint);
+    const [normalText, redactedText] = formatEventSummaries(event, seqHint, this.locale);
 
     switch (event.kind) {
       case 'Handoff':
@@ -685,7 +709,9 @@ export class MotionDirector {
           normalText,
           redactedText,
           event.kind === 'Question' ? 'Question' : 'Normal',
-          event.kind === 'Handoff' ? 2.5 : 2.0
+          event.kind === 'Handoff' ? 2.5 : 2.0,
+          event,
+          seqHint
         );
         break;
       }
@@ -705,7 +731,9 @@ export class MotionDirector {
           normalText,
           redactedText,
           'Normal',
-          1.8
+          1.8,
+          event,
+          seqHint
         );
         break;
       }
@@ -728,7 +756,7 @@ export class MotionDirector {
           workerMotion: meta,
           flyingFallback: null,
         });
-        this.pushBubble(aKey, seat, normalText, redactedText, 'Normal', 2.2);
+        this.pushBubble(aKey, seat, normalText, redactedText, 'Normal', 2.2, event, seqHint);
         break;
       }
       case 'WorkerDone':
@@ -787,7 +815,9 @@ export class MotionDirector {
           normalText,
           redactedText,
           isDone ? 'Success' : 'Alert',
-          2.5
+          2.5,
+          event,
+          seqHint
         );
         break;
       }
@@ -797,7 +827,7 @@ export class MotionDirector {
           this.layout.resolveActorPos(event.actor) ??
           (pDesk ? ([pDesk.x, pDesk.y] as [number, number]) : this.layout.bossDesk);
         this.spawnBurst('LockOrange', pos, 5);
-        this.pushBubble(actorKeyFromRef(event.actor), pos, normalText, redactedText, 'Alert', 2.5);
+        this.pushBubble(actorKeyFromRef(event.actor), pos, normalText, redactedText, 'Alert', 2.5, event, seqHint);
         break;
       }
       case 'ApprovalClosed': {
@@ -812,7 +842,9 @@ export class MotionDirector {
           normalText,
           redactedText,
           'Success',
-          1.5
+          1.5,
+          event,
+          seqHint
         );
         break;
       }
@@ -820,7 +852,7 @@ export class MotionDirector {
         const d = this.layout.botDesks.get(event.botId);
         const pos: [number, number] = d ? [d.x, d.y] : this.layout.bossDesk;
         this.spawnBurst('Sparkle', this.layout.bossDesk, 4);
-        this.pushBubble(`bot:${event.botId}`, pos, normalText, redactedText, 'Boss', 2.5);
+        this.pushBubble(`bot:${event.botId}`, pos, normalText, redactedText, 'Boss', 2.5, event, seqHint);
         break;
       }
       case 'BossReplied': {
@@ -829,28 +861,28 @@ export class MotionDirector {
         const start = this.layout.bossDesk;
         this.spawnFlyingProp({ kind: 'BossStamp' }, start, end, 95, 1.5);
         this.spawnBurst('Sparkle', start, 6);
-        this.pushBubble(`bot:${event.botId}`, end, normalText, redactedText, 'Boss', 2.0);
+        this.pushBubble(`bot:${event.botId}`, end, normalText, redactedText, 'Boss', 2.0, event, seqHint);
         break;
       }
       case 'ItemDone': {
         const d = this.layout.botDesks.get(event.botId);
         const pos: [number, number] = d ? [d.x, d.y] : this.layout.bossDesk;
         this.spawnBurst('GreenCheckConfetti', pos, 14);
-        this.pushBubble(`bot:${event.botId}`, pos, normalText, redactedText, 'Success', 1.8);
+        this.pushBubble(`bot:${event.botId}`, pos, normalText, redactedText, 'Success', 1.8, event, seqHint);
         break;
       }
       case 'ItemCanceled': {
         const d = this.layout.botDesks.get(event.botId);
         const pos: [number, number] = d ? [d.x, d.y] : this.layout.bossDesk;
         this.spawnBurst('GrayArchive', pos, 6);
-        this.pushBubble(`bot:${event.botId}`, pos, normalText, redactedText, 'Normal', 1.4);
+        this.pushBubble(`bot:${event.botId}`, pos, normalText, redactedText, 'Normal', 1.4, event, seqHint);
         break;
       }
       case 'BotWorking':
       case 'ToolChanged': {
         const d = this.layout.botDesks.get(event.botId);
         const pos: [number, number] = d ? [d.x, d.y] : this.layout.bossDesk;
-        this.pushBubble(`bot:${event.botId}`, pos, normalText, redactedText, 'Normal', 1.4);
+        this.pushBubble(`bot:${event.botId}`, pos, normalText, redactedText, 'Normal', 1.4, event, seqHint);
         break;
       }
       case 'BotIdle':
@@ -860,7 +892,7 @@ export class MotionDirector {
         const d = this.layout.botDesks.get(event.botId);
         const pos: [number, number] = d ? [d.x, d.y] : this.layout.bossDesk;
         this.spawnBurst('SweatDrop', pos, 7);
-        this.pushBubble(`bot:${event.botId}`, pos, normalText, redactedText, 'Alert', 2.5);
+        this.pushBubble(`bot:${event.botId}`, pos, normalText, redactedText, 'Alert', 2.5, event, seqHint);
         break;
       }
       case 'AutomationRun': {
@@ -884,14 +916,16 @@ export class MotionDirector {
           normalText,
           redactedText,
           event.success ? 'Normal' : 'Alert',
-          1.8
+          1.8,
+          event,
+          seqHint
         );
         break;
       }
       case 'BotPaused': {
         const d = this.layout.botDesks.get(event.botId);
         const pos: [number, number] = d ? [d.x, d.y] : this.layout.bossDesk;
-        this.pushBubble(`bot:${event.botId}`, pos, normalText, redactedText, 'Normal', 1.5);
+        this.pushBubble(`bot:${event.botId}`, pos, normalText, redactedText, 'Normal', 1.5, event, seqHint);
         break;
       }
       case 'WorkerExited': {
@@ -899,7 +933,7 @@ export class MotionDirector {
           this.layout.workerSeatOrOffset(event.dispatchId, event.parentBotId) ??
           this.layout.officeDoor;
         this.spawnBurst('GrayArchive', pos, 4);
-        this.pushBubble(`worker:${event.dispatchId}`, pos, normalText, redactedText, 'Normal', 1.6);
+        this.pushBubble(`worker:${event.dispatchId}`, pos, normalText, redactedText, 'Normal', 1.6, event, seqHint);
         break;
       }
       case 'WorkerReleased': {
@@ -926,7 +960,7 @@ export class MotionDirector {
           workerMotion: meta,
           flyingFallback: null,
         });
-        this.pushBubble(aKey, start, normalText, redactedText, 'Normal', 1.8);
+        this.pushBubble(aKey, start, normalText, redactedText, 'Normal', 1.8, event, seqHint);
         break;
       }
       case 'BotJoined': {
@@ -940,7 +974,7 @@ export class MotionDirector {
           flyingFallback: null,
         });
         this.spawnBurst('Sparkle', desk, 6);
-        this.pushBubble(aKey, desk, normalText, redactedText, 'Success', 2.4);
+        this.pushBubble(aKey, desk, normalText, redactedText, 'Success', 2.4, event, seqHint);
         break;
       }
     }
@@ -1043,7 +1077,9 @@ export class MotionDirector {
     normalText: string,
     redactedText: string,
     kind: BubbleKind,
-    ttl: number
+    ttl: number,
+    event?: WorldEvent,
+    seqHint?: number
   ): void {
     if (anchorActorKey) {
       const existing = this.bubbles.find((b) => b.anchorActorKey === anchorActorKey);
@@ -1054,6 +1090,8 @@ export class MotionDirector {
         existing.ttl = ttl;
         existing.maxTtl = ttl;
         existing.fallbackPos = fallbackPos;
+        existing.event = event;
+        existing.seqHint = seqHint;
         return;
       }
     }
@@ -1073,6 +1111,8 @@ export class MotionDirector {
       kind,
       ttl,
       maxTtl: ttl,
+      event,
+      seqHint,
     });
   }
 
@@ -1345,13 +1385,39 @@ export class ReplayController {
     };
   }
 
+  setLocale(locale: UiLocale): void {
+    this.motion.setLocale(locale);
+  }
+
+  resyncSnapshot(
+    keyframes: readonly Keyframe[],
+    liveSnapshot: WorldSnapshot,
+    theme: ThemeConfig,
+    locale?: UiLocale
+  ): void {
+    if (locale) {
+      this.motion.setLocale(locale);
+    }
+    if (!this.isReplay) return;
+    this.snapshot =
+      this.snapshotAt(keyframes, this.cursorMs) ?? {
+        ...liveSnapshot,
+        capturedAt: this.cursorMs,
+      };
+    this.motion.syncLayout(this.snapshot, theme);
+  }
+
   seekTo(
     targetMs: number,
     keyframes: readonly Keyframe[],
     events: readonly WorldEventRecord[],
     liveSnapshot: WorldSnapshot,
-    theme: ThemeConfig
+    theme: ThemeConfig,
+    locale?: UiLocale
   ): void {
+    if (locale) {
+      this.motion.setLocale(locale);
+    }
     const bounds = this.timeBounds(keyframes, events);
     if (!bounds) {
       this.isReplay = true;
@@ -1389,7 +1455,7 @@ export class ReplayController {
           batch.push(recent[idx].event);
           idx++;
         }
-        this.motion.enqueueEvents(batch, this.snapshot, theme);
+        this.motion.enqueueEvents(batch, this.snapshot, theme, locale);
       }
       const tailSecs = Math.min(3, Math.max(0, (clamped - simMs) / 1000));
       if (tailSecs > 0) {
@@ -1403,15 +1469,16 @@ export class ReplayController {
     keyframes: readonly Keyframe[],
     events: readonly WorldEventRecord[],
     liveSnapshot: WorldSnapshot,
-    theme: ThemeConfig
+    theme: ThemeConfig,
+    locale?: UiLocale
   ): void {
     const t = Math.max(0, Math.min(1, fraction));
     const bounds = this.timeBounds(keyframes, events);
     if (bounds) {
       const target = bounds[0] + Math.round((bounds[1] - bounds[0]) * t);
-      this.seekTo(target, keyframes, events, liveSnapshot, theme);
+      this.seekTo(target, keyframes, events, liveSnapshot, theme, locale);
     } else {
-      this.seekTo(liveSnapshot.capturedAt, keyframes, events, liveSnapshot, theme);
+      this.seekTo(liveSnapshot.capturedAt, keyframes, events, liveSnapshot, theme, locale);
     }
   }
 
@@ -1419,17 +1486,18 @@ export class ReplayController {
     keyframes: readonly Keyframe[],
     events: readonly WorldEventRecord[],
     liveSnapshot: WorldSnapshot,
-    theme: ThemeConfig
+    theme: ThemeConfig,
+    locale?: UiLocale
   ): void {
     const bounds = this.timeBounds(keyframes, events);
     if (!this.isReplay) {
       const startMs = bounds ? bounds[0] : liveSnapshot.capturedAt;
-      this.seekTo(startMs, keyframes, events, liveSnapshot, theme);
+      this.seekTo(startMs, keyframes, events, liveSnapshot, theme, locale);
       this.isPlaying = true;
       return;
     }
     if (!this.isPlaying && bounds && this.cursorMs >= bounds[1]) {
-      this.seekTo(bounds[0], keyframes, events, liveSnapshot, theme);
+      this.seekTo(bounds[0], keyframes, events, liveSnapshot, theme, locale);
     }
     this.isPlaying = !this.isPlaying;
   }
@@ -1439,8 +1507,12 @@ export class ReplayController {
     keyframes: readonly Keyframe[],
     events: readonly WorldEventRecord[],
     liveSnapshot: WorldSnapshot,
-    theme: ThemeConfig
+    theme: ThemeConfig,
+    locale?: UiLocale
   ): void {
+    if (locale) {
+      this.motion.setLocale(locale);
+    }
     if (!this.isReplay) return;
     if (!this.isPlaying) {
       this.motion.syncLayout(this.snapshot, theme);
@@ -1466,7 +1538,7 @@ export class ReplayController {
       .sort((a, b) => a.timestampMs - b.timestampMs)
       .map((r) => r.event);
     if (crossed.length > 0) {
-      this.motion.enqueueEvents(crossed, this.snapshot, theme);
+      this.motion.enqueueEvents(crossed, this.snapshot, theme, locale);
     }
     this.stepMotionSubsteps(scaledDt, theme);
 

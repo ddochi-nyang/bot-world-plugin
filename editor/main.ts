@@ -1,12 +1,15 @@
 import { diffSnapshots } from '../src/events.ts';
 import '../src/protocol.ts';
-import { formatKstHms } from '../src/timeline.ts';
+import { scrubAll } from '../src/redact.ts';
+import { formatTimeHms } from '../src/timeline.ts';
 import {
   type BotWorldDocumentData,
   type BotWorldStatePayload,
   type CharacterId,
   DEFAULT_BOTWORLD_DOCUMENT,
+  type LanguageSetting,
   type ThemeId,
+  type UiLocale,
   type WorldSnapshot,
   createEmptySnapshot,
   isSafeKey,
@@ -17,6 +20,7 @@ import {
   renderEventTimelineList,
 } from '../shared/bot-detail-view.ts';
 import { el } from '../shared/dom.ts';
+import { effectiveLocale, getHostLocale, resolveUiLocale, tStrings } from '../shared/i18n.ts';
 import {
   MotionDirector,
   REPLAY_SPEEDS,
@@ -30,6 +34,9 @@ const root = document.getElementById('app');
 if (!root) {
   throw new Error('Missing #app container');
 }
+
+const initialLocale = resolveUiLocale(getHostLocale());
+const initialStrings = tStrings(initialLocale);
 
 const state: {
   payload: BotWorldStatePayload;
@@ -45,6 +52,8 @@ const state: {
     redactMode: false,
     botAppearances: {},
     pollIntervalSec: 5,
+    locale: initialLocale,
+    languageSetting: 'auto',
   },
   docData: {
     ...DEFAULT_BOTWORLD_DOCUMENT,
@@ -61,7 +70,12 @@ let prevLiveSnapshot: WorldSnapshot = createEmptySnapshot();
 let replayTimerId: number | null = null;
 let lastReplayTickMs = 0;
 
+function currentLocale(): UiLocale {
+  return effectiveLocale(state.payload.languageSetting, getHostLocale());
+}
+
 // Toolbar
+const titleEl = el('span', { className: 'bw-title' }, initialStrings.appTitleEditor);
 const startupBtn = el(
   'button',
   {
@@ -69,7 +83,7 @@ const startupBtn = el(
     className: 'bw-seg-btn',
     onClick: () => void switchTheme('startup_office').catch(() => {}),
   },
-  '스타트업 사무실'
+  initialStrings.themeFull.startup_office
 );
 const corpBtn = el(
   'button',
@@ -78,9 +92,14 @@ const corpBtn = el(
     className: 'bw-seg-btn',
     onClick: () => void switchTheme('corporate_office').catch(() => {}),
   },
-  '대기업 사무실'
+  initialStrings.themeFull.corporate_office
 );
-const themeSeg = el('div', { className: 'bw-seg', role: 'group', ariaLabel: '사무실 테마' }, startupBtn, corpBtn);
+const themeSeg = el(
+  'div',
+  { className: 'bw-seg', role: 'group', ariaLabel: initialStrings.themeAriaLabel },
+  startupBtn,
+  corpBtn
+);
 
 const redactBtn = el(
   'button',
@@ -89,7 +108,19 @@ const redactBtn = el(
     className: 'bw-btn',
     onClick: () => void toggleRedact().catch(() => {}),
   },
-  '가림 OFF'
+  initialStrings.redactOff
+);
+
+const langBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-btn',
+    title: initialStrings.langToggleTitle,
+    ariaLabel: initialStrings.langToggleTitle,
+    onClick: () => void toggleLanguage().catch(() => {}),
+  },
+  initialStrings.langToggleText
 );
 
 const refreshBtn = el(
@@ -99,11 +130,11 @@ const refreshBtn = el(
     className: 'bw-btn',
     onClick: () => void triggerRefresh().catch(() => {}),
   },
-  '새로고침'
+  initialStrings.refresh
 );
 
-const connPill = el('span', { className: 'bw-status-pill' }, '연결 중');
-const docSyncPill = el('span', { className: 'bw-chip' }, '.botworld 동기화됨');
+const connPill = el('span', { className: 'bw-status-pill' }, initialStrings.connecting);
+const docSyncPill = el('span', { className: 'bw-chip' }, initialStrings.docSynced);
 
 const toolbar = el(
   'div',
@@ -111,16 +142,16 @@ const toolbar = el(
   el(
     'div',
     { className: 'bw-toolbar-group' },
-    el('span', { className: 'bw-title' }, '봇 월드 사무실'),
+    titleEl,
     connPill,
     docSyncPill
   ),
-  el('div', { className: 'bw-toolbar-group' }, themeSeg, redactBtn, refreshBtn)
+  el('div', { className: 'bw-toolbar-group' }, themeSeg, redactBtn, langBtn, refreshBtn)
 );
 
 // Main 2-column area
 const canvasEl = el('canvas', { className: 'bw-stage-canvas' }) as HTMLCanvasElement;
-const stageOverlayNote = el('div', { className: 'bw-stage-overlay-note' }, 'LIVE');
+const stageOverlayNote = el('div', { className: 'bw-stage-overlay-note' }, initialStrings.live);
 const stageWrap = el('div', { className: 'bw-stage-wrap-editor' }, canvasEl, stageOverlayNote);
 const detailSidebar = el('div', { className: 'bw-editor-sidebar' });
 const editorBody = el('div', { className: 'bw-editor-body' }, stageWrap, detailSidebar);
@@ -132,13 +163,20 @@ const playBtn = el(
     type: 'button',
     className: 'bw-btn',
     onClick: () => {
-      const theme = getThemeConfig(activeThemeId());
-      replay.togglePlay(state.payload.keyframes, state.payload.events, state.payload.snapshot, theme);
+      const locale = currentLocale();
+      const theme = getThemeConfig(activeThemeId(), locale);
+      replay.togglePlay(
+        state.payload.keyframes,
+        state.payload.events,
+        state.payload.snapshot,
+        theme,
+        locale
+      );
       syncReplayLoop();
       renderUi();
     },
   },
-  '▶ 재생'
+  initialStrings.play
 );
 
 const liveBtn = el(
@@ -152,11 +190,15 @@ const liveBtn = el(
       renderUi();
     },
   },
-  'LIVE'
+  initialStrings.live
 );
 
 const speedButtons = new Map<ReplaySpeed, HTMLButtonElement>();
-const speedSeg = el('div', { className: 'bw-seg', role: 'group', ariaLabel: '재생 배속' });
+const speedSeg = el('div', {
+  className: 'bw-seg',
+  role: 'group',
+  ariaLabel: initialStrings.speedAriaLabel,
+});
 for (const spd of REPLAY_SPEEDS) {
   const btn = el(
     'button',
@@ -181,11 +223,19 @@ const scrubber = el('input', {
   max: '1000',
   step: '1',
   value: '1000',
-  ariaLabel: '24시간 타임라인 스크러버',
+  ariaLabel: initialStrings.scrubberAriaLabel,
   onInput: () => {
     const frac = Number(scrubber.value) / 1000;
-    const theme = getThemeConfig(activeThemeId());
-    replay.seekFraction(frac, state.payload.keyframes, state.payload.events, state.payload.snapshot, theme);
+    const locale = currentLocale();
+    const theme = getThemeConfig(activeThemeId(), locale);
+    replay.seekFraction(
+      frac,
+      state.payload.keyframes,
+      state.payload.events,
+      state.payload.snapshot,
+      theme,
+      locale
+    );
     syncReplayLoop();
     renderUi();
   },
@@ -202,7 +252,7 @@ const drawerToggleBtn = el(
       renderUi();
     },
   },
-  '사건 로그'
+  initialStrings.eventLog
 );
 
 const timelineControls = el(
@@ -270,17 +320,19 @@ function updateDocumentPrefs(patch: Partial<BotWorldDocumentData>): void {
 }
 
 function updateStageOverlayLabel(): void {
+  const locale = currentLocale();
+  const s = tStrings(locale);
   const snap = currentDisplayedSnapshot();
   if (replay.isReplay) {
-    stageOverlayNote.textContent = `REPLAY · ${formatKstHms(replay.cursorMs)}`;
+    stageOverlayNote.textContent = s.stageOverlayReplay(formatTimeHms(replay.cursorMs, locale));
     return;
   }
   const hid = state.hoveredBotId;
   if (hid && isSafeKey(hid) && Object.hasOwn(snap.bots, hid)) {
-    stageOverlayNote.textContent = `${snap.bots[hid].name} · 클릭해 상세 보기`;
+    stageOverlayNote.textContent = s.stageOverlayHover(scrubAll(snap.bots[hid].name));
     return;
   }
-  stageOverlayNote.textContent = snap.runtime.connected ? 'LIVE · 봇 클릭 선택' : '오프라인 대기';
+  stageOverlayNote.textContent = snap.runtime.connected ? s.stageOverlayLive : s.stageOverlayOffline;
 }
 
 function resolveSelectedBotId(snap: WorldSnapshot): string | null {
@@ -295,31 +347,56 @@ function resolveSelectedBotId(snap: WorldSnapshot): string | null {
   return selectedId;
 }
 
-function renderToolbarOnly(themeId: ThemeId, redactMode: boolean, snap: WorldSnapshot): void {
+function syncChromeLocale(locale: UiLocale): void {
+  const s = tStrings(locale);
+  document.documentElement.lang = locale;
+  document.title = s.appTitleEditor;
+  titleEl.textContent = s.appTitleEditor;
+  startupBtn.textContent = s.themeFull.startup_office;
+  corpBtn.textContent = s.themeFull.corporate_office;
+  themeSeg.setAttribute('aria-label', s.themeAriaLabel);
+  langBtn.textContent = s.langToggleText;
+  langBtn.title = s.langToggleTitle;
+  langBtn.setAttribute('aria-label', s.langToggleTitle);
+  refreshBtn.textContent = s.refresh;
+  liveBtn.textContent = s.live;
+  speedSeg.setAttribute('aria-label', s.speedAriaLabel);
+  scrubber.setAttribute('aria-label', s.scrubberAriaLabel);
+  drawerToggleBtn.textContent = s.eventLog;
+}
+
+function renderToolbarOnly(
+  themeId: ThemeId,
+  redactMode: boolean,
+  snap: WorldSnapshot,
+  locale: UiLocale
+): void {
+  const s = tStrings(locale);
   startupBtn.className =
     themeId === 'startup_office' ? 'bw-seg-btn bw-seg-btn-active' : 'bw-seg-btn';
   corpBtn.className =
     themeId === 'corporate_office' ? 'bw-seg-btn bw-seg-btn-active' : 'bw-seg-btn';
 
-  redactBtn.textContent = redactMode ? '가림 ON' : '가림 OFF';
+  redactBtn.textContent = redactMode ? s.redactOn : s.redactOff;
   redactBtn.className = redactMode ? 'bw-btn bw-btn-warn' : 'bw-btn';
 
   if (snap.runtime.connected) {
-    connPill.textContent = `연결됨 · ${Object.keys(snap.bots).length}봇`;
+    connPill.textContent = s.connectedBots(Object.keys(snap.bots).length);
     connPill.className = 'bw-status-pill bw-status-online';
   } else {
     connPill.textContent = snap.runtime.retryAfterSecs
-      ? `오프라인 (${snap.runtime.retryAfterSecs}s)`
-      : '오프라인';
+      ? s.offlineRetry(snap.runtime.retryAfterSecs)
+      : s.offline;
     connPill.className = 'bw-status-pill bw-status-offline';
   }
 
-  docSyncPill.textContent = docSession?.readOnly ? '읽기 전용 보드' : '.botworld 저장 동기화';
+  docSyncPill.textContent = docSession?.readOnly ? s.docReadOnly : s.docSynced;
 }
 
-function renderTimelineControlsOnly(snap: WorldSnapshot): void {
+function renderTimelineControlsOnly(snap: WorldSnapshot, locale: UiLocale): void {
+  const s = tStrings(locale);
   liveBtn.className = !replay.isReplay ? 'bw-btn bw-btn-active' : 'bw-btn';
-  playBtn.textContent = replay.isReplay && replay.isPlaying ? '❚❚ 일시정지' : '▶ 재생';
+  playBtn.textContent = replay.isReplay && replay.isPlaying ? s.pause : s.play;
   for (const [spd, btn] of speedButtons.entries()) {
     btn.className = replay.speed === spd ? 'bw-seg-btn bw-seg-btn-active' : 'bw-seg-btn';
   }
@@ -327,7 +404,7 @@ function renderTimelineControlsOnly(snap: WorldSnapshot): void {
   const frac = replay.progressFraction(state.payload.keyframes, state.payload.events);
   scrubber.value = String(Math.round(frac * 1000));
   const displayTs = replay.isReplay ? replay.cursorMs : snap.capturedAt;
-  timeLabel.textContent = `${replay.isReplay ? 'REPLAY' : 'LIVE'} ${formatKstHms(displayTs)}`;
+  timeLabel.textContent = `${replay.isReplay ? s.replay : s.live} ${formatTimeHms(displayTs, locale)}`;
 
   drawerToggleBtn.className = state.eventsDrawerOpen ? 'bw-btn bw-btn-active' : 'bw-btn';
   eventsDrawer.classList.toggle('bw-hidden', !state.eventsDrawerOpen);
@@ -338,7 +415,8 @@ function renderStageFrame(
   redactMode: boolean,
   appearances: Record<string, CharacterId>,
   snap: WorldSnapshot,
-  selectedId: string | null
+  selectedId: string | null,
+  locale: UiLocale
 ): void {
   updateStageOverlayLabel();
   renderer.update({
@@ -349,6 +427,7 @@ function renderStageFrame(
     botAppearances: appearances,
     motion: replay.isReplay ? replay.motion : liveMotion,
     replay,
+    locale,
   });
 }
 
@@ -360,10 +439,12 @@ let lastDetailMsgsRef: WorldSnapshot['recentMessages'] | null = null;
 let lastDetailConnected: boolean | null = null;
 let lastDetailSelectedId: string | null | undefined = undefined;
 let lastDetailRedact: boolean | null = null;
+let lastDetailLocale: UiLocale | null = null;
 let lastDetailAppearancesJson = '';
 
 let lastEventsRef: BotWorldStatePayload['events'] | null = null;
 let lastEventsRedact: boolean | null = null;
+let lastEventsLocale: UiLocale | null = null;
 let lastEventsDrawerOpen: boolean | null = null;
 
 function renderSidePanelsIfNeeded(
@@ -371,6 +452,7 @@ function renderSidePanelsIfNeeded(
   selectedId: string | null,
   redactMode: boolean,
   appearances: Record<string, CharacterId>,
+  locale: UiLocale,
   force = false
 ): void {
   const appearancesJson = JSON.stringify(appearances);
@@ -384,6 +466,7 @@ function renderSidePanelsIfNeeded(
     snap.runtime.connected !== lastDetailConnected ||
     selectedId !== lastDetailSelectedId ||
     redactMode !== lastDetailRedact ||
+    locale !== lastDetailLocale ||
     appearancesJson !== lastDetailAppearancesJson;
 
   if (detailChanged) {
@@ -395,6 +478,7 @@ function renderSidePanelsIfNeeded(
     lastDetailConnected = snap.runtime.connected;
     lastDetailSelectedId = selectedId;
     lastDetailRedact = redactMode;
+    lastDetailLocale = locale;
     lastDetailAppearancesJson = appearancesJson;
 
     const selectedBot =
@@ -407,6 +491,7 @@ function renderSidePanelsIfNeeded(
       bot: selectedBot,
       redactMode,
       botAppearances: appearances,
+      locale,
       onSelectCharacter: (botId, charId) => void setBotAppearance(botId, charId).catch(() => {}),
     });
   }
@@ -416,23 +501,28 @@ function renderSidePanelsIfNeeded(
       force ||
       state.payload.events !== lastEventsRef ||
       redactMode !== lastEventsRedact ||
+      locale !== lastEventsLocale ||
       lastEventsDrawerOpen !== true;
 
     if (eventsChanged) {
       lastEventsRef = state.payload.events;
       lastEventsRedact = redactMode;
+      lastEventsLocale = locale;
       lastEventsDrawerOpen = true;
       renderEventTimelineList(eventsDrawer, {
         events: state.payload.events,
         redactMode,
         limit: 120,
+        locale,
         onJumpToTime: (ts) => {
+          const curLocale = currentLocale();
           replay.seekTo(
             ts,
             state.payload.keyframes,
             state.payload.events,
             state.payload.snapshot,
-            getThemeConfig(activeThemeId())
+            getThemeConfig(activeThemeId(), curLocale),
+            curLocale
           );
           syncReplayLoop();
           renderUi();
@@ -456,20 +546,22 @@ function syncReplayLoop(): void {
         const dtSecs = Math.max(0, Math.min(0.25, (nowMs - lastReplayTickMs) / 1000));
         lastReplayTickMs = nowMs;
         const themeId = activeThemeId();
+        const locale = currentLocale();
         replay.step(
           dtSecs,
           state.payload.keyframes,
           state.payload.events,
           state.payload.snapshot,
-          getThemeConfig(themeId)
+          getThemeConfig(themeId, locale),
+          locale
         );
         const snap = currentDisplayedSnapshot();
         const redactMode = activeRedactMode();
         const appearances = mergedAppearances();
         const selectedId = resolveSelectedBotId(snap);
-        renderTimelineControlsOnly(snap);
-        renderStageFrame(themeId, redactMode, appearances, snap, selectedId);
-        renderSidePanelsIfNeeded(snap, selectedId, redactMode, appearances, false);
+        renderTimelineControlsOnly(snap, locale);
+        renderStageFrame(themeId, redactMode, appearances, snap, selectedId, locale);
+        renderSidePanelsIfNeeded(snap, selectedId, redactMode, appearances, locale, false);
         if (replay.isPlaying) {
           replayTimerId = requestAnimationFrame(tick);
         } else {
@@ -485,29 +577,35 @@ function syncReplayLoop(): void {
 }
 
 function renderUi(forceSidePanels = false): void {
+  const locale = currentLocale();
   const themeId = activeThemeId();
   const redactMode = activeRedactMode();
   const appearances = mergedAppearances();
   const snap = currentDisplayedSnapshot();
   const selectedId = resolveSelectedBotId(snap);
 
-  renderToolbarOnly(themeId, redactMode, snap);
-  renderTimelineControlsOnly(snap);
-  renderStageFrame(themeId, redactMode, appearances, snap, selectedId);
-  renderSidePanelsIfNeeded(snap, selectedId, redactMode, appearances, forceSidePanels);
+  syncChromeLocale(locale);
+  renderToolbarOnly(themeId, redactMode, snap, locale);
+  renderTimelineControlsOnly(snap, locale);
+  renderStageFrame(themeId, redactMode, appearances, snap, selectedId, locale);
+  renderSidePanelsIfNeeded(snap, selectedId, redactMode, appearances, locale, forceSidePanels);
 }
 
 function applyIncomingPayload(nextPayload: BotWorldStatePayload): void {
-  const theme = getThemeConfig(activeThemeId());
+  const locale = effectiveLocale(nextPayload.languageSetting, getHostLocale());
+  const theme = getThemeConfig(activeThemeId(), locale);
   const hadPrev = Object.keys(prevLiveSnapshot.bots).length > 0;
   if (hadPrev && nextPayload.snapshot.initialSyncComplete) {
-    const newEvents = diffSnapshots(prevLiveSnapshot, nextPayload.snapshot, false);
+    const newEvents = diffSnapshots(prevLiveSnapshot, nextPayload.snapshot, false, locale);
     if (newEvents.length > 0) {
-      liveMotion.enqueueEvents(newEvents, nextPayload.snapshot, theme);
+      liveMotion.enqueueEvents(newEvents, nextPayload.snapshot, theme, locale);
     }
   }
   prevLiveSnapshot = nextPayload.snapshot;
   state.payload = nextPayload;
+  if (replay.isReplay) {
+    replay.resyncSnapshot(nextPayload.keyframes, nextPayload.snapshot, theme, locale);
+  }
   renderUi();
 }
 
@@ -532,9 +630,29 @@ async function toggleRedact(): Promise<void> {
     state.payload = { ...state.payload, redactMode: res.redactMode };
     renderUi(true);
     if (res.redactMode) {
-      const fresh = await orca.plugin.request('botWorld.getState');
+      const fresh = await orca.plugin.request('botWorld.getState', { locale: getHostLocale() });
       applyIncomingPayload(fresh);
     }
+  } catch {
+    // Ignore
+  }
+}
+
+async function toggleLanguage(): Promise<void> {
+  const nextLanguage: LanguageSetting = currentLocale() === 'ko' ? 'en' : 'ko';
+  try {
+    const res = await orca.plugin.request('botWorld.setLanguage', {
+      language: nextLanguage,
+      hostLocale: getHostLocale(),
+    });
+    state.payload = {
+      ...state.payload,
+      languageSetting: res.languageSetting,
+      locale: res.locale,
+    };
+    renderUi(true);
+    const fresh = await orca.plugin.request('botWorld.getState', { locale: getHostLocale() });
+    applyIncomingPayload(fresh);
   } catch {
     // Ignore
   }
@@ -563,7 +681,7 @@ async function setBotAppearance(botId: string, characterId: CharacterId): Promis
 async function triggerRefresh(): Promise<void> {
   refreshBtn.disabled = true;
   try {
-    const next = await orca.plugin.request('botWorld.refresh');
+    const next = await orca.plugin.request('botWorld.refresh', { locale: getHostLocale() });
     applyIncomingPayload(next);
   } catch {
     // Keep existing state when refresh fails
@@ -573,6 +691,7 @@ async function triggerRefresh(): Promise<void> {
 }
 
 async function boot(): Promise<void> {
+  renderUi(true);
   try {
     orca.on('theme', ({ colorScheme }) => {
       document.documentElement.classList.toggle('light', colorScheme === 'light');
@@ -585,11 +704,11 @@ async function boot(): Promise<void> {
       renderUi(true);
     });
 
-    let initial = await orca.plugin.request('botWorld.getState');
+    let initial = await orca.plugin.request('botWorld.getState', { locale: getHostLocale() });
     // Only turn ON worker redactMode when document requests it; never auto-disable global redactMode=true
     if (state.docData.redactMode && !initial.redactMode) {
       await orca.plugin.request('botWorld.setRedactMode', { redactMode: true });
-      initial = await orca.plugin.request('botWorld.getState');
+      initial = await orca.plugin.request('botWorld.getState', { locale: getHostLocale() });
     }
 
     orca.plugin.on('botWorld.stateUpdated', (payload) => {

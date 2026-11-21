@@ -1,5 +1,17 @@
 import type { JsonValue, OrcaWorkerApi } from 'orca/worker';
-import { diffSnapshots, redactWorldEvent, resolveHandle } from './events.ts';
+import {
+  effectiveLocale,
+  localizeBotErrorMessage,
+  normalizeLanguageSetting,
+  tStrings,
+} from '../shared/i18n.ts';
+import {
+  diffSnapshots,
+  extractWorkerSeq,
+  formatEventSummaries,
+  redactWorldEvent,
+  resolveHandle,
+} from './events.ts';
 import { OrcaCli, type OrcaClient } from './orca-cli.ts';
 import { PollerSession } from './poller.ts';
 import './protocol.ts';
@@ -9,13 +21,17 @@ import {
   type ActorRef,
   type BotWorldStatePayload,
   type CharacterId,
+  type LanguageSetting,
   MAX_BOT_APPEARANCES,
   type ThemeId,
+  type UiLocale,
+  type WorldEventRecord,
   type WorldSnapshot,
-  botStatusLabelKo,
+  botStatusLabel,
   createEmptySnapshot,
   isPoolCharacterId,
   isSafeKey,
+  isValidLanguageSetting,
   isValidThemeId,
   isWorkerActive,
   isWorkerVisibleOnStage,
@@ -27,6 +43,7 @@ const STORAGE_PREFS_KEY = 'botWorld.prefs';
 const STORAGE_TIMELINE_KEY = 'botWorld.timeline';
 export const MAX_IPC_PAYLOAD_BYTES = 220 * 1024;
 const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
+const LOCALE_TAG_RE = /^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{1,8}){0,6}$/;
 const utf8Encoder = new TextEncoder();
 
 function utf8ByteLength(value: unknown): number {
@@ -40,7 +57,7 @@ function truncateUiText(text: string, maxChars: number): string {
   return `${chars.slice(0, maxChars).join('')}…`;
 }
 
-function redactSafeHandle(actor: ActorRef): string {
+function redactSafeHandle(actor: ActorRef, locale: UiLocale = 'en'): string {
   switch (actor.kind) {
     case 'Bot':
       return actor.botId;
@@ -54,7 +71,7 @@ function redactSafeHandle(actor: ActorRef): string {
       return 'orca:door';
     case 'Unknown':
     default:
-      return '비공개';
+      return tStrings(locale).privateLabel;
   }
 }
 
@@ -62,8 +79,10 @@ type StoredPrefs = {
   activeTheme: ThemeId;
   redactMode: boolean;
   botAppearances: Record<string, CharacterId>;
+  languageSetting: LanguageSetting;
   hasThemeOverride: boolean;
   hasRedactOverride: boolean;
+  hasLanguageOverride: boolean;
 };
 
 function makeHostError(code: string, message: string): Error & { code: string } {
@@ -72,13 +91,18 @@ function makeHostError(code: string, message: string): Error & { code: string } 
   return err;
 }
 
-function validatePrefs(raw: unknown, defaults: { theme: ThemeId; redact: boolean }): StoredPrefs {
+function validatePrefs(
+  raw: unknown,
+  defaults: { theme: ThemeId; redact: boolean; language: LanguageSetting }
+): StoredPrefs {
   const base: StoredPrefs = {
     activeTheme: defaults.theme,
     redactMode: defaults.redact,
     botAppearances: {},
+    languageSetting: defaults.language,
     hasThemeOverride: false,
     hasRedactOverride: false,
+    hasLanguageOverride: false,
   };
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     return base;
@@ -91,6 +115,10 @@ function validatePrefs(raw: unknown, defaults: { theme: ThemeId; redact: boolean
   if (typeof clean.redactMode === 'boolean') {
     base.redactMode = clean.redactMode;
     base.hasRedactOverride = clean.hasRedactOverride === true;
+  }
+  if (isValidLanguageSetting(clean.languageSetting)) {
+    base.languageSetting = clean.languageSetting;
+    base.hasLanguageOverride = clean.hasLanguageOverride === true;
   }
   if (clean.botAppearances && typeof clean.botAppearances === 'object' && !Array.isArray(clean.botAppearances)) {
     const map = new Map<string, CharacterId>();
@@ -110,15 +138,28 @@ function validatePrefs(raw: unknown, defaults: { theme: ThemeId; redact: boolean
   return base;
 }
 
-export function prepareSnapshotForUi(snapshot: WorldSnapshot, redactMode: boolean): WorldSnapshot {
+export function prepareSnapshotForUi(
+  snapshot: WorldSnapshot,
+  redactMode: boolean,
+  locale: UiLocale = 'en'
+): WorldSnapshot {
+  const s = tStrings(locale);
   const scrubbed = scrubFullSnapshot(snapshot);
   if (!redactMode) {
     const bots: WorldSnapshot['bots'] = {};
     for (const [id, bot] of Object.entries(scrubbed.bots)) {
       if (!isSafeKey(id)) continue;
+      const localizedStatus =
+        bot.status.kind === 'Error' && bot.status.message !== null
+          ? {
+              kind: 'Error' as const,
+              message: localizeBotErrorMessage(bot.status.message, locale),
+            }
+          : bot.status;
       Object.defineProperty(bots, id, {
         value: {
           ...bot,
+          status: localizedStatus,
           specialty: truncateUiText(bot.specialty, 200),
           currentTaskTitle:
             bot.currentTaskTitle !== null ? truncateUiText(bot.currentTaskTitle, 200) : null,
@@ -186,7 +227,7 @@ export function prepareSnapshotForUi(snapshot: WorldSnapshot, redactMode: boolea
   const bots: WorldSnapshot['bots'] = {};
   for (const [id, bot] of Object.entries(scrubbed.bots)) {
     if (!isSafeKey(id)) continue;
-    const statusLabel = botStatusLabelKo(bot.status);
+    const statusLabel = botStatusLabel(bot.status, locale);
     let maskedStatus = bot.status;
     if (bot.status.kind === 'Working') {
       maskedStatus = { kind: 'Working', tool: null };
@@ -202,14 +243,14 @@ export function prepareSnapshotForUi(snapshot: WorldSnapshot, redactMode: boolea
     } else if (bot.status.kind === 'Error') {
       maskedStatus = {
         kind: 'Error',
-        message: bot.status.message !== null ? '오류 상세 가려짐' : null,
+        message: bot.status.message !== null ? s.errorHiddenLabel : null,
       };
     }
 
     Object.defineProperty(bots, id, {
       value: {
         ...bot,
-        agent: '비공개',
+        agent: s.privateLabel,
         specialty: '',
         status: maskedStatus,
         currentTaskTitle: redactLabel(bot.name, statusLabel),
@@ -228,7 +269,7 @@ export function prepareSnapshotForUi(snapshot: WorldSnapshot, redactMode: boolea
     Object.defineProperty(workers, id, {
       value: {
         ...w,
-        provider: `도우미 #${workerIdx++}`,
+        provider: s.workerNumbered(workerIdx++),
         model: null,
         toolName: null,
         taskTitle: null,
@@ -258,14 +299,14 @@ export function prepareSnapshotForUi(snapshot: WorldSnapshot, redactMode: boolea
   const automations: WorldSnapshot['automations'] = {};
   const autoEntries = Object.entries(scrubbed.automations)
     .filter(([id]) => isSafeKey(id))
-    .sort((a, b) => a[1].name.localeCompare(b[1].name, 'ko', { numeric: true }));
+    .sort((a, b) => a[1].name.localeCompare(b[1].name, locale, { numeric: true }));
   let autoIdx = 1;
   for (const [id, auto] of autoEntries) {
     Object.defineProperty(automations, id, {
       value: {
         ...auto,
-        name: `정기 자동화 #${autoIdx++}`,
-        lastError: auto.lastError ? '오류 상세 가려짐' : null,
+        name: s.automationNumbered(autoIdx++),
+        lastError: auto.lastError ? s.errorHiddenLabel : null,
       },
       enumerable: true,
       writable: true,
@@ -277,7 +318,7 @@ export function prepareSnapshotForUi(snapshot: WorldSnapshot, redactMode: boolea
     ...scrubbed,
     runtime: {
       ...scrubbed.runtime,
-      errorMessage: scrubbed.runtime.errorMessage !== null ? '오류 상세 가려짐' : null,
+      errorMessage: scrubbed.runtime.errorMessage !== null ? s.errorHiddenLabel : null,
     },
     bots,
     workers,
@@ -288,12 +329,12 @@ export function prepareSnapshotForUi(snapshot: WorldSnapshot, redactMode: boolea
       seenIds: [],
     },
     recentMessages: scrubbed.recentMessages.map((m) => {
-      const fromActor = resolveHandle(m.fromHandle, m.runId, scrubbed, scrubbed);
-      const toActor = resolveHandle(m.toHandle, m.runId, scrubbed, scrubbed);
+      const fromActor = resolveHandle(m.fromHandle, m.runId, scrubbed, scrubbed, locale);
+      const toActor = resolveHandle(m.toHandle, m.runId, scrubbed, scrubbed, locale);
       return {
         ...m,
-        fromHandle: redactSafeHandle(fromActor),
-        toHandle: redactSafeHandle(toActor),
+        fromHandle: redactSafeHandle(fromActor, locale),
+        toHandle: redactSafeHandle(toActor, locale),
         subject: '',
         body: '',
         threadId: null,
@@ -303,16 +344,12 @@ export function prepareSnapshotForUi(snapshot: WorldSnapshot, redactMode: boolea
   };
 }
 
-export function formatStatusBarParams(
+export function buildStatusBarText(
   snapshot: WorldSnapshot,
-  redactMode: boolean
-): {
-  id: 'bot-world-status';
-  text: string;
-  icon: 'bot';
-  tone: 'neutral' | 'accent' | 'warning';
-  tooltip: string;
-} {
+  redactMode: boolean,
+  locale: UiLocale = 'en'
+): string {
+  const s = tStrings(locale);
   const bots = Object.values(snapshot.bots);
   const botCount = bots.length;
   const workingCount = bots.filter((b) => b.status.kind === 'Working').length;
@@ -320,62 +357,102 @@ export function formatStatusBarParams(
   const activeWorkerCount = Object.values(snapshot.workers).filter((w) => isWorkerActive(w)).length;
 
   if (!snapshot.runtime.connected && botCount === 0) {
-    return {
-      id: 'bot-world-status',
-      text: redactMode ? '봇 월드 · 가림 · 오프라인' : '봇 월드 (오프라인)',
-      icon: 'bot',
-      tone: 'warning',
-      tooltip: redactMode
-        ? '가림 모드 활성 · 오프라인'
-        : 'Orca 런타임 연결 대기 중',
-    };
+    return redactMode ? s.statusBarOfflineRedacted : s.statusBarOffline;
+  }
+
+  if (locale === 'ko') {
+    if (redactMode) {
+      const parts = [s.statusBarBrand, s.statusBarRedactedTag, `작업 ${workingCount}`];
+      if (activeWorkerCount > 0) parts.push(`워커 +${activeWorkerCount}`);
+      if (needsOwnerCount > 0) parts.push(`결정 ${needsOwnerCount}`);
+      return parts.join(' · ');
+    }
+    if (needsOwnerCount > 0) {
+      const parts = [s.statusBarBrand, `결정 ${needsOwnerCount}`];
+      if (workingCount > 0) parts.push(`작업 ${workingCount}`);
+      if (activeWorkerCount > 0) parts.push(`워커 +${activeWorkerCount}`);
+      return parts.join(' · ');
+    }
+    if (workingCount > 0 || activeWorkerCount > 0) {
+      const parts = [s.statusBarBrand, `작업 ${workingCount}`];
+      if (activeWorkerCount > 0) parts.push(`워커 +${activeWorkerCount}`);
+      return parts.join(' · ');
+    }
+    return `${s.statusBarBrand} · 대기 ${botCount}`;
   }
 
   if (redactMode) {
-    const parts = ['봇 월드', '가림', `작업 ${workingCount}`];
-    if (activeWorkerCount > 0) parts.push(`워커 +${activeWorkerCount}`);
-    if (needsOwnerCount > 0) parts.push(`결정 ${needsOwnerCount}`);
-    return {
-      id: 'bot-world-status',
-      text: parts.join(' · '),
-      icon: 'bot',
-      tone: needsOwnerCount > 0 ? 'warning' : workingCount > 0 ? 'accent' : 'neutral',
-      tooltip: `가림 모드 활성 · 작업 ${workingCount} · 워커 ${activeWorkerCount} · 결정 대기 ${needsOwnerCount}`,
-    };
+    return `${s.statusBarBrand} · ${s.statusBarRedactedTag} · ${workingCount}/${botCount} active`;
   }
-
   if (needsOwnerCount > 0) {
-    const parts = ['봇 월드', `결정 ${needsOwnerCount}`];
-    if (workingCount > 0) parts.push(`작업 ${workingCount}`);
-    if (activeWorkerCount > 0) parts.push(`워커 +${activeWorkerCount}`);
+    const parts = [s.statusBarBrand, `${needsOwnerCount} needs you`];
+    if (workingCount > 0) parts.push(`${workingCount} working`);
+    if (activeWorkerCount > 0) parts.push(`+${activeWorkerCount} workers`);
+    return parts.join(' · ');
+  }
+  if (workingCount > 0 || activeWorkerCount > 0) {
+    const parts = [s.statusBarBrand, `${workingCount} working`];
+    if (activeWorkerCount > 0) parts.push(`+${activeWorkerCount} workers`);
+    return parts.join(' · ');
+  }
+  return `${s.statusBarBrand} · ${botCount} idle`;
+}
+
+export function formatStatusBarParams(
+  snapshot: WorldSnapshot,
+  redactMode: boolean,
+  locale: UiLocale = 'en'
+): {
+  id: 'bot-world-status';
+  text: string;
+  icon: 'bot';
+  tone: 'neutral' | 'accent' | 'warning';
+  tooltip: string;
+} {
+  const s = tStrings(locale);
+  const bots = Object.values(snapshot.bots);
+  const botCount = bots.length;
+  const workingCount = bots.filter((b) => b.status.kind === 'Working').length;
+  const needsOwnerCount = bots.filter((b) => b.status.kind === 'NeedsOwner').length;
+  const activeWorkerCount = Object.values(snapshot.workers).filter((w) => isWorkerActive(w)).length;
+  const text = buildStatusBarText(snapshot, redactMode, locale);
+
+  if (!snapshot.runtime.connected && botCount === 0) {
     return {
       id: 'bot-world-status',
-      text: parts.join(' · '),
+      text,
       icon: 'bot',
       tone: 'warning',
-      tooltip: `결정 대기 ${needsOwnerCount} · 작업 중 ${workingCount} · 활성 워커 ${activeWorkerCount}`,
+      tooltip: redactMode ? s.statusBarOfflineTooltipRedacted : s.statusBarOfflineTooltip,
     };
   }
 
-  if (workingCount > 0 || activeWorkerCount > 0) {
-    const parts = ['봇 월드', `작업 ${workingCount}`];
-    if (activeWorkerCount > 0) parts.push(`워커 +${activeWorkerCount}`);
-    return {
-      id: 'bot-world-status',
-      text: parts.join(' · '),
-      icon: 'bot',
-      tone: 'accent',
-      tooltip: `작업 중 ${workingCount} · 활성 워커 ${activeWorkerCount} · 전체 봇 ${botCount}`,
-    };
+  const tone: 'neutral' | 'accent' | 'warning' =
+    needsOwnerCount > 0
+      ? 'warning'
+      : workingCount > 0 || activeWorkerCount > 0
+        ? 'accent'
+        : 'neutral';
+
+  if (locale === 'ko') {
+    const tooltip = redactMode
+      ? `가림 모드 활성 · 작업 ${workingCount} · 워커 ${activeWorkerCount} · 결정 대기 ${needsOwnerCount}`
+      : needsOwnerCount > 0
+        ? `결정 대기 ${needsOwnerCount} · 작업 중 ${workingCount} · 활성 워커 ${activeWorkerCount}`
+        : workingCount > 0 || activeWorkerCount > 0
+          ? `작업 중 ${workingCount} · 활성 워커 ${activeWorkerCount} · 전체 봇 ${botCount}`
+          : `전체 봇 ${botCount} · 모두 대기 중`;
+    return { id: 'bot-world-status', text, icon: 'bot', tone, tooltip };
   }
 
-  return {
-    id: 'bot-world-status',
-    text: `봇 월드 · 대기 ${botCount}`,
-    icon: 'bot',
-    tone: 'neutral',
-    tooltip: `전체 봇 ${botCount} · 모두 대기 중`,
-  };
+  const tooltip = redactMode
+    ? `Redact mode active · ${workingCount} working · ${activeWorkerCount} workers · ${needsOwnerCount} needs you`
+    : needsOwnerCount > 0
+      ? `${needsOwnerCount} needs you · ${workingCount} working · ${activeWorkerCount} active workers`
+      : workingCount > 0 || activeWorkerCount > 0
+        ? `${workingCount} working · ${activeWorkerCount} active workers · ${botCount} total bots`
+        : `${botCount} total bots · All idle`;
+  return { id: 'bot-world-status', text, icon: 'bot', tone, tooltip };
 }
 
 export class BotWorldWorkerController {
@@ -387,18 +464,23 @@ export class BotWorldWorkerController {
     activeTheme: 'startup_office',
     redactMode: false,
     botAppearances: {},
+    languageSetting: 'auto',
     hasThemeOverride: false,
     hasRedactOverride: false,
+    hasLanguageOverride: false,
   };
   private pollIntervalSec = 5;
+  private hostLocale = 'en';
   private lastSettings: {
     defaultTheme: ThemeId;
     redactMode: boolean;
     pollIntervalSec: number;
+    language: LanguageSetting;
   } = {
     defaultTheme: 'startup_office',
     redactMode: false,
     pollIntervalSec: 5,
+    language: 'auto',
   };
   private prevSnapshot: WorldSnapshot = createEmptySnapshot();
   private workerSeqCounter = 0;
@@ -413,6 +495,33 @@ export class BotWorldWorkerController {
   constructor(orca: OrcaWorkerApi, cli?: OrcaClient) {
     this.orca = orca;
     this.cli = cli ?? new OrcaCli();
+    try {
+      this.hostLocale = Intl.DateTimeFormat().resolvedOptions().locale || 'en';
+    } catch {
+      this.hostLocale = 'en';
+    }
+  }
+
+  currentLocale(): UiLocale {
+    return effectiveLocale(this.prefs.languageSetting, this.hostLocale);
+  }
+
+  private setHostLocale(rawLocale: unknown): boolean {
+    if (rawLocale === undefined || rawLocale === null) return false;
+    if (
+      typeof rawLocale !== 'string' ||
+      rawLocale.length > 64 ||
+      CONTROL_CHAR_RE.test(rawLocale)
+    ) {
+      throw makeHostError('invalid_params', 'Invalid locale');
+    }
+    const trimmed = rawLocale.trim();
+    if (trimmed.length === 0 || trimmed !== rawLocale || !LOCALE_TAG_RE.test(trimmed)) {
+      throw makeHostError('invalid_params', 'Invalid locale');
+    }
+    const prevEffective = this.currentLocale();
+    this.hostLocale = trimmed;
+    return this.currentLocale() !== prevEffective;
   }
 
   async init(options?: { disableAutoLoop?: boolean }): Promise<void> {
@@ -425,10 +534,28 @@ export class BotWorldWorkerController {
     this.prefs = validatePrefs(storedPrefs, {
       theme: settings.defaultTheme,
       redact: settings.redactMode,
+      language: settings.language,
     });
 
     const storedTimeline = await this.orca.storage.get(STORAGE_TIMELINE_KEY);
     this.timeline = TimelineBuffer.hydrate(storedTimeline, Date.now());
+    for (const rec of this.timeline.eventLog) {
+      if (rec.event.kind === 'WorkerStart') {
+        const seq = extractWorkerSeq(rec);
+        if (seq !== undefined) {
+          if (!this.workerSeqMap.has(rec.event.dispatchId)) {
+            if (this.workerSeqMap.size >= 512) {
+              const oldest = this.workerSeqMap.keys().next().value;
+              if (oldest !== undefined) this.workerSeqMap.delete(oldest);
+            }
+            this.workerSeqMap.set(rec.event.dispatchId, seq);
+          }
+          if (seq > this.workerSeqCounter) {
+            this.workerSeqCounter = seq;
+          }
+        }
+      }
+    }
 
     this.registerHandlers();
     await this.updateStatusBar();
@@ -442,10 +569,12 @@ export class BotWorldWorkerController {
     defaultTheme: ThemeId;
     redactMode: boolean;
     pollIntervalSec: number;
+    language: LanguageSetting;
   }> {
     let defaultTheme: ThemeId = 'startup_office';
     let redactMode = false;
     let pollIntervalSec = 5;
+    let language: LanguageSetting = 'auto';
     try {
       const all = await this.orca.settings.get();
       if (all && typeof all === 'object') {
@@ -458,11 +587,12 @@ export class BotWorldWorkerController {
         if (typeof all.pollIntervalSec === 'number' && Number.isFinite(all.pollIntervalSec)) {
           pollIntervalSec = Math.max(2, Math.min(60, Math.trunc(all.pollIntervalSec)));
         }
+        language = normalizeLanguageSetting(all.language);
       }
     } catch {
       // Fallback to defaults if settings cannot be read
     }
-    return { defaultTheme, redactMode, pollIntervalSec };
+    return { defaultTheme, redactMode, pollIntervalSec, language };
   }
 
   private assignWorkerSeq(dispatchId: string): number {
@@ -479,7 +609,9 @@ export class BotWorldWorkerController {
 
   buildStatePayload(sinceMs?: number): BotWorldStatePayload {
     const redact = this.prefs.redactMode;
-    const safeSnapshot = prepareSnapshotForUi(this.session.snapshot, redact);
+    const locale = this.currentLocale();
+    const s = tStrings(locale);
+    const safeSnapshot = prepareSnapshotForUi(this.session.snapshot, redact, locale);
     const payload: BotWorldStatePayload = {
       snapshot: safeSnapshot,
       events: [],
@@ -488,26 +620,50 @@ export class BotWorldWorkerController {
       redactMode: redact,
       botAppearances: { ...this.prefs.botAppearances },
       pollIntervalSec: this.pollIntervalSec,
+      locale,
+      languageSetting: this.prefs.languageSetting,
     };
 
     const baseBytes = utf8ByteLength(payload);
     const timelineBudget = Math.max(0, MAX_IPC_PAYLOAD_BYTES - baseBytes - 1024);
     const { events, keyframes } = this.timeline.exportBounded(sinceMs, timelineBudget);
 
-    const safeEvents = redact
-      ? events.map((ev) => ({
-          timestampMs: ev.timestampMs,
-          summary: ev.redactedSummary,
-          redactedSummary: ev.redactedSummary,
-          event: redactWorldEvent(ev.event, (dispatchId) => {
-            const seq = this.assignWorkerSeq(dispatchId);
-            return `도우미 #${seq}`;
-          }),
-        }))
-      : events;
+    const safeEvents = events.map((ev): WorldEventRecord => {
+      const seqHint =
+        ev.event.kind === 'WorkerStart'
+          ? (extractWorkerSeq(ev) ?? this.assignWorkerSeq(ev.event.dispatchId))
+          : 1;
+      const [summary, redactedSummary] = formatEventSummaries(ev.event, seqHint, locale);
+      const out: WorldEventRecord = redact
+        ? {
+            timestampMs: ev.timestampMs,
+            summary: redactedSummary,
+            redactedSummary,
+            event: redactWorldEvent(
+              ev.event,
+              (dispatchId) =>
+                s.workerNumbered(
+                  ev.event.kind === 'WorkerStart' && dispatchId === ev.event.dispatchId
+                    ? seqHint
+                    : this.assignWorkerSeq(dispatchId)
+                ),
+              locale
+            ),
+          }
+        : {
+            timestampMs: ev.timestampMs,
+            summary,
+            redactedSummary,
+            event: ev.event,
+          };
+      if (ev.event.kind === 'WorkerStart') {
+        out.workerSeq = seqHint;
+      }
+      return out;
+    });
     const safeKeyframes = keyframes.map((kf) => ({
       timestampMs: kf.timestampMs,
-      snapshot: prepareSnapshotForUi(kf.snapshot, redact),
+      snapshot: prepareSnapshotForUi(kf.snapshot, redact, locale),
     }));
 
     payload.events = safeEvents;
@@ -565,7 +721,11 @@ export class BotWorldWorkerController {
   private async updateStatusBar(): Promise<void> {
     if (!this.orca.host.has('statusBar.update')) return;
     try {
-      const params = formatStatusBarParams(this.session.snapshot, this.prefs.redactMode);
+      const params = formatStatusBarParams(
+        this.session.snapshot,
+        this.prefs.redactMode,
+        this.currentLocale()
+      );
       await this.orca.host.call('statusBar.update', params);
     } catch {
       // Ignore status bar refusal in headless/non-desktop tests
@@ -607,10 +767,11 @@ export class BotWorldWorkerController {
       if (!snapshot || this.disposed) return;
 
       const suppressDiff = !hadPrevBots || !snapshot.initialSyncComplete;
-      const newEvents = diffSnapshots(this.prevSnapshot, snapshot, suppressDiff);
+      const locale = this.currentLocale();
+      const newEvents = diffSnapshots(this.prevSnapshot, snapshot, suppressDiff, locale);
       for (const ev of newEvents) {
         const seqHint = ev.kind === 'WorkerStart' ? this.assignWorkerSeq(ev.dispatchId) : 1;
-        this.timeline.pushEvent(ev, nowMs, seqHint);
+        this.timeline.pushEvent(ev, nowMs, seqHint, locale);
       }
 
       const keyframeRecorded = this.timeline.maybeRecordLiveKeyframe(
@@ -677,14 +838,46 @@ export class BotWorldWorkerController {
           ) {
             throw makeHostError('invalid_params', 'sinceMs must be a non-negative finite number');
           }
+          if (this.setHostLocale(clean.locale)) {
+            await this.updateStatusBar();
+          }
           return this.buildStatePayload(clean.sinceMs as number | undefined);
         }
         return this.buildStatePayload();
       }),
 
-      this.orca.panels.handle('botWorld.refresh', async () => {
+      this.orca.panels.handle('botWorld.refresh', async (input) => {
+        if (input !== undefined && input !== null) {
+          if (typeof input !== 'object' || Array.isArray(input)) {
+            throw makeHostError('invalid_params', 'input must be an object');
+          }
+          const clean = stripDangerousKeys(input as Record<string, unknown>);
+          this.setHostLocale(clean.locale);
+        }
         await this.runPollTick(true);
         return this.buildStatePayload();
+      }),
+
+      this.orca.panels.handle('botWorld.setLanguage', async (input) => {
+        if (!input || typeof input !== 'object' || Array.isArray(input)) {
+          throw makeHostError('invalid_params', 'input must be an object');
+        }
+        const clean = stripDangerousKeys(input as Record<string, unknown>);
+        if (!isValidLanguageSetting(clean.language)) {
+          throw makeHostError('invalid_params', 'Invalid language');
+        }
+        if (clean.hostLocale !== undefined) {
+          this.setHostLocale(clean.hostLocale);
+        }
+        this.prefs.languageSetting = clean.language;
+        this.prefs.hasLanguageOverride = true;
+        await this.persistPrefs();
+        await this.updateStatusBar();
+        this.postStateUpdated();
+        return {
+          languageSetting: this.prefs.languageSetting,
+          locale: this.currentLocale(),
+        };
       }),
 
       this.orca.panels.handle('botWorld.setTheme', async (input) => {
@@ -786,6 +979,13 @@ export class BotWorldWorkerController {
             }
             prefsChanged = true;
           }
+          if (next.language !== prev.language || !this.prefs.hasLanguageOverride) {
+            this.prefs.languageSetting = next.language;
+            if (next.language !== prev.language) {
+              this.prefs.hasLanguageOverride = false;
+            }
+            prefsChanged = true;
+          }
           if (prefsChanged) {
             await this.persistPrefs();
           }
@@ -798,13 +998,13 @@ export class BotWorldWorkerController {
       this.orca.commands.register('bot-world.open', async () => {
         await this.runPollTick(false);
         const botCount = Object.keys(this.session.snapshot.bots).length;
-        return `봇 월드 활성 (${botCount}개 봇)`;
+        return tStrings(this.currentLocale()).cmdOpenResult(botCount);
       }),
 
       this.orca.commands.register('bot-world.refresh', async () => {
         await this.runPollTick(true);
         const botCount = Object.keys(this.session.snapshot.bots).length;
-        return `봇 월드 새로고침 완료 (${botCount}개 봇)`;
+        return tStrings(this.currentLocale()).cmdRefreshResult(botCount);
       })
     );
   }

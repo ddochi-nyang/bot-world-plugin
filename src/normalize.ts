@@ -1020,7 +1020,7 @@ export function recomputeBotStatuses(
         }
 
         if (bestStatus.kind === 'Idle' && sortedAgents[0] && asBool(sortedAgents[0].interrupted)) {
-          bestStatus = { kind: 'Error', message: '중단됨' };
+          bestStatus = { kind: 'Error', message: 'Interrupted' };
         }
 
         bot.lastActivityAt = bestUpdated;

@@ -1,8 +1,10 @@
+import { localizeBotErrorMessage, tStrings } from '../shared/i18n.ts';
 import { extractSessionIdFromRef } from './normalize.ts';
 import { scrubAll } from './redact.ts';
 import {
   type ActorRef,
   type InboxMessage,
+  type UiLocale,
   type WorldEvent,
   type WorldEventRecord,
   type WorldSnapshot,
@@ -33,25 +35,87 @@ function safeNullableNum(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
 
-export function actorDisplayName(actor: ActorRef): string {
-  if (!actor || typeof actor !== 'object') return '알 수 없음';
+export function isValidWorkerSeq(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
+}
+
+export function extractWorkerSeq(
+  record: Pick<WorldEventRecord, 'event' | 'redactedSummary' | 'workerSeq'>
+): number | undefined {
+  if (isValidWorkerSeq(record.workerSeq)) {
+    return record.workerSeq;
+  }
+  if (record.event && record.event.kind === 'WorkerStart') {
+    const summaryMatch = /#(\d+)\b/.exec(safeStr(record.redactedSummary));
+    if (summaryMatch && summaryMatch[1]) {
+      const parsed = Number(summaryMatch[1]);
+      if (isValidWorkerSeq(parsed)) return parsed;
+    }
+    const providerMatch = /^(?:Worker|도우미)\s*#(\d+)(?:\s*\(.*\))?$/.exec(
+      safeStr(record.event.provider).trim()
+    );
+    if (providerMatch && providerMatch[1]) {
+      const parsed = Number(providerMatch[1]);
+      if (isValidWorkerSeq(parsed)) return parsed;
+    }
+  }
+  return undefined;
+}
+
+export function localizeWorkerLabel(rawLabel: string, locale: UiLocale): string {
+  const s = tStrings(locale);
+  const trimmed = rawLabel.trim();
+  if (trimmed.length === 0 || trimmed === '도우미' || trimmed === 'Worker') {
+    return s.workerGeneric;
+  }
+  const numberedWithProv = /^(?:도우미|Worker)\s*#(\d+)\s*\((.+)\)$/.exec(trimmed);
+  if (numberedWithProv && numberedWithProv[1] && numberedWithProv[2]) {
+    const seq = Number(numberedWithProv[1]);
+    const numbered =
+      Number.isSafeInteger(seq) && seq >= 1
+        ? s.workerNumbered(seq)
+        : `${s.workerGeneric} #${numberedWithProv[1]}`;
+    return `${numbered} (${numberedWithProv[2].trim()})`;
+  }
+  const numberedMatch = /^(?:도우미|Worker)\s*#(\d+)$/.exec(trimmed);
+  if (numberedMatch && numberedMatch[1]) {
+    const seq = Number(numberedMatch[1]);
+    return Number.isSafeInteger(seq) && seq >= 1
+      ? s.workerNumbered(seq)
+      : `${s.workerGeneric} #${numberedMatch[1]}`;
+  }
+  const match = /^(?:도우미|Worker)\s*\((.+)\)$/.exec(trimmed);
+  if (match && match[1]) {
+    return s.workerWithProvider(match[1].trim());
+  }
+  return rawLabel;
+}
+
+export function actorDisplayName(actor: ActorRef, locale: UiLocale = 'en'): string {
+  const s = tStrings(locale);
+  if (!actor || typeof actor !== 'object') return s.unknownActor;
   switch (actor.kind) {
     case 'Bot':
-      return safeStr(actor.botName, '봇');
+      return safeStr(actor.botName, s.botGeneric);
     case 'Worker':
-      return safeStr(actor.label, '도우미');
+      return localizeWorkerLabel(safeStr(actor.label, s.workerGeneric), locale);
     case 'BossDesk':
-      return '사장님';
+      return s.ownerActor;
     case 'AutomationBoard':
-      return '자동화 보드';
+      return s.landmarks.automationBoard;
     case 'OfficeDoor':
-      return '출입구';
+      return s.landmarks.officeDoor;
     case 'Unknown': {
       const raw = safeStr(actor.raw);
-      return raw.length === 0 ? '알 수 없음' : raw;
+      const trimmed = raw.trim();
+      if (trimmed.length === 0) return s.unknownActor;
+      if (trimmed === '비공개' || trimmed === 'Private') {
+        return s.privateLabel;
+      }
+      return raw;
     }
     default:
-      return '알 수 없음';
+      return s.unknownActor;
   }
 }
 
@@ -126,7 +190,7 @@ function scrubActor(actor: ActorRef): ActorRef {
         kind: 'Worker',
         dispatchId: safeStr(actor.dispatchId),
         parentBotId: safeNullableStr(actor.parentBotId),
-        label: scrubAll(safeStr(actor.label, '도우미')),
+        label: scrubAll(safeStr(actor.label)),
       };
     case 'BossDesk':
       return { kind: 'BossDesk' };
@@ -141,9 +205,14 @@ function scrubActor(actor: ActorRef): ActorRef {
   }
 }
 
-function redactActorRef(actor: ActorRef, workerLabelFor?: (dispatchId: string) => string): ActorRef {
+function redactActorRef(
+  actor: ActorRef,
+  workerLabelFor?: (dispatchId: string) => string,
+  locale: UiLocale = 'en'
+): ActorRef {
+  const s = tStrings(locale);
   if (!actor || typeof actor !== 'object') {
-    return { kind: 'Unknown', raw: '비공개' };
+    return { kind: 'Unknown', raw: s.privateLabel };
   }
   switch (actor.kind) {
     case 'Bot':
@@ -154,7 +223,7 @@ function redactActorRef(actor: ActorRef, workerLabelFor?: (dispatchId: string) =
       };
     case 'Worker': {
       const dispatchId = safeStr(actor.dispatchId);
-      const label = workerLabelFor ? workerLabelFor(dispatchId) : '도우미';
+      const label = workerLabelFor ? workerLabelFor(dispatchId) : s.workerGeneric;
       return {
         kind: 'Worker',
         dispatchId,
@@ -170,14 +239,16 @@ function redactActorRef(actor: ActorRef, workerLabelFor?: (dispatchId: string) =
       return { kind: 'OfficeDoor' };
     case 'Unknown':
     default:
-      return { kind: 'Unknown', raw: '비공개' };
+      return { kind: 'Unknown', raw: s.privateLabel };
   }
 }
 
 export function redactWorldEvent(
   event: WorldEvent,
-  workerLabelFor?: (dispatchId: string) => string
+  workerLabelFor?: (dispatchId: string) => string,
+  locale: UiLocale = 'en'
 ): WorldEvent {
+  const s = tStrings(locale);
   if (!event || typeof event !== 'object') {
     return { kind: 'BotIdle', botId: '', botName: '' };
   }
@@ -189,8 +260,8 @@ export function redactWorldEvent(
       return {
         kind: event.kind,
         messageId: safeStr(event.messageId),
-        from: redactActorRef(event.from, workerLabelFor),
-        to: redactActorRef(event.to, workerLabelFor),
+        from: redactActorRef(event.from, workerLabelFor, locale),
+        to: redactActorRef(event.to, workerLabelFor, locale),
         subject: '',
       };
     case 'WorkerStart': {
@@ -203,7 +274,7 @@ export function redactWorldEvent(
           event.parentBotName !== null && event.parentBotName !== undefined
             ? scrubAll(safeStr(event.parentBotName))
             : null,
-        provider: workerLabelFor ? workerLabelFor(dispatchId) : '도우미',
+        provider: workerLabelFor ? workerLabelFor(dispatchId) : s.workerGeneric,
         taskTitle: null,
       };
     }
@@ -222,14 +293,14 @@ export function redactWorldEvent(
     case 'Escalation':
       return {
         kind: 'Escalation',
-        actor: redactActorRef(event.actor, workerLabelFor),
+        actor: redactActorRef(event.actor, workerLabelFor, locale),
         targetBotId: safeNullableStr(event.targetBotId),
         reason: '',
       };
     case 'ApprovalClosed':
       return {
         kind: 'ApprovalClosed',
-        actor: redactActorRef(event.actor, workerLabelFor),
+        actor: redactActorRef(event.actor, workerLabelFor, locale),
         parentBotId: safeNullableStr(event.parentBotId),
       };
     case 'ItemNeedsYou': {
@@ -285,13 +356,13 @@ export function redactWorldEvent(
         kind: 'BotFailed',
         botId: safeStr(event.botId),
         botName: scrubAll(safeStr(event.botName)),
-        message: event.message !== null && event.message !== undefined ? '오류 상세 가려짐' : null,
+        message: event.message !== null && event.message !== undefined ? s.errorHiddenLabel : null,
       };
     case 'AutomationRun':
       return {
         kind: 'AutomationRun',
         automationId: safeStr(event.automationId),
-        automationName: '정기 자동화',
+        automationName: s.automationGeneric,
         botId: safeNullableStr(event.botId),
         botName:
           event.botName !== null && event.botName !== undefined
@@ -299,7 +370,7 @@ export function redactWorldEvent(
             : null,
         success: Boolean(event.success),
         noReply: Boolean(event.noReply),
-        error: event.error !== null && event.error !== undefined ? '오류 상세 가려짐' : null,
+        error: event.error !== null && event.error !== undefined ? s.errorHiddenLabel : null,
       };
     case 'WorkerExited':
     case 'WorkerReleased': {
@@ -312,7 +383,7 @@ export function redactWorldEvent(
           event.parentBotName !== null && event.parentBotName !== undefined
             ? scrubAll(safeStr(event.parentBotName))
             : null,
-        provider: workerLabelFor ? workerLabelFor(dispatchId) : '도우미',
+        provider: workerLabelFor ? workerLabelFor(dispatchId) : s.workerGeneric,
       };
     }
     case 'BotJoined':
@@ -485,147 +556,259 @@ function truncateChars(text: string, maxChars: number): string {
 
 export function formatEventSummaries(
   event: WorldEvent,
-  workerSeqHint = 1
+  workerSeqHint = 1,
+  locale: UiLocale = 'en'
 ): [string, string] {
+  const s = tStrings(locale);
+  const isKo = locale === 'ko';
   if (!event || typeof event !== 'object') {
-    return ['기록된 사건', '기록된 사건'];
+    return [s.recordedEventFallback, s.recordedEventFallback];
   }
   switch (event.kind) {
     case 'Handoff': {
-      const fromName = scrubAll(actorDisplayName(event.from));
-      const toName = scrubAll(actorDisplayName(event.to));
+      const fromName = scrubAll(actorDisplayName(event.from, locale));
+      const toName = scrubAll(actorDisplayName(event.to, locale));
       const subj = truncateChars(scrubAll(safeStr(event.subject)), 28);
-      const normal = subj.length === 0 ? `인계: ${fromName} → ${toName}` : `인계: ${subj}`;
-      const redacted = `${fromName} → ${toName}: 업무 인계`;
+      if (isKo) {
+        const normal = subj.length === 0 ? `인계: ${fromName} → ${toName}` : `인계: ${subj}`;
+        const redacted = `${fromName} → ${toName}: 업무 인계`;
+        return [normal, redacted];
+      }
+      const normal = subj.length === 0 ? `Handoff: ${fromName} → ${toName}` : `Handoff: ${subj}`;
+      const redacted = `${fromName} → ${toName}: Task handoff`;
       return [normal, redacted];
     }
     case 'Question': {
       const subj = truncateChars(scrubAll(safeStr(event.subject)), 26);
-      return [subj.length === 0 ? '? 질문' : `? ${subj}`, '? 질문'];
+      if (isKo) {
+        return [subj.length === 0 ? '? 질문' : `? ${subj}`, '? 질문'];
+      }
+      return [subj.length === 0 ? '? Question' : `? ${subj}`, '? Question'];
     }
     case 'StatusReport': {
       const subj = truncateChars(scrubAll(safeStr(event.subject)), 26);
-      return [subj.length === 0 ? '상태 보고' : `보고: ${subj}`, '상태 보고'];
+      if (isKo) {
+        return [subj.length === 0 ? '상태 보고' : `보고: ${subj}`, '상태 보고'];
+      }
+      return [subj.length === 0 ? 'Status report' : `Report: ${subj}`, 'Status report'];
     }
     case 'Reply': {
       const subj = truncateChars(scrubAll(safeStr(event.subject)), 26);
-      return [subj.length === 0 ? '회신 전달' : `회신: ${subj}`, '회신 전달'];
+      if (isKo) {
+        return [subj.length === 0 ? '회신 전달' : `회신: ${subj}`, '회신 전달'];
+      }
+      return [subj.length === 0 ? 'Reply sent' : `Reply: ${subj}`, 'Reply sent'];
     }
     case 'WorkerStart': {
-      const cleanProv = scrubAll(safeStr(event.provider, '도우미'));
+      const cleanProv = localizeWorkerLabel(
+        scrubAll(safeStr(event.provider, s.workerGeneric)),
+        locale
+      );
       const rawTitle = safeNullableStr(event.taskTitle);
       const t = rawTitle && rawTitle.trim().length > 0 ? rawTitle : null;
-      const normal = t
-        ? `도우미(${cleanProv}): ${truncateChars(scrubAll(t), 22)}`
-        : `도우미 시작 (${cleanProv})`;
-      return [normal, `도우미 #${workerSeqHint}`];
+      const normal = isKo
+        ? t
+          ? `도우미(${cleanProv}): ${truncateChars(scrubAll(t), 22)}`
+          : `도우미 시작 (${cleanProv})`
+        : t
+          ? `Worker(${cleanProv}): ${truncateChars(scrubAll(t), 22)}`
+          : `Worker started (${cleanProv})`;
+      return [normal, s.workerNumbered(workerSeqHint)];
     }
     case 'WorkerDone': {
-      const subj = truncateChars(scrubAll(safeStr(event.subject)), 24);
-      return [subj.length === 0 ? '완료 보고' : `완료: ${subj}`, '완료 보고'];
+      const rawSubj = safeStr(event.subject);
+      const subj =
+        rawSubj === '완료 보고' || rawSubj === 'Completed'
+          ? ''
+          : truncateChars(scrubAll(rawSubj), 24);
+      if (isKo) {
+        return [subj.length === 0 ? '완료 보고' : `완료: ${subj}`, '완료 보고'];
+      }
+      return [subj.length === 0 ? 'Completed' : `Done: ${subj}`, 'Completed'];
     }
     case 'WorkerFailed': {
-      const subj = truncateChars(scrubAll(safeStr(event.subject)), 24);
-      return [subj.length === 0 ? '작업 실패' : `실패: ${subj}`, '작업 실패'];
+      const rawSubj = safeStr(event.subject);
+      const subj =
+        rawSubj === '작업 실패' || rawSubj === 'Task failed'
+          ? ''
+          : truncateChars(scrubAll(rawSubj), 24);
+      if (isKo) {
+        return [subj.length === 0 ? '작업 실패' : `실패: ${subj}`, '작업 실패'];
+      }
+      return [subj.length === 0 ? 'Task failed' : `Failed: ${subj}`, 'Task failed'];
     }
     case 'Escalation': {
-      const clean = truncateChars(scrubAll(safeStr(event.reason)), 24);
-      return [clean.length === 0 ? '승인/개입 필요' : `개입 필요: ${clean}`, '승인/개입 필요'];
+      const rawReason = safeStr(event.reason);
+      const clean =
+        rawReason === '승인/개입 필요' || rawReason === '승인/차단' || rawReason === 'Needs approval'
+          ? ''
+          : truncateChars(scrubAll(rawReason), 24);
+      if (isKo) {
+        return [clean.length === 0 ? '승인/개입 필요' : `개입 필요: ${clean}`, '승인/개입 필요'];
+      }
+      return [clean.length === 0 ? 'Needs approval' : `Needs help: ${clean}`, 'Needs approval'];
     }
     case 'ApprovalClosed':
-      return ['승인 완료 · 재개', '재개'];
+      return isKo ? ['승인 완료 · 재개', '재개'] : ['Approved · Resumed', 'Resumed'];
     case 'ItemNeedsYou': {
       const num = safeNum(event.number);
       const cleanTitle = truncateChars(scrubAll(safeStr(event.title)), 22);
+      if (isKo) {
+        const normal =
+          cleanTitle.length === 0
+            ? `결정 대기 (#${num})`
+            : `결정 대기 (#${num}): ${cleanTitle}`;
+        return [normal, `결정 대기 (#${num})`];
+      }
       const normal =
         cleanTitle.length === 0
-          ? `결정 대기 (#${num})`
-          : `결정 대기 (#${num}): ${cleanTitle}`;
-      return [normal, `결정 대기 (#${num})`];
+          ? `Needs you (#${num})`
+          : `Needs you (#${num}): ${cleanTitle}`;
+      return [normal, `Needs you (#${num})`];
     }
     case 'BossReplied': {
       const itemNumber = safeNullableNum(event.itemNumber);
       if (itemNumber !== null) {
-        return [`사장님 응답 (#${itemNumber})`, `사장님 응답 (#${itemNumber})`];
+        return isKo
+          ? [`사장님 응답 (#${itemNumber})`, `사장님 응답 (#${itemNumber})`]
+          : [`Owner replied (#${itemNumber})`, `Owner replied (#${itemNumber})`];
       }
       const subj = truncateChars(scrubAll(safeStr(event.subject)), 22);
-      return [subj.length === 0 ? '사장님 응답' : `사장님 응답: ${subj}`, '사장님 응답'];
+      if (isKo) {
+        return [subj.length === 0 ? '사장님 응답' : `사장님 응답: ${subj}`, '사장님 응답'];
+      }
+      return [subj.length === 0 ? 'Owner replied' : `Owner replied: ${subj}`, 'Owner replied'];
     }
     case 'ItemDone': {
       const num = safeNum(event.number);
       const cleanTitle = truncateChars(scrubAll(safeStr(event.title)), 22);
+      if (isKo) {
+        const normal =
+          cleanTitle.length === 0
+            ? `항목 완료 (#${num})`
+            : `항목 완료 (#${num}): ${cleanTitle}`;
+        return [normal, `항목 완료 (#${num})`];
+      }
       const normal =
         cleanTitle.length === 0
-          ? `항목 완료 (#${num})`
-          : `항목 완료 (#${num}): ${cleanTitle}`;
-      return [normal, `항목 완료 (#${num})`];
+          ? `Item done (#${num})`
+          : `Item done (#${num}): ${cleanTitle}`;
+      return [normal, `Item done (#${num})`];
     }
     case 'ItemCanceled': {
       const num = safeNum(event.number);
       const cleanTitle = truncateChars(scrubAll(safeStr(event.title)), 22);
+      if (isKo) {
+        const normal =
+          cleanTitle.length === 0
+            ? `항목 취소 (#${num})`
+            : `항목 취소 (#${num}): ${cleanTitle}`;
+        return [normal, `항목 취소 (#${num})`];
+      }
       const normal =
         cleanTitle.length === 0
-          ? `항목 취소 (#${num})`
-          : `항목 취소 (#${num}): ${cleanTitle}`;
-      return [normal, `항목 취소 (#${num})`];
+          ? `Item canceled (#${num})`
+          : `Item canceled (#${num}): ${cleanTitle}`;
+      return [normal, `Item canceled (#${num})`];
     }
     case 'BotWorking': {
       const rawTool = safeNullableStr(event.tool);
       const t = rawTool && rawTool.trim().length > 0 ? rawTool : null;
-      return [t ? `작업 중 (${scrubAll(t)})` : '작업 중', '작업 중'];
+      if (isKo) {
+        return [t ? `작업 중 (${scrubAll(t)})` : '작업 중', '작업 중'];
+      }
+      return [t ? `Working (${scrubAll(t)})` : 'Working', 'Working'];
     }
     case 'ToolChanged': {
       const rawTool = safeNullableStr(event.tool);
       const t = rawTool && rawTool.trim().length > 0 ? rawTool : null;
-      return [t ? `도구 전환: ${scrubAll(t)}` : '작업 중', '작업 중'];
+      if (isKo) {
+        return [t ? `도구 전환: ${scrubAll(t)}` : '작업 중', '작업 중'];
+      }
+      return [t ? `Tool: ${scrubAll(t)}` : 'Working', 'Working'];
     }
     case 'BotIdle':
-      return ['대기 중', '대기 중'];
+      return isKo ? ['대기 중', '대기 중'] : ['Idle', 'Idle'];
     case 'WaitingAnswer':
-      return ['응답 대기', '응답 대기'];
+      return isKo ? ['응답 대기', '응답 대기'] : ['Waiting for reply', 'Waiting for reply'];
     case 'BotFailed': {
       const rawMsg = safeNullableStr(event.message);
-      const m = rawMsg && rawMsg.trim().length > 0 ? rawMsg : null;
-      return [m ? `오류: ${truncateChars(scrubAll(m), 24)}` : '오류 발생', '오류 발생'];
+      const trimmed = rawMsg && rawMsg.trim().length > 0 ? rawMsg.trim() : null;
+      const m = trimmed ? localizeBotErrorMessage(trimmed, locale) : null;
+      if (isKo) {
+        return [m ? `오류: ${truncateChars(scrubAll(m), 24)}` : '오류 발생', '오류 발생'];
+      }
+      return [m ? `Error: ${truncateChars(scrubAll(m), 24)}` : 'Error occurred', 'Error occurred'];
     }
     case 'AutomationRun': {
       const name = truncateChars(scrubAll(safeStr(event.automationName)), 20);
+      if (isKo) {
+        const normal = event.success
+          ? event.noReply
+            ? `정기 점검 이상 없음: ${name}`
+            : `정기 점검 완료: ${name}`
+          : `정기 점검 실패: ${name}`;
+        const redacted = event.success ? '정기 점검 완료' : '정기 점검 실패';
+        return [normal, redacted];
+      }
       const normal = event.success
         ? event.noReply
-          ? `정기 점검 이상 없음: ${name}`
-          : `정기 점검 완료: ${name}`
-        : `정기 점검 실패: ${name}`;
-      const redacted = event.success ? '정기 점검 완료' : '정기 점검 실패';
+          ? `Check OK: ${name}`
+          : `Check done: ${name}`
+        : `Check failed: ${name}`;
+      const redacted = event.success ? 'Automation done' : 'Automation failed';
       return [normal, redacted];
     }
     case 'BotPaused':
-      return ['일시 정지', '일시 정지'];
+      return isKo ? ['일시 정지', '일시 정지'] : ['Paused', 'Paused'];
     case 'WorkerExited':
-      return ['도우미 종료', '도우미 퇴장'];
+      return isKo ? ['도우미 종료', '도우미 퇴장'] : ['Worker exited', 'Worker left'];
     case 'WorkerReleased':
-      return ['도우미 퇴장', '도우미 퇴장'];
+      return isKo ? ['도우미 퇴장', '도우미 퇴장'] : ['Worker left', 'Worker left'];
     case 'BotJoined': {
       const cleanName = scrubAll(safeStr(event.botName));
-      return [`새 봇 합류: ${cleanName}`, `새 봇 합류 (${cleanName})`];
+      return isKo
+        ? [`새 봇 합류: ${cleanName}`, `새 봇 합류 (${cleanName})`]
+        : [`Bot joined: ${cleanName}`, `Bot joined (${cleanName})`];
     }
     default:
-      return ['기록된 사건', '기록된 사건'];
+      return [s.recordedEventFallback, s.recordedEventFallback];
   }
+}
+
+export function eventTitle(event: WorldEvent, locale: UiLocale = 'en'): string {
+  return formatEventSummaries(event, 1, locale)[0];
+}
+
+export function summarizeEvent(
+  event: WorldEvent,
+  redactMode: boolean,
+  locale: UiLocale = 'en',
+  workerSeqHint = 1
+): string {
+  const [normal, redacted] = formatEventSummaries(event, workerSeqHint, locale);
+  return redactMode ? redacted : normal;
 }
 
 export function createEventRecord(
   event: WorldEvent,
   timestampMs: number,
-  workerSeqHint = 1
+  workerSeqHint = 1,
+  locale: UiLocale = 'en'
 ): WorldEventRecord {
   const scrubbedEvent = scrubWorldEvent(event);
-  const [summary, redactedSummary] = formatEventSummaries(scrubbedEvent, workerSeqHint);
-  return {
+  const validSeq = isValidWorkerSeq(workerSeqHint) ? workerSeqHint : 1;
+  const [summary, redactedSummary] = formatEventSummaries(scrubbedEvent, validSeq, locale);
+  const record: WorldEventRecord = {
     timestampMs,
     summary: scrubAll(summary),
     redactedSummary: scrubAll(redactedSummary),
     event: scrubbedEvent,
   };
+  if (scrubbedEvent.kind === 'WorkerStart') {
+    record.workerSeq = validSeq;
+  }
+  return record;
 }
 
 function isNewInboxMessage(prev: WorldSnapshot, msg: InboxMessage): boolean {
@@ -704,8 +887,10 @@ export function resolveHandle(
   handle: string,
   runId: string | null,
   prev: WorldSnapshot,
-  next: WorldSnapshot
+  next: WorldSnapshot,
+  locale: UiLocale = 'en'
 ): ActorRef {
+  const s = tStrings(locale);
   if (handle === 'orca:items') {
     return { kind: 'BossDesk' };
   }
@@ -733,14 +918,14 @@ export function resolveHandle(
         kind: 'Worker',
         dispatchId: w.dispatchId,
         parentBotId: w.parentBotId ?? resolveRunBot(w.runId ?? runId, prev, next),
-        label: `도우미(${scrubAll(w.provider)})`,
+        label: s.workerWithProvider(scrubAll(w.provider)),
       };
     }
     return {
       kind: 'Worker',
       dispatchId,
       parentBotId: resolveRunBot(runId, prev, next),
-      label: '도우미',
+      label: s.workerGeneric,
     };
   }
 
@@ -768,14 +953,14 @@ export function resolveHandle(
         kind: 'Worker',
         dispatchId: best.dispatchId,
         parentBotId: best.parentBotId ?? resolveRunBot(best.runId ?? runId, prev, next),
-        label: `도우미(${scrubAll(best.provider)})`,
+        label: s.workerWithProvider(scrubAll(best.provider)),
       };
     }
     return {
       kind: 'Worker',
       dispatchId: handle,
       parentBotId: resolveRunBot(runId, prev, next),
-      label: '도우미',
+      label: s.workerGeneric,
     };
   }
 
@@ -816,8 +1001,10 @@ export function resolveHandle(
 export function diffSnapshots(
   prev: WorldSnapshot,
   next: WorldSnapshot,
-  suppress: boolean
+  suppress: boolean,
+  locale: UiLocale = 'en'
 ): WorldEvent[] {
+  const s = tStrings(locale);
   const runtimeChanged =
     prev.runtime.runtimeId !== null &&
     next.runtime.runtimeId !== null &&
@@ -863,8 +1050,8 @@ export function diffSnapshots(
       }
     }
 
-    let from = resolveHandle(msg.fromHandle, msg.runId, prev, next);
-    const to = resolveHandle(msg.toHandle, msg.runId, prev, next);
+    let from = resolveHandle(msg.fromHandle, msg.runId, prev, next, locale);
+    const to = resolveHandle(msg.toHandle, msg.runId, prev, next, locale);
 
     if (from.kind === 'Worker' && from.parentBotId === null) {
       from = {
@@ -904,7 +1091,7 @@ export function diffSnapshots(
     if (msg.fromHandle === 'orca:items') {
       const botId = actorBotId(to) ?? msg.toHandle;
       const botObj = safeOwn(next.bots, botId) ?? safeOwn(prev.bots, botId);
-      const botName = botObj ? scrubAll(botObj.name) : actorDisplayName(to);
+      const botName = botObj ? scrubAll(botObj.name) : actorDisplayName(to, locale);
       let itemNumber: number | null = null;
       if (payloadJson && Array.isArray(payloadJson.botItems) && payloadJson.botItems.length > 0) {
         const first = payloadJson.botItems[0];
@@ -1018,7 +1205,7 @@ export function diffSnapshots(
         dispatchId,
         parentBotId,
         parentBotName,
-        subject: nextW.taskTitle !== null ? scrubAll(nextW.taskTitle) : '완료 보고',
+        subject: nextW.taskTitle !== null ? scrubAll(nextW.taskTitle) : '',
       });
     } else if (
       (nextW.workerState === 'failed' || nextW.dispatchStatus === 'dispatch_failed') &&
@@ -1031,7 +1218,7 @@ export function diffSnapshots(
         dispatchId,
         parentBotId,
         parentBotName,
-        subject: nextW.taskTitle !== null ? scrubAll(nextW.taskTitle) : '작업 실패',
+        subject: nextW.taskTitle !== null ? scrubAll(nextW.taskTitle) : '',
       });
     }
 
@@ -1041,7 +1228,7 @@ export function diffSnapshots(
       kind: 'Worker',
       dispatchId,
       parentBotId,
-      label: `도우미(${scrubAll(nextW.provider)})`,
+      label: s.workerWithProvider(scrubAll(nextW.provider)),
     };
     const workerKey = `worker:${dispatchId}`;
     if (!prevBlocked && nextBlocked && !emittedEscalationKeys.has(workerKey)) {
@@ -1050,7 +1237,7 @@ export function diffSnapshots(
         kind: 'Escalation',
         actor: workerActor,
         targetBotId: parentBotId,
-        reason: nextW.taskTitle !== null ? scrubAll(nextW.taskTitle) : '승인/개입 필요',
+        reason: nextW.taskTitle !== null ? scrubAll(nextW.taskTitle) : '',
       });
     } else if (prevBlocked && !nextBlocked && !emittedApprovalKeys.has(workerKey)) {
       emittedApprovalKeys.add(workerKey);
@@ -1154,7 +1341,7 @@ export function diffSnapshots(
         kind: 'Escalation',
         actor: botActor,
         targetBotId: botId,
-        reason: nextBot.status.reason !== null ? scrubAll(nextBot.status.reason) : '승인/차단',
+        reason: nextBot.status.reason !== null ? scrubAll(nextBot.status.reason) : '',
       });
     } else if (
       prevBot.status.kind === 'Blocked' &&
@@ -1246,7 +1433,7 @@ export function diffSnapshots(
         kind: 'BotFailed',
         botId: nextAuto.botId,
         botName,
-        message: error ?? '자동화 실행 전달 실패',
+        message: error ?? s.automationDispatchFailedLabel,
       });
     }
 

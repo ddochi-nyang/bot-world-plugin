@@ -4,10 +4,18 @@ import {
   POOL_CHARACTER_IDS,
   THEME_BG_PATHS,
   type ThemeId,
+  type UiLocale,
   isPoolCharacterId,
   isValidCharacterId,
   isValidThemeId,
 } from '../src/types.ts';
+import {
+  CHARACTER_TEXTS,
+  type CharacterTextSpec,
+  type LandmarkKind,
+  pickLocale,
+  tStrings,
+} from './i18n.ts';
 
 export type CharacterSpec = {
   id: CharacterId;
@@ -53,130 +61,118 @@ export type ThemeConfig = {
   overflowGrid: OverflowGrid;
 };
 
-export const CHARACTER_SPECS: Readonly<Record<CharacterId, CharacterSpec>> = Object.freeze({
-  ddochi: {
-    id: 'ddochi',
-    displayName: '또치 캐릭터',
-    shortName: '또치',
-    roleHint: '전체 조율',
-    spritePath: CHARACTER_SPRITE_PATHS.ddochi,
-    scale: 1.0,
-    anchor: [0.5, 0.9],
-  },
-  security: {
-    id: 'security',
-    displayName: '보안 캐릭터',
-    shortName: '보안',
-    roleHint: '인증·보안·패치',
-    spritePath: CHARACTER_SPRITE_PATHS.security,
-    scale: 1.0,
-    anchor: [0.5, 0.9],
-  },
-  iac: {
-    id: 'iac',
-    displayName: 'IaC 캐릭터',
-    shortName: 'IaC',
-    roleHint: '인프라 코드·재편',
-    spritePath: CHARACTER_SPRITE_PATHS.iac,
-    scale: 1.0,
-    anchor: [0.5, 0.9],
-  },
-  cloud_ops: {
-    id: 'cloud_ops',
-    displayName: '클라우드 운영 캐릭터',
-    shortName: '클라우드 운영',
-    roleHint: '클러스터·배포·관측',
-    spritePath: CHARACTER_SPRITE_PATHS.cloud_ops,
-    scale: 1.0,
-    anchor: [0.5, 0.9],
-  },
-  cost: {
-    id: 'cost',
-    displayName: '비용 캐릭터',
-    shortName: '비용',
-    roleHint: '클라우드 비용·절감',
-    spritePath: CHARACTER_SPRITE_PATHS.cost,
-    scale: 1.0,
-    anchor: [0.5, 0.9],
-  },
-  internal_tools: {
-    id: 'internal_tools',
-    displayName: '사내 도구 캐릭터',
-    shortName: '사내 도구',
-    roleHint: '사내 도구·자동화',
-    spritePath: CHARACTER_SPRITE_PATHS.internal_tools,
-    scale: 1.0,
-    anchor: [0.5, 0.9],
-  },
-  personal_assist: {
-    id: 'personal_assist',
-    displayName: '업무 보조 캐릭터',
-    shortName: '업무 보조',
-    roleHint: '개발환경·지식 정리',
-    spritePath: CHARACTER_SPRITE_PATHS.personal_assist,
-    scale: 1.0,
-    anchor: [0.5, 0.9],
-  },
-  cve: {
-    id: 'cve',
-    displayName: 'CVE 캐릭터',
-    shortName: 'CVE',
-    roleHint: '취약점 노출·영향 분석',
-    spritePath: CHARACTER_SPRITE_PATHS.cve,
-    scale: 1.0,
-    anchor: [0.5, 0.9],
-  },
-  doc_review: {
-    id: 'doc_review',
-    displayName: '문서 리뷰 캐릭터',
-    shortName: '문서 리뷰',
-    roleHint: '설계·문서 사전 검토',
-    spritePath: CHARACTER_SPRITE_PATHS.doc_review,
-    scale: 1.0,
-    anchor: [0.5, 0.9],
-  },
-  bot_world: {
-    id: 'bot_world',
-    displayName: '봇 월드 캐릭터',
-    shortName: '봇 월드',
-    roleHint: '가상 사무실 앱 개발',
-    spritePath: CHARACTER_SPRITE_PATHS.bot_world,
-    scale: 1.0,
-    anchor: [0.5, 0.9],
-  },
-  worker_helper: {
-    id: 'worker_helper',
-    displayName: '워커 도우미',
-    shortName: '도우미',
-    roleHint: '하위 작업 도우미',
-    spritePath: CHARACTER_SPRITE_PATHS.worker_helper,
-    scale: 0.72,
-    anchor: [0.5, 0.9],
-  },
+const CHARACTER_BASE_GEOMETRY: Readonly<
+  Record<CharacterId, { scale: number; anchor: [number, number] }>
+> = Object.freeze({
+  ddochi: { scale: 1.0, anchor: [0.5, 0.9] },
+  security: { scale: 1.0, anchor: [0.5, 0.9] },
+  iac: { scale: 1.0, anchor: [0.5, 0.9] },
+  cloud_ops: { scale: 1.0, anchor: [0.5, 0.9] },
+  cost: { scale: 1.0, anchor: [0.5, 0.9] },
+  internal_tools: { scale: 1.0, anchor: [0.5, 0.9] },
+  personal_assist: { scale: 1.0, anchor: [0.5, 0.9] },
+  cve: { scale: 1.0, anchor: [0.5, 0.9] },
+  doc_review: { scale: 1.0, anchor: [0.5, 0.9] },
+  bot_world: { scale: 1.0, anchor: [0.5, 0.9] },
+  worker_helper: { scale: 0.72, anchor: [0.5, 0.9] },
 });
+
+function buildCharacterSpecs(locale: UiLocale): Readonly<Record<CharacterId, CharacterSpec>> {
+  const texts = pickLocale(CHARACTER_TEXTS, locale);
+  const entries = (Object.keys(CHARACTER_BASE_GEOMETRY) as CharacterId[]).map((id) => {
+    const geom = CHARACTER_BASE_GEOMETRY[id];
+    const txt = texts[id];
+    const spec: CharacterSpec = {
+      id,
+      displayName: txt.displayName,
+      shortName: txt.shortName,
+      roleHint: txt.roleHint,
+      spritePath: CHARACTER_SPRITE_PATHS[id],
+      scale: geom.scale,
+      anchor: geom.anchor,
+    };
+    return [id, spec] as const;
+  });
+  return Object.freeze(Object.fromEntries(entries) as Record<CharacterId, CharacterSpec>);
+}
+
+const CHARACTER_SPECS_BY_LOCALE: Readonly<
+  Record<UiLocale, Readonly<Record<CharacterId, CharacterSpec>>>
+> = Object.freeze({
+  en: buildCharacterSpecs('en'),
+  ko: buildCharacterSpecs('ko'),
+});
+
+export const CHARACTER_SPECS: Readonly<Record<CharacterId, CharacterSpec>> =
+  CHARACTER_SPECS_BY_LOCALE.en;
+
+export function getCharacterSpecs(
+  locale: UiLocale = 'en'
+): Readonly<Record<CharacterId, CharacterSpec>> {
+  return pickLocale(CHARACTER_SPECS_BY_LOCALE, locale);
+}
+
+export function getCharacterSpec(
+  id: CharacterId,
+  locale: UiLocale = 'en'
+): CharacterSpec {
+  const specs = getCharacterSpecs(locale);
+  return specs[id] ?? specs.ddochi;
+}
+
+export function resolveCharacterText(
+  id: CharacterId,
+  locale: UiLocale = 'en'
+): CharacterTextSpec {
+  const texts = pickLocale(CHARACTER_TEXTS, locale);
+  return texts[id] ?? texts.ddochi;
+}
 
 const NAME_OVERRIDES = new Map<string, CharacterId>([
   ['또치', 'ddochi'],
+  ['ddochi', 'ddochi'],
   ['보안', 'security'],
-  ['IaC', 'iac'],
+  ['security', 'security'],
+  ['iac', 'iac'],
   ['클라우드 운영', 'cloud_ops'],
+  ['cloud ops', 'cloud_ops'],
+  ['cloud_ops', 'cloud_ops'],
   ['비용', 'cost'],
+  ['cost', 'cost'],
   ['사내 도구', 'internal_tools'],
+  ['internal tools', 'internal_tools'],
+  ['internal_tools', 'internal_tools'],
   ['업무 보조', 'personal_assist'],
-  ['CVE', 'cve'],
+  ['personal assist', 'personal_assist'],
+  ['personal_assist', 'personal_assist'],
+  ['cve', 'cve'],
   ['문서 리뷰', 'doc_review'],
+  ['doc review', 'doc_review'],
+  ['doc_review', 'doc_review'],
   ['봇 월드', 'bot_world'],
+  ['bot world', 'bot_world'],
+  ['bot_world', 'bot_world'],
 ]);
 
-export const THEME_CONFIGS: Readonly<Record<ThemeId, ThemeConfig>> = Object.freeze({
+type ThemeGeometry = {
+  id: ThemeId;
+  bgPath: string;
+  designSize: [number, number];
+  bossDeskPos: [number, number];
+  officeDoorPos: [number, number];
+  automationBoardPos: [number, number];
+  botDesks: readonly BotDeskSlot[];
+  overflowGrid: OverflowGrid;
+};
+
+const THEME_GEOMETRIES: Readonly<Record<ThemeId, ThemeGeometry>> = Object.freeze({
   startup_office: {
     id: 'startup_office',
-    name: '스타트업 사무실',
     bgPath: THEME_BG_PATHS.startup_office,
     designSize: [1376, 768],
-    bossDesk: { x: 825, y: 215, label: '사장님 책상' },
-    officeDoor: { x: 1140, y: 625, label: '출입구' },
-    automationBoard: { x: 175, y: 320, label: '자동화 보드' },
+    bossDeskPos: [825, 215],
+    officeDoorPos: [1140, 625],
+    automationBoardPos: [175, 320],
     botDesks: [
       { slot: 0, x: 318, y: 402, facing: 'right', workerOffset: [-42, 22] },
       { slot: 1, x: 462, y: 486, facing: 'right', workerOffset: [-42, 22] },
@@ -197,12 +193,11 @@ export const THEME_CONFIGS: Readonly<Record<ThemeId, ThemeConfig>> = Object.free
   },
   corporate_office: {
     id: 'corporate_office',
-    name: '대기업 사무실',
     bgPath: THEME_BG_PATHS.corporate_office,
     designSize: [1376, 768],
-    bossDesk: { x: 750, y: 200, label: '사장님 책상' },
-    officeDoor: { x: 1015, y: 625, label: '출입구' },
-    automationBoard: { x: 245, y: 195, label: '자동화 보드' },
+    bossDeskPos: [750, 200],
+    officeDoorPos: [1015, 625],
+    automationBoardPos: [245, 195],
     botDesks: [
       { slot: 0, x: 468, y: 276, facing: 'right', workerOffset: [-42, 22] },
       { slot: 1, x: 885, y: 458, facing: 'right', workerOffset: [-42, 20] },
@@ -223,8 +218,51 @@ export const THEME_CONFIGS: Readonly<Record<ThemeId, ThemeConfig>> = Object.free
   },
 });
 
-export function getThemeConfig(themeId: string): ThemeConfig {
-  return isValidThemeId(themeId) ? THEME_CONFIGS[themeId] : THEME_CONFIGS.startup_office;
+function buildThemeConfig(themeId: ThemeId, locale: UiLocale): ThemeConfig {
+  const geom = THEME_GEOMETRIES[themeId];
+  const s = tStrings(locale);
+  return {
+    id: geom.id,
+    name: s.themeFull[themeId],
+    bgPath: geom.bgPath,
+    designSize: geom.designSize,
+    bossDesk: { x: geom.bossDeskPos[0], y: geom.bossDeskPos[1], label: s.landmarks.bossDesk },
+    officeDoor: { x: geom.officeDoorPos[0], y: geom.officeDoorPos[1], label: s.landmarks.officeDoor },
+    automationBoard: {
+      x: geom.automationBoardPos[0],
+      y: geom.automationBoardPos[1],
+      label: s.landmarks.automationBoard,
+    },
+    botDesks: geom.botDesks,
+    overflowGrid: geom.overflowGrid,
+  };
+}
+
+const THEME_CONFIGS_BY_LOCALE: Readonly<Record<UiLocale, Readonly<Record<ThemeId, ThemeConfig>>>> =
+  Object.freeze({
+    en: Object.freeze({
+      startup_office: buildThemeConfig('startup_office', 'en'),
+      corporate_office: buildThemeConfig('corporate_office', 'en'),
+    }),
+    ko: Object.freeze({
+      startup_office: buildThemeConfig('startup_office', 'ko'),
+      corporate_office: buildThemeConfig('corporate_office', 'ko'),
+    }),
+  });
+
+export const THEME_CONFIGS: Readonly<Record<ThemeId, ThemeConfig>> = THEME_CONFIGS_BY_LOCALE.en;
+
+export function resolveThemeName(themeId: ThemeId, locale: UiLocale = 'en'): string {
+  return tStrings(locale).themeFull[themeId];
+}
+
+export function resolveLandmarkLabel(kind: LandmarkKind, locale: UiLocale = 'en'): string {
+  return tStrings(locale).landmarks[kind];
+}
+
+export function getThemeConfig(themeId: string, locale: UiLocale = 'en'): ThemeConfig {
+  const configs = pickLocale(THEME_CONFIGS_BY_LOCALE, locale);
+  return isValidThemeId(themeId) ? configs[themeId] : configs.startup_office;
 }
 
 export function resolveThemeAssetPath(themeId: string): string {
@@ -248,7 +286,7 @@ export function fnv1aHash(text: string): number {
 }
 
 export function resolveCharacterId(botId: string, botName: string): CharacterId {
-  const override = NAME_OVERRIDES.get(botName);
+  const override = NAME_OVERRIDES.get(botName.trim().toLowerCase()) ?? NAME_OVERRIDES.get(botName);
   if (override) return override;
   const idx = fnv1aHash(botId);
   return POOL_CHARACTER_IDS[idx] ?? 'ddochi';

@@ -218,20 +218,30 @@ describe('BotWorld worker lifecycle & panel requests', () => {
     assert.ok(!serializedStorage.includes('AKIA' + 'IOSFODNN7EXAMPLE'));
     assert.ok(!serializedStorage.includes('alice@example.com'));
 
-    // Toggle redact mode ON -> hides task, tool, and message subjects/bodies
+    // Toggle redact mode ON -> hides task, tool, and message subjects/bodies (default English locale)
     await worker.request('botWorld.setRedactMode', { redactMode: true });
-    const redacted = await worker.request('botWorld.getState');
+    const redacted = await worker.request('botWorld.getState', { locale: 'en-US' });
+    assert.equal(redacted.locale, 'en');
     assert.equal(redacted.redactMode, true);
     assert.equal(redacted.snapshot.bots['bot-sec'].currentTool, null);
-    assert.equal(redacted.snapshot.bots['bot-sec'].currentTaskTitle, '보안 · 작업 중');
+    assert.equal(redacted.snapshot.bots['bot-sec'].currentTaskTitle, '보안 · Working');
     assert.equal(redacted.snapshot.recentMessages[0].subject, '');
 
     // StatusBar calls occurred without leaking bot name when redacted
     const statusCalls = host.callsOf('statusBar.update') as Array<{ text: string; tooltip: string }>;
     const lastStatus = statusCalls[statusCalls.length - 1];
-    assert.ok(lastStatus.text.includes('가림'));
+    assert.ok(lastStatus.text.includes('Redacted'));
     assert.ok(!lastStatus.text.includes('보안'));
     assert.ok(!lastStatus.tooltip.includes('보안'));
+
+    // Switching to Korean via host locale updates payload & statusBar to Korean
+    const redactedKo = await worker.request('botWorld.getState', { locale: 'ko-KR' });
+    assert.equal(redactedKo.locale, 'ko');
+    assert.equal(redactedKo.snapshot.bots['bot-sec'].currentTaskTitle, '보안 · 작업 중');
+    const koStatusCalls = host.callsOf('statusBar.update') as Array<{ text: string; tooltip: string }>;
+    const lastKoStatus = koStatusCalls[koStatusCalls.length - 1];
+    assert.ok(lastKoStatus.text.includes('가림'));
+    assert.ok(!lastKoStatus.text.includes('보안'));
 
     await worker.deactivate();
   });
@@ -381,8 +391,8 @@ describe('BotWorld worker lifecycle & panel requests', () => {
       assert.ok(!payloadJson.includes('SECRET_TASK_99'));
       assert.ok(!payloadJson.includes('claude-sonnet-secret'));
       assert.ok(!payloadJson.includes('user@secret.com'));
-      assert.equal(afterSettings.snapshot.bots['b1'].agent, '비공개');
-      assert.equal(afterSettings.snapshot.workers['w-1'].provider, '도우미 #1');
+      assert.equal(afterSettings.snapshot.bots['b1'].agent, 'Private');
+      assert.equal(afterSettings.snapshot.workers['w-1'].provider, 'Worker #1');
       assert.equal(afterSettings.snapshot.workers['w-1'].model, null);
 
       // botAppearances 256 cap

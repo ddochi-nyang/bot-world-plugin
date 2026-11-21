@@ -1,9 +1,9 @@
 {
   "manifestVersion": 2,
   "id": "bot-world",
-  "name": "봇 월드",
-  "version": "0.1.0",
-  "description": "Orca 봇과 하위 워커의 실시간 협업 상태를 가상 사무실 오피스로 시각화하는 읽기 전용 플러그인",
+  "name": "Bot World",
+  "version": "0.1.1",
+  "description": "Read-only virtual office visualizer for Orca bots and live sub-workers",
   "license": "MIT",
   "author": {
     "name": "ddochi-nyang",
@@ -32,7 +32,7 @@
     "panels": [
       {
         "id": "bot-world",
-        "title": "봇 월드",
+        "title": "Bot World",
         "icon": "bot",
         "entry": "panel/index.html",
         "ui": "html"
@@ -41,7 +41,7 @@
     "customEditors": [
       {
         "id": "bot-world-stage",
-        "title": "봇 월드 사무실",
+        "title": "Bot World Office",
         "extensions": [
           ".botworld"
         ],
@@ -53,7 +53,7 @@
     "newFiles": [
       {
         "id": "new-botworld",
-        "title": "새 봇 월드 보드",
+        "title": "New Bot World Board",
         "extension": ".botworld",
         "template": "templates/default.botworld"
       }
@@ -61,17 +61,17 @@
     "commands": [
       {
         "id": "bot-world.open",
-        "title": "봇 월드 열기"
+        "title": "Open Bot World"
       },
       {
         "id": "bot-world.refresh",
-        "title": "봇 월드 새로고침"
+        "title": "Refresh Bot World"
       }
     ],
     "statusBarItems": [
       {
         "id": "bot-world-status",
-        "text": "봇 월드",
+        "text": "Bot World",
         "icon": "bot",
         "command": "bot-world.open"
       }
@@ -84,30 +84,51 @@
     "settings": [
       {
         "key": "defaultTheme",
-        "title": "기본 사무실 테마",
+        "title": "Default Office Theme",
         "type": "string",
         "enum": [
           "startup_office",
           "corporate_office"
         ],
+        "enumLabels": [
+          "Startup Office",
+          "Corporate Office"
+        ],
         "default": "startup_office",
-        "description": "기본 사무실 테마 (startup_office 또는 corporate_office)"
+        "description": "Default office canvas theme (startup_office or corporate_office)"
       },
       {
         "key": "redactMode",
-        "title": "가림 모드",
+        "title": "Redact Mode",
         "type": "boolean",
         "default": false,
-        "description": "민감한 작업명, 도구명, 메시지 본문과 사건 요약을 가립니다"
+        "description": "Hide sensitive task titles, tool names, message bodies, and event summaries"
       },
       {
         "key": "pollIntervalSec",
-        "title": "폴링 주기(초)",
+        "title": "Poll Interval (seconds)",
         "type": "integer",
         "minimum": 2,
         "maximum": 60,
         "default": 5,
-        "description": "기본 상태 폴링 주기(초, 2~60)"
+        "description": "Default status polling interval in seconds (2-60)"
+      },
+      {
+        "key": "language",
+        "title": "Language",
+        "type": "string",
+        "enum": [
+          "auto",
+          "en",
+          "ko"
+        ],
+        "enumLabels": [
+          "Auto (Follow Orca)",
+          "English",
+          "한국어"
+        ],
+        "default": "auto",
+        "description": "Display language for Bot World (auto follows Orca UI locale)"
       }
     ]
   }

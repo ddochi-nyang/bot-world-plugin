@@ -35,7 +35,7 @@ body {
   height: 100%;
   background: var(--bw-bg);
   color: var(--bw-fg);
-  font: 12px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font: 12px/1.45 "Pretendard", "Apple SD Gothic Neo", "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   overflow: hidden;
 }
 

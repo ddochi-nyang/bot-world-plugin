@@ -4,8 +4,9 @@ import {
   type BotState,
   type CharacterId,
   type ThemeId,
+  type UiLocale,
   type WorldSnapshot,
-  botStatusLabelKo,
+  botStatusLabel,
   isSafeKey,
   isWorkerUnverifiableWarning,
   isWorkerVisibleOnStage,
@@ -18,6 +19,7 @@ import {
   resolveCharacterSpritePath,
   resolveThemeAssetPath,
 } from './assets-catalog.ts';
+import { tStrings } from './i18n.ts';
 import {
   type BubbleKind,
   type CarryProp,
@@ -33,6 +35,8 @@ import {
 
 const BOT_SPRITE_DESIGN_PX = 90;
 const WORKER_SPRITE_DESIGN_PX = 74;
+export const CANVAS_FONT_FAMILY =
+  '"Pretendard", "Apple SD Gothic Neo", "Inter", system-ui, sans-serif';
 
 type ViewportTransform = {
   originX: number;
@@ -208,32 +212,33 @@ function shortProvider(provider: string): string {
   return provider;
 }
 
-function statusBadgeStyle(
+export function statusBadgeStyle(
   status: BotActivityStatus,
-  redactMode: boolean
+  redactMode: boolean,
+  locale: UiLocale = 'en'
 ): { text: string; bg: string; fg: string } {
+  const s = tStrings(locale);
   switch (status.kind) {
     case 'Working': {
       const text =
         redactMode || !status.tool || status.tool.length === 0
-          ? '▶ 작업 중'
+          ? s.badgeWorking
           : `▶ ${scrubAll(shortToolName(status.tool))}`;
       return { text, bg: '#1d4ed8', fg: '#ffffff' };
     }
     case 'Idle':
-      return { text: '● 대기', bg: 'rgba(22, 101, 52, 0.9)', fg: '#dcfce7' };
+      return { text: s.badgeIdle, bg: 'rgba(22, 101, 52, 0.9)', fg: '#dcfce7' };
     case 'WaitingAnswer':
-      return { text: '… 응답', bg: '#b45309', fg: '#fef3c7' };
+      return { text: s.badgeWaiting, bg: '#b45309', fg: '#fef3c7' };
     case 'Blocked':
-      return { text: '■ 차단', bg: '#ea580c', fg: '#ffffff' };
+      return { text: s.badgeBlocked, bg: '#ea580c', fg: '#ffffff' };
     case 'NeedsOwner': {
-      const text = status.optionsCount > 0 ? `★ 결정 (${status.optionsCount})` : '★ 결정';
-      return { text, bg: '#eab308', fg: '#422006' };
+      return { text: s.badgeNeedsYou(status.optionsCount), bg: '#eab308', fg: '#422006' };
     }
     case 'Error':
-      return { text: '! 오류', bg: '#dc2626', fg: '#ffffff' };
+      return { text: s.badgeError, bg: '#dc2626', fg: '#ffffff' };
     case 'Paused':
-      return { text: 'Zzz 정지', bg: '#475569', fg: '#e2e8f0' };
+      return { text: s.badgePaused, bg: '#475569', fg: '#e2e8f0' };
   }
 }
 
@@ -299,6 +304,7 @@ export type StageRenderInput = {
   botAppearances: Record<string, CharacterId>;
   motion: MotionDirector;
   replay?: ReplayController | null;
+  locale?: UiLocale;
 };
 
 type HitBox = {
@@ -380,7 +386,9 @@ export class StageRenderer {
 
   update(input: StageRenderInput): void {
     this.lastInput = input;
-    const theme = getThemeConfig(input.themeId);
+    const locale = input.locale ?? 'en';
+    const theme = getThemeConfig(input.themeId, locale);
+    input.motion.setLocale(locale);
     input.motion.syncLayout(input.snapshot, theme);
     this.renderNow();
     this.ensureAnimationLoopIfNeeded();
@@ -431,7 +439,7 @@ export class StageRenderer {
     }
 
     const input = this.lastInput;
-    const theme = getThemeConfig(input.themeId);
+    const theme = getThemeConfig(input.themeId, input.locale ?? 'en');
     if (input.replay?.isReplay && input.replay.isPlaying) {
       // Replay controller advances its own motion director when playing
     } else {
@@ -495,7 +503,9 @@ export class StageRenderer {
     ctx.fillStyle = '#1c1917';
     ctx.fillRect(0, 0, cssW, cssH);
 
-    const theme: ThemeConfig = getThemeConfig(input.themeId);
+    const locale = input.locale ?? 'en';
+    const s = tStrings(locale);
+    const theme: ThemeConfig = getThemeConfig(input.themeId, locale);
     const vt = createViewportTransform(cssW, cssH, theme.designSize);
     const bgW = vt.designW * vt.scale;
     const bgH = vt.designH * vt.scale;
@@ -628,7 +638,7 @@ export class StageRenderer {
       );
       const cleanName = scrubAll(bot.name);
       const taskTitle = redactMode
-        ? `${cleanName} · ${botStatusLabelKo(bot.status)}`
+        ? `${cleanName} · ${botStatusLabel(bot.status, locale)}`
         : bot.currentTaskTitle !== null
           ? scrubAll(bot.currentTaskTitle)
           : null;
@@ -710,7 +720,7 @@ export class StageRenderer {
         yBobPx
       );
       const badgeProvider = redactMode
-        ? `도우미 #${redactedWorkerBadgeIdx++}`
+        ? s.workerNumbered(redactedWorkerBadgeIdx++)
         : shortProvider(scrubAll(worker.provider));
       workerOverlays.push({
         provider: badgeProvider,
@@ -751,7 +761,7 @@ export class StageRenderer {
         pose.yBobPx
       );
       const badgeProvider = redactMode
-        ? `도우미 #${redactedWorkerBadgeIdx++}`
+        ? s.workerNumbered(redactedWorkerBadgeIdx++)
         : shortProvider(scrubAll(meta.provider));
       workerOverlays.push({
         provider: badgeProvider,
@@ -855,7 +865,7 @@ export class StageRenderer {
     for (const dp of deskProps) {
       const left = Math.max(bgLeft + 4, Math.min(bgRight - 34 * uiScale, dp.screenX));
       const top = Math.max(bgTop + 4, Math.min(bgBottom - 24 * uiScale, dp.screenY));
-      ctx.font = `700 ${Math.round(10 * uiScale)}px system-ui, sans-serif`;
+      ctx.font = `700 ${Math.round(10 * uiScale)}px ${CANVAS_FONT_FAMILY}`;
       const estW = Math.max(24 * uiScale, ctx.measureText(dp.glyph).width + 12 * uiScale);
       const estH = 20 * uiScale;
       drawRoundedRect(ctx, left, top, estW, estH, 6 * uiScale);
@@ -880,7 +890,7 @@ export class StageRenderer {
         : w.activity === 'blocked'
           ? 'rgba(234, 88, 12, 0.94)'
           : 'rgba(15, 118, 110, 0.94)';
-      ctx.font = `600 ${Math.round(9 * uiScale)}px system-ui, sans-serif`;
+      ctx.font = `600 ${Math.round(9 * uiScale)}px ${CANVAS_FONT_FAMILY}`;
       const estW = Math.max(32 * uiScale, ctx.measureText(label).width + 12 * uiScale);
       const estH = 18 * uiScale;
       const left = Math.max(bgLeft + 4, Math.min(bgRight - estW - 4, w.screenX - 20 * vt.scale));
@@ -914,17 +924,14 @@ export class StageRenderer {
       const top = Math.max(bgTop + 4, Math.min(bgBottom - estHeight - 4, desiredTop));
 
       if (overlay.status.kind === 'NeedsOwner') {
-        const notice =
-          overlay.status.count > 1
-            ? `▲ 결정 대기 (${overlay.status.count}) · 사장님`
-            : '▲ 결정 대기 · 사장님';
+        const notice = s.calloutNeedsOwner(overlay.status.count);
         drawRoundedRect(ctx, left, top, boxW, calloutH - 2, 7 * uiScale);
         ctx.fillStyle = pulseHigh ? '#facc15' : '#fbbf24';
         ctx.fill();
         ctx.strokeStyle = '#78350f';
         ctx.lineWidth = 1;
         ctx.stroke();
-        ctx.font = `700 ${Math.round(9.5 * uiScale)}px system-ui, sans-serif`;
+        ctx.font = `700 ${Math.round(9.5 * uiScale)}px ${CANVAS_FONT_FAMILY}`;
         ctx.fillStyle = '#451a03';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
@@ -952,16 +959,16 @@ export class StageRenderer {
           : 'rgba(255,255,255,0.2)';
       ctx.stroke();
 
-      const badge = statusBadgeStyle(overlay.status, redactMode);
+      const badge = statusBadgeStyle(overlay.status, redactMode, locale);
       const workerTag = overlay.activeWorkerCount > 0 ? `+${overlay.activeWorkerCount}` : null;
-      ctx.font = `600 ${Math.round(9 * uiScale)}px system-ui, sans-serif`;
+      ctx.font = `600 ${Math.round(9 * uiScale)}px ${CANVAS_FONT_FAMILY}`;
       const badgeW = Math.min(boxW * 0.45, ctx.measureText(badge.text).width + 10 * uiScale);
       const workerW = workerTag ? ctx.measureText(workerTag).width + 8 * uiScale : 0;
       const rowY = pillTop + (overlay.taskTitle ? 11 * uiScale : pillH * 0.5);
 
       const rightUsed = badgeW + (workerW > 0 ? workerW + 3 : 0) + 6 * uiScale;
       const nameMaxW = Math.max(24, boxW - rightUsed - 8 * uiScale);
-      ctx.font = `600 ${Math.round(10.5 * uiScale)}px system-ui, sans-serif`;
+      ctx.font = `600 ${Math.round(10.5 * uiScale)}px ${CANVAS_FONT_FAMILY}`;
       ctx.fillStyle = '#f8fafc';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
@@ -973,7 +980,7 @@ export class StageRenderer {
         drawRoundedRect(ctx, wx, rowY - 7 * uiScale, workerW, 14 * uiScale, 4 * uiScale);
         ctx.fillStyle = '#0f766e';
         ctx.fill();
-        ctx.font = `600 ${Math.round(8.5 * uiScale)}px system-ui, sans-serif`;
+        ctx.font = `600 ${Math.round(8.5 * uiScale)}px ${CANVAS_FONT_FAMILY}`;
         ctx.fillStyle = '#ccfbf1';
         ctx.textAlign = 'center';
         ctx.fillText(workerTag, wx + workerW * 0.5, rowY);
@@ -984,13 +991,13 @@ export class StageRenderer {
       drawRoundedRect(ctx, bx, rowY - 7 * uiScale, badgeW, 14 * uiScale, 4 * uiScale);
       ctx.fillStyle = badge.bg;
       ctx.fill();
-      ctx.font = `600 ${Math.round(8.5 * uiScale)}px system-ui, sans-serif`;
+      ctx.font = `600 ${Math.round(8.5 * uiScale)}px ${CANVAS_FONT_FAMILY}`;
       ctx.fillStyle = badge.fg;
       ctx.textAlign = 'center';
       ctx.fillText(truncateTextToWidth(ctx, badge.text, badgeW - 4), bx + badgeW * 0.5, rowY);
 
       if (overlay.taskTitle) {
-        ctx.font = `400 ${Math.round(9 * uiScale)}px system-ui, sans-serif`;
+        ctx.font = `400 ${Math.round(9 * uiScale)}px ${CANVAS_FONT_FAMILY}`;
         ctx.fillStyle = '#cbd5e1';
         ctx.textAlign = 'center';
         ctx.fillText(
@@ -1036,7 +1043,7 @@ export class StageRenderer {
       ctx.lineWidth = 1.2;
       ctx.strokeStyle = col.border;
       ctx.stroke();
-      ctx.font = '600 10.5px system-ui, sans-serif';
+      ctx.font = `600 10.5px ${CANVAS_FONT_FAMILY}`;
       ctx.fillStyle = col.fg;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -1149,7 +1156,7 @@ export class StageRenderer {
     bgBottom: number
   ): Rect {
     const [ptX, ptY] = designToScreen(vt, dx, dy);
-    ctx.font = `700 ${Math.round(10.5 * uiScale)}px system-ui, sans-serif`;
+    ctx.font = `700 ${Math.round(10.5 * uiScale)}px ${CANVAS_FONT_FAMILY}`;
     const estW = Math.max(64 * uiScale, ctx.measureText(label).width + 18 * uiScale);
     const estH = 24 * uiScale;
     const left = Math.max(bgLeft + 4, Math.min(bgRight - estW - 4, ptX - 52 * vt.scale));

@@ -120,36 +120,59 @@ describe('Secret & PII scrubbing and redactMode', () => {
       payload: '{"secret":true}',
     });
 
-    const redactedSnap = prepareSnapshotForUi(snap, true);
-    assert.equal(redactedSnap.runtime.errorMessage, '오류 상세 가려짐');
-    assert.equal(redactedSnap.bots['bot-1'].agent, '비공개');
+    const redactedSnap = prepareSnapshotForUi(snap, true, 'en');
+    assert.equal(redactedSnap.runtime.errorMessage, 'Error details hidden');
+    assert.equal(redactedSnap.bots['bot-1'].agent, 'Private');
     assert.equal(redactedSnap.bots['bot-1'].currentTool, null);
     assert.equal(redactedSnap.bots['bot-1'].status.kind, 'Working');
     if (redactedSnap.bots['bot-1'].status.kind === 'Working') {
       assert.equal(redactedSnap.bots['bot-1'].status.tool, null);
     }
-    assert.equal(redactedSnap.bots['bot-1'].currentTaskTitle, redactLabel('보안', '작업 중'));
-    assert.equal(redactedSnap.workers['d-1'].provider, '도우미 #1');
+    assert.equal(redactedSnap.bots['bot-1'].currentTaskTitle, redactLabel('보안', 'Working'));
+    assert.equal(redactedSnap.workers['d-1'].provider, 'Worker #1');
     assert.equal(redactedSnap.workers['d-1'].model, null);
     assert.equal(redactedSnap.workers['d-1'].worktreeId, null);
     assert.equal(redactedSnap.recentMessages[0].fromHandle, 'bot-1');
-    assert.equal(redactedSnap.recentMessages[0].toHandle, '비공개');
+    assert.equal(redactedSnap.recentMessages[0].toHandle, 'Private');
     assert.equal(redactedSnap.recentMessages[0].subject, '');
     assert.equal(redactedSnap.recentMessages[0].body, '');
     assert.equal(redactedSnap.recentMessages[0].payload, null);
     assert.equal(redactedSnap.recentMessages[0].threadId, null);
 
+    const redactedSnapKo = prepareSnapshotForUi(snap, true, 'ko');
+    assert.equal(redactedSnapKo.runtime.errorMessage, '오류 상세 가려짐');
+    assert.equal(redactedSnapKo.bots['bot-1'].agent, '비공개');
+    assert.equal(redactedSnapKo.bots['bot-1'].currentTaskTitle, redactLabel('보안', '작업 중'));
+    assert.equal(redactedSnapKo.workers['d-1'].provider, '도우미 #1');
+    assert.equal(redactedSnapKo.recentMessages[0].toHandle, '비공개');
+
     const evRec = createEventRecord(
       { kind: 'BotWorking', botId: 'bot-1', botName: '보안', tool: 'run_command' },
-      1795185500000
+      1795185500000,
+      1,
+      'en'
     );
-    assert.equal(evRec.summary, '작업 중 (run_command)');
-    assert.equal(evRec.redactedSummary, '작업 중');
+    assert.equal(evRec.summary, 'Working (run_command)');
+    assert.equal(evRec.redactedSummary, 'Working');
 
-    const sbRedacted = formatStatusBarParams(snap, true);
+    const evRecKo = createEventRecord(
+      { kind: 'BotWorking', botId: 'bot-1', botName: '보안', tool: 'run_command' },
+      1795185500000,
+      1,
+      'ko'
+    );
+    assert.equal(evRecKo.summary, '작업 중 (run_command)');
+    assert.equal(evRecKo.redactedSummary, '작업 중');
+
+    const sbRedacted = formatStatusBarParams(snap, true, 'en');
     assert.ok(!sbRedacted.text.includes('보안'));
-    assert.ok(sbRedacted.text.includes('가림'));
+    assert.ok(sbRedacted.text.includes('Redacted'));
     assert.ok(!sbRedacted.tooltip.includes('보안'));
+
+    const sbRedactedKo = formatStatusBarParams(snap, true, 'ko');
+    assert.ok(!sbRedactedKo.text.includes('보안'));
+    assert.ok(sbRedactedKo.text.includes('가림'));
+    assert.ok(!sbRedactedKo.tooltip.includes('보안'));
   });
 
   test('handles new secret patterns, truncated PEM bodies, and O(N) card matching without false positives', () => {

@@ -1,23 +1,31 @@
-import { actorDisplayName, actorParentOrSelfBotId, resolveHandle } from '../src/events.ts';
+import {
+  actorDisplayName,
+  actorParentOrSelfBotId,
+  extractWorkerSeq,
+  resolveHandle,
+  summarizeEvent,
+} from '../src/events.ts';
 import { scrubAll } from '../src/redact.ts';
-import { formatKstHms } from '../src/timeline.ts';
+import { formatTimeHms } from '../src/timeline.ts';
 import {
   type ActorRef,
   type BotState,
   type CharacterId,
   POOL_CHARACTER_IDS,
+  type UiLocale,
   type WorldEventRecord,
   type WorldSnapshot,
-  botStatusLabelKo,
+  botStatusLabel,
   isSafeKey,
   isWorkerActive,
 } from '../src/types.ts';
 import {
-  CHARACTER_SPECS,
+  getCharacterSpec,
   resolveCharacterIdWithPrefs,
   resolveCharacterSpritePath,
 } from './assets-catalog.ts';
 import { type DomChild, clearChildren, el } from './dom.ts';
+import { localizeBotErrorMessage, tStrings } from './i18n.ts';
 
 function truncateChars(text: string, maxChars: number): string {
   const chars = Array.from(text);
@@ -33,37 +41,26 @@ function shortIsoHms(iso: string): string {
   return iso.slice(0, 5);
 }
 
-function itemStatusKo(status: string): string {
-  switch (status) {
-    case 'needs_you':
-      return '결정 대기';
-    case 'in_progress':
-      return '진행 중';
-    case 'planned':
-      return '예정됨';
-    case 'done':
-      return '완료';
-    case 'canceled':
-      return '취소됨';
-    default:
-      return status;
-  }
+function itemStatusLabel(status: string, locale: UiLocale): string {
+  const labels = tStrings(locale).itemStatusLabels;
+  return Object.hasOwn(labels, status) ? labels[status] : status;
 }
 
-function redactActorName(actor: ActorRef): string {
+function redactActorName(actor: ActorRef, locale: UiLocale): string {
+  const s = tStrings(locale);
   switch (actor.kind) {
     case 'Bot':
       return scrubAll(actor.botName);
     case 'Worker':
-      return '도우미';
+      return s.workerGeneric;
     case 'BossDesk':
-      return '사장님';
+      return s.ownerActor;
     case 'AutomationBoard':
-      return '자동화 보드';
+      return s.landmarks.automationBoard;
     case 'OfficeDoor':
-      return '출입구';
+      return s.landmarks.officeDoor;
     case 'Unknown':
-      return '비공개';
+      return s.privateLabel;
   }
 }
 
@@ -95,10 +92,20 @@ export function renderBotDetail(
     botAppearances: Record<string, CharacterId>;
     onSelectCharacter: (botId: string, charId: CharacterId) => void;
     onClose?: () => void;
+    locale?: UiLocale;
   }
 ): void {
   clearChildren(container);
-  const { snapshot, bot, redactMode, botAppearances, onSelectCharacter, onClose } = options;
+  const {
+    snapshot,
+    bot,
+    redactMode,
+    botAppearances,
+    onSelectCharacter,
+    onClose,
+    locale = 'en',
+  } = options;
+  const s = tStrings(locale);
 
   if (!bot) {
     const botList = Object.values(snapshot.bots);
@@ -106,13 +113,11 @@ export function renderBotDetail(
       el(
         'div',
         { className: 'bw-empty' },
-        el('div', { className: 'bw-empty-title' }, '봇을 선택하세요'),
+        el('div', { className: 'bw-empty-title' }, s.selectBotTitle),
         el(
           'div',
           { className: 'bw-empty-desc' },
-          botList.length > 0
-            ? '오피스 캔버스에서 봇을 클릭하면 진행 작업, 최근 요청/답변, 열린 항목, 소속 워커와 10종 캐릭터 교체를 볼 수 있습니다.'
-            : '표시할 봇이 없습니다. Orca 런타임이 연결되면 봇들이 사무실에 배치됩니다.'
+          botList.length > 0 ? s.selectBotDescWithBots : s.selectBotDescEmpty
         )
       )
     );
@@ -121,9 +126,9 @@ export function renderBotDetail(
 
   const cleanName = scrubAll(bot.name);
   const cleanAgent = scrubAll(bot.agent);
-  const displayAgent = redactMode ? '비공개' : cleanAgent;
+  const displayAgent = redactMode ? s.privateLabel : cleanAgent;
   const cleanSpecialty = scrubAll(bot.specialty);
-  const statusLabel = botStatusLabelKo(bot.status);
+  const statusLabel = botStatusLabel(bot.status, locale);
   const activeCharId = resolveCharacterIdWithPrefs(botAppearances, bot.id, bot.name);
 
   // Header
@@ -131,7 +136,7 @@ export function renderBotDetail(
     el('img', {
       className: 'bw-avatar',
       src: resolveCharacterSpritePath(activeCharId),
-      alt: `${cleanName} 캐릭터`,
+      alt: s.avatarAlt(cleanName),
     }),
     el(
       'div',
@@ -146,7 +151,7 @@ export function renderBotDetail(
       cleanSpecialty && !redactMode
         ? el('div', { className: 'bw-detail-specialty' }, cleanSpecialty)
         : redactMode
-          ? el('div', { className: 'bw-detail-specialty' }, '가림 모드 활성: 세부 분야 숨김')
+          ? el('div', { className: 'bw-detail-specialty' }, s.redactSpecialtyHidden)
           : null
     ),
   ];
@@ -158,7 +163,7 @@ export function renderBotDetail(
         {
           className: 'bw-btn bw-btn-ghost',
           type: 'button',
-          ariaLabel: '상세 닫기',
+          ariaLabel: s.closeDetailAria,
           onClick: onClose,
         },
         '✕'
@@ -174,21 +179,23 @@ export function renderBotDetail(
   const taskLine = redactMode
     ? `${cleanName} · ${statusLabel}`
     : bot.status.kind === 'NeedsOwner' && bot.status.prompt
-      ? `결정 필요: ${scrubAll(bot.status.prompt)}`
+      ? s.needsDecisionPrefix(scrubAll(bot.status.prompt))
       : bot.currentTaskTitle && bot.currentTaskTitle.trim().length > 0
         ? scrubAll(bot.currentTaskTitle)
-        : '진행 중인 작업 없음';
+        : bot.status.kind === 'Error' && bot.status.message && bot.status.message.trim().length > 0
+          ? scrubAll(localizeBotErrorMessage(bot.status.message, locale))
+          : s.noActiveTask;
 
   const toolLine =
     !redactMode && bot.currentTool && bot.currentTool.trim().length > 0
-      ? `사용 도구: ${scrubAll(bot.currentTool)}`
+      ? s.usingToolPrefix(scrubAll(bot.currentTool))
       : null;
 
   body.appendChild(
     el(
       'section',
       { className: 'bw-section' },
-      el('div', { className: 'bw-section-title' }, '진행 중 작업 (읽기 전용)'),
+      el('div', { className: 'bw-section-title' }, s.sectionActiveTask),
       el(
         'div',
         { className: 'bw-card' },
@@ -201,7 +208,7 @@ export function renderBotDetail(
   // Section 2: Character switcher (10 pool skins)
   const charGrid = el('div', { className: 'bw-char-grid' });
   for (const cid of POOL_CHARACTER_IDS) {
-    const spec = CHARACTER_SPECS[cid];
+    const spec = getCharacterSpec(cid, locale);
     const isActive = cid === activeCharId;
     charGrid.appendChild(
       el(
@@ -225,7 +232,7 @@ export function renderBotDetail(
     el(
       'section',
       { className: 'bw-section' },
-      el('div', { className: 'bw-section-title' }, '캐릭터 교체 (10종)'),
+      el('div', { className: 'bw-section-title' }, s.sectionSwitchCharacter),
       charGrid
     )
   );
@@ -235,8 +242,8 @@ export function renderBotDetail(
   let msgCount = 0;
   for (let i = snapshot.recentMessages.length - 1; i >= 0 && msgCount < 10; i--) {
     const msg = snapshot.recentMessages[i];
-    const fromActor = resolveHandle(msg.fromHandle, msg.runId, snapshot, snapshot);
-    const toActor = resolveHandle(msg.toHandle, msg.runId, snapshot, snapshot);
+    const fromActor = resolveHandle(msg.fromHandle, msg.runId, snapshot, snapshot, locale);
+    const toActor = resolveHandle(msg.toHandle, msg.runId, snapshot, snapshot, locale);
     const related =
       actorParentOrSelfBotId(fromActor) === bot.id ||
       actorParentOrSelfBotId(toActor) === bot.id ||
@@ -247,28 +254,21 @@ export function renderBotDetail(
     if (!related) continue;
     msgCount++;
 
-    const fromName = redactMode ? redactActorName(fromActor) : scrubAll(actorDisplayName(fromActor));
-    const toName = redactMode ? redactActorName(toActor) : scrubAll(actorDisplayName(toActor));
-    const typeLabel =
-      msg.msgType === 'handoff'
-        ? '인계'
-        : msg.msgType === 'question'
-          ? '질문'
-          : msg.msgType === 'worker_done'
-            ? '완료'
-            : msg.msgType === 'escalation'
-              ? '개입'
-              : msg.msgType === 'approval_closed'
-                ? '승인'
-                : msg.msgType === 'status'
-                  ? '보고/답변'
-                  : '메시지';
+    const fromName = redactMode
+      ? redactActorName(fromActor, locale)
+      : scrubAll(actorDisplayName(fromActor, locale));
+    const toName = redactMode
+      ? redactActorName(toActor, locale)
+      : scrubAll(actorDisplayName(toActor, locale));
+    const typeLabel = Object.hasOwn(s.msgTypeLabels, msg.msgType)
+      ? s.msgTypeLabels[msg.msgType]
+      : s.msgTypeDefault;
 
     const summary = redactMode
-      ? `${cleanName} · ${typeLabel} 메시지`
+      ? s.msgRedactedSummary(cleanName, typeLabel)
       : msg.subject.trim().length > 0
         ? truncateChars(scrubAll(msg.subject), 64)
-        : `${typeLabel} 메시지`;
+        : s.msgTypeFallback(typeLabel);
 
     const bodyPreview =
       !redactMode && msg.body.trim().length > 0 ? truncateChars(scrubAll(msg.body), 96) : null;
@@ -291,13 +291,13 @@ export function renderBotDetail(
     );
   }
   if (msgCount === 0) {
-    msgContainer.appendChild(el('div', { className: 'bw-muted-note' }, '최근 요청/답변 없음'));
+    msgContainer.appendChild(el('div', { className: 'bw-muted-note' }, s.noRecentMessages));
   }
   body.appendChild(
     el(
       'section',
       { className: 'bw-section' },
-      el('div', { className: 'bw-section-title' }, '최근 요청 / 답변'),
+      el('div', { className: 'bw-section-title' }, s.sectionRecentMessages),
       msgContainer
     )
   );
@@ -310,19 +310,19 @@ export function renderBotDetail(
         (it.status === 'needs_you' || it.status === 'in_progress' || it.status === 'planned')
     )
     .sort((a, b) => {
-      const rank = (s: string) => (s === 'needs_you' ? 0 : s === 'in_progress' ? 1 : 2);
+      const rank = (st: string) => (st === 'needs_you' ? 0 : st === 'in_progress' ? 1 : 2);
       return rank(a.status) - rank(b.status) || a.number - b.number;
     });
 
   const itemContainer = el('div', { className: 'bw-list' });
   if (openItems.length === 0) {
-    itemContainer.appendChild(el('div', { className: 'bw-muted-note' }, '열린 항목 없음'));
+    itemContainer.appendChild(el('div', { className: 'bw-muted-note' }, s.noOpenItems));
   } else {
     for (const it of openItems) {
-      const statusKo = itemStatusKo(it.status);
+      const statusText = itemStatusLabel(it.status, locale);
       const isNeeds = it.status === 'needs_you';
       const line = redactMode
-        ? `#${it.number} · ${statusKo}`
+        ? `#${it.number} · ${statusText}`
         : `#${it.number} ${scrubAll(it.title)}`;
       const qSummary =
         !redactMode && it.questionPrompt && it.questionPrompt.trim().length > 0
@@ -340,7 +340,7 @@ export function renderBotDetail(
             el(
               'span',
               { className: isNeeds ? 'bw-badge bw-badge-needs' : 'bw-chip' },
-              statusKo
+              statusText
             )
           ),
           qSummary ? el('div', { className: 'bw-card-sub' }, qSummary) : null
@@ -352,7 +352,7 @@ export function renderBotDetail(
     el(
       'section',
       { className: 'bw-section' },
-      el('div', { className: 'bw-section-title' }, '열린 항목'),
+      el('div', { className: 'bw-section-title' }, s.sectionOpenItems),
       itemContainer
     )
   );
@@ -370,37 +370,24 @@ export function renderBotDetail(
 
   const workerContainer = el('div', { className: 'bw-list' });
   if (workers.length === 0) {
-    workerContainer.appendChild(el('div', { className: 'bw-muted-note' }, '소속 워커 없음'));
+    workerContainer.appendChild(el('div', { className: 'bw-muted-note' }, s.noWorkers));
   } else {
     workers.forEach((w, wIdx) => {
-      const livenessLabel =
-        w.liveness === 'Live' ? '실행 중' : w.liveness === 'Exited' ? '종료' : '미확인';
-      const stateLabel =
-        w.workerState === 'ready'
-          ? w.activity === 'working'
-            ? '작업 중'
-            : w.activity === 'blocked'
-              ? '차단됨'
-              : w.activity === 'waiting'
-                ? '대기 중'
-                : w.activity === 'done'
-                  ? '완료'
-                  : scrubAll(w.activity)
-          : w.workerState === 'succeeded'
-            ? '완료'
-            : w.workerState === 'failed'
-              ? '실패'
-              : w.workerState === 'canceled'
-                ? '취소'
-                : '종료';
-      const workerHeading = redactMode ? `도우미 #${wIdx + 1}` : scrubAll(w.provider);
+      const livenessLabel = s.livenessLabels[w.liveness];
+      const stateKey = w.workerState === 'ready' ? w.activity : w.workerState;
+      const stateLabel = Object.hasOwn(s.workerStateLabels, stateKey)
+        ? s.workerStateLabels[stateKey]
+        : w.workerState === 'ready'
+          ? scrubAll(w.activity)
+          : s.workerStateLabels.exited;
+      const workerHeading = redactMode ? s.workerNumbered(wIdx + 1) : scrubAll(w.provider);
       const detailLine = redactMode
-        ? `${cleanName} · 도우미 · ${stateLabel}`
+        ? s.workerRedactedDetail(cleanName, stateLabel)
         : (() => {
             const title =
               w.taskTitle && w.taskTitle.trim().length > 0
                 ? truncateChars(scrubAll(w.taskTitle), 52)
-                : '세부 작업 없음';
+                : s.noTaskDetails;
             return w.toolName && w.toolName.trim().length > 0
               ? `${title} [${scrubAll(w.toolName)}]`
               : title;
@@ -425,7 +412,7 @@ export function renderBotDetail(
     el(
       'section',
       { className: 'bw-section' },
-      el('div', { className: 'bw-section-title' }, '소속 워커'),
+      el('div', { className: 'bw-section-title' }, s.sectionWorkers),
       workerContainer
     )
   );
@@ -433,30 +420,30 @@ export function renderBotDetail(
   // Section 6: Automations
   const automations = Object.values(snapshot.automations)
     .filter((a) => a.botId === bot.id)
-    .sort((a, b) => a.name.localeCompare(b.name, 'ko', { numeric: true }));
+    .sort((a, b) => a.name.localeCompare(b.name, locale, { numeric: true }));
 
   const autoContainer = el('div', { className: 'bw-list' });
   if (automations.length === 0) {
-    autoContainer.appendChild(el('div', { className: 'bw-muted-note' }, '연결된 정기 자동화 없음'));
+    autoContainer.appendChild(el('div', { className: 'bw-muted-note' }, s.noAutomations));
   } else {
     automations.forEach((a, idx) => {
-      const displayName = redactMode ? `정기 자동화 #${idx + 1}` : scrubAll(a.name);
-      const statusKo =
+      const displayName = redactMode ? s.automationNumbered(idx + 1) : scrubAll(a.name);
+      const statusText =
         a.lastRunStatus === 'completed'
           ? a.lastRunNoReply
-            ? '완료 (이상 없음)'
-            : '완료'
+            ? s.autoCompletedNoReply
+            : s.autoCompleted
           : a.lastRunStatus === 'dispatch_failed' || a.lastRunStatus === 'failed'
-            ? '실패'
+            ? s.autoFailed
             : a.lastRunStatus
               ? scrubAll(a.lastRunStatus)
               : a.enabled
-                ? '대기'
-                : '비활성';
+                ? s.autoIdle
+                : s.autoDisabled;
       const errSummary =
         a.lastError && a.lastError.trim().length > 0
           ? redactMode
-            ? '오류 상세 가려짐'
+            ? s.errorHiddenLabel
             : truncateChars(scrubAll(a.lastError), 64)
           : null;
 
@@ -468,7 +455,7 @@ export function renderBotDetail(
             'div',
             { className: 'bw-card-meta' },
             el('span', { className: 'bw-card-text' }, displayName),
-            el('span', { className: 'bw-chip' }, statusKo)
+            el('span', { className: 'bw-chip' }, statusText)
           ),
           errSummary ? el('div', { className: 'bw-card-sub bw-text-danger' }, errSummary) : null
         )
@@ -479,7 +466,7 @@ export function renderBotDetail(
     el(
       'section',
       { className: 'bw-section' },
-      el('div', { className: 'bw-section-title' }, '정기 자동화'),
+      el('div', { className: 'bw-section-title' }, s.sectionAutomations),
       autoContainer
     )
   );
@@ -528,17 +515,24 @@ export function renderEventTimelineList(
     redactMode: boolean;
     limit?: number;
     onJumpToTime: (timestampMs: number) => void;
+    locale?: UiLocale;
   }
 ): void {
   clearChildren(container);
-  const { events, redactMode, limit = 40, onJumpToTime } = options;
+  const { events, redactMode, limit = 40, onJumpToTime, locale = 'en' } = options;
+  const s = tStrings(locale);
   if (events.length === 0) {
-    container.appendChild(el('div', { className: 'bw-muted-note' }, '아직 기록된 사건이 없습니다.'));
+    container.appendChild(el('div', { className: 'bw-muted-note' }, s.noEventsRecorded));
     return;
   }
   const recent = events.slice(-limit).reverse();
   for (const rec of recent) {
-    const text = redactMode ? rec.redactedSummary : rec.summary;
+    const workerSeq = rec.event ? extractWorkerSeq(rec) : undefined;
+    const text = rec.event
+      ? summarizeEvent(rec.event, redactMode, locale, workerSeq ?? 1)
+      : redactMode
+        ? rec.redactedSummary
+        : rec.summary;
     container.appendChild(
       el(
         'button',
@@ -547,7 +541,7 @@ export function renderEventTimelineList(
           className: 'bw-event-row',
           onClick: () => onJumpToTime(rec.timestampMs),
         },
-        el('span', { className: 'bw-event-time' }, formatKstHms(rec.timestampMs)),
+        el('span', { className: 'bw-event-time' }, formatTimeHms(rec.timestampMs, locale)),
         el('span', { className: 'bw-event-text' }, scrubAll(text))
       )
     );

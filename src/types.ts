@@ -1,3 +1,16 @@
+export type UiLocale = 'en' | 'ko';
+export type LanguageSetting = 'auto' | 'en' | 'ko';
+
+export const VALID_LANGUAGE_SETTINGS: readonly LanguageSetting[] = [
+  'auto',
+  'en',
+  'ko',
+] as const;
+
+export function isValidLanguageSetting(value: unknown): value is LanguageSetting {
+  return typeof value === 'string' && (VALID_LANGUAGE_SETTINGS as readonly string[]).includes(value);
+}
+
 export type ThemeId = 'startup_office' | 'corporate_office';
 
 export type CharacterId =
@@ -246,23 +259,45 @@ export type BotActivityStatus =
   | { kind: 'Error'; message: string | null }
   | { kind: 'Idle' };
 
-export function botStatusLabelKo(status: BotActivityStatus): string {
+export function botStatusLabel(status: BotActivityStatus, locale: UiLocale = 'en'): string {
+  if (locale === 'ko') {
+    switch (status.kind) {
+      case 'Paused':
+        return '일시 정지';
+      case 'NeedsOwner':
+        return '결정 대기';
+      case 'Blocked':
+        return '승인·차단';
+      case 'WaitingAnswer':
+        return '응답 대기';
+      case 'Working':
+        return '작업 중';
+      case 'Error':
+        return '오류';
+      case 'Idle':
+        return '대기 중';
+    }
+  }
   switch (status.kind) {
     case 'Paused':
-      return '일시 정지';
+      return 'Paused';
     case 'NeedsOwner':
-      return '결정 대기';
+      return 'Needs You';
     case 'Blocked':
-      return '승인·차단';
+      return 'Blocked';
     case 'WaitingAnswer':
-      return '응답 대기';
+      return 'Waiting';
     case 'Working':
-      return '작업 중';
+      return 'Working';
     case 'Error':
-      return '오류';
+      return 'Error';
     case 'Idle':
-      return '대기 중';
+      return 'Idle';
   }
+}
+
+export function botStatusLabelKo(status: BotActivityStatus): string {
+  return botStatusLabel(status, 'ko');
 }
 
 export type BotState = {
@@ -509,6 +544,7 @@ export type WorldEventRecord = {
   summary: string;
   redactedSummary: string;
   event: WorldEvent;
+  workerSeq?: number;
 };
 
 export type Keyframe = {
@@ -524,4 +560,6 @@ export type BotWorldStatePayload = {
   redactMode: boolean;
   botAppearances: Record<string, CharacterId>;
   pollIntervalSec: number;
+  locale: UiLocale;
+  languageSetting: LanguageSetting;
 };
