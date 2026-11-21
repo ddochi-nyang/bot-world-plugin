@@ -1,0 +1,114 @@
+{
+  "manifestVersion": 2,
+  "id": "bot-world",
+  "name": "봇 월드",
+  "version": "0.1.0",
+  "description": "Orca 봇과 하위 워커의 실시간 협업 상태를 가상 사무실 오피스로 시각화하는 읽기 전용 플러그인",
+  "license": "MIT",
+  "author": {
+    "name": "ddochi-nyang",
+    "url": "https://github.com/ddochi-nyang"
+  },
+  "repository": "https://github.com/ddochi-nyang/bot-world-plugin",
+  "icon": "assets/icon.png",
+  "engines": {
+    "orca": ">=1.4.265"
+  },
+  "execution": "trusted-worker",
+  "pluginApi": 1,
+  "main": "src/worker.ts",
+  "capabilities": [
+    {
+      "kind": "storage:own"
+    },
+    {
+      "kind": "settings:own"
+    },
+    {
+      "kind": "agent:read"
+    }
+  ],
+  "contributes": {
+    "panels": [
+      {
+        "id": "bot-world",
+        "title": "봇 월드",
+        "icon": "bot",
+        "entry": "panel/index.html",
+        "ui": "html"
+      }
+    ],
+    "customEditors": [
+      {
+        "id": "bot-world-stage",
+        "title": "봇 월드 사무실",
+        "extensions": [
+          ".botworld"
+        ],
+        "entry": "editor/index.html",
+        "priority": "default",
+        "frame": "isolated"
+      }
+    ],
+    "newFiles": [
+      {
+        "id": "new-botworld",
+        "title": "새 봇 월드 보드",
+        "extension": ".botworld",
+        "template": "templates/default.botworld"
+      }
+    ],
+    "commands": [
+      {
+        "id": "bot-world.open",
+        "title": "봇 월드 열기"
+      },
+      {
+        "id": "bot-world.refresh",
+        "title": "봇 월드 새로고침"
+      }
+    ],
+    "statusBarItems": [
+      {
+        "id": "bot-world-status",
+        "text": "봇 월드",
+        "icon": "bot",
+        "command": "bot-world.open"
+      }
+    ],
+    "events": [
+      {
+        "on": "agent.status.changed"
+      }
+    ],
+    "settings": [
+      {
+        "key": "defaultTheme",
+        "title": "기본 사무실 테마",
+        "type": "string",
+        "enum": [
+          "startup_office",
+          "corporate_office"
+        ],
+        "default": "startup_office",
+        "description": "기본 사무실 테마 (startup_office 또는 corporate_office)"
+      },
+      {
+        "key": "redactMode",
+        "title": "가림 모드",
+        "type": "boolean",
+        "default": false,
+        "description": "민감한 작업명, 도구명, 메시지 본문과 사건 요약을 가립니다"
+      },
+      {
+        "key": "pollIntervalSec",
+        "title": "폴링 주기(초)",
+        "type": "integer",
+        "minimum": 2,
+        "maximum": 60,
+        "default": 5,
+        "description": "기본 상태 폴링 주기(초, 2~60)"
+      }
+    ]
+  }
+}

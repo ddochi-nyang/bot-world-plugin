@@ -1,0 +1,26 @@
+{
+  "id": "startup_office",
+  "name": "스타트업 사무실",
+  "background_path": "themes/startup_office/bg.png",
+  "design_size": [1376, 768],
+  "boss_desk": { "x": 825.0, "y": 215.0, "label": "사장님 책상" },
+  "office_door": { "x": 1140.0, "y": 625.0, "label": "출입구" },
+  "automation_board": { "x": 175.0, "y": 320.0, "label": "자동화 보드" },
+  "bot_desks": [
+    { "slot": 0, "x": 318.0, "y": 402.0, "facing": "right", "worker_offset": [-42.0, 22.0] },
+    { "slot": 1, "x": 462.0, "y": 486.0, "facing": "right", "worker_offset": [-42.0, 22.0] },
+    { "slot": 2, "x": 588.0, "y": 318.0, "facing": "left", "worker_offset": [42.0, -18.0] },
+    { "slot": 3, "x": 698.0, "y": 388.0, "facing": "left", "worker_offset": [42.0, 18.0] },
+    { "slot": 4, "x": 222.0, "y": 642.0, "facing": "right", "worker_offset": [-42.0, 20.0] },
+    { "slot": 5, "x": 742.0, "y": 588.0, "facing": "left", "worker_offset": [40.0, 18.0] },
+    { "slot": 6, "x": 348.0, "y": 706.0, "facing": "right", "worker_offset": [-42.0, 10.0] },
+    { "slot": 7, "x": 492.0, "y": 622.0, "facing": "right", "worker_offset": [-42.0, 18.0] },
+    { "slot": 8, "x": 622.0, "y": 702.0, "facing": "left", "worker_offset": [42.0, 10.0] },
+    { "slot": 9, "x": 825.0, "y": 704.0, "facing": "left", "worker_offset": [44.0, -6.0] },
+    { "slot": 10, "x": 152.0, "y": 495.0, "facing": "right", "worker_offset": [-38.0, 22.0] },
+    { "slot": 11, "x": 258.0, "y": 432.0, "facing": "right", "worker_offset": [-38.0, 22.0] },
+    { "slot": 12, "x": 502.0, "y": 565.0, "facing": "left", "worker_offset": [40.0, 18.0] },
+    { "slot": 13, "x": 308.0, "y": 586.0, "facing": "right", "worker_offset": [-42.0, 20.0] }
+  ],
+  "overflow_grid": { "origin_x": 860.0, "origin_y": 480.0, "step_x": 96.0, "step_y": 68.0, "cols": 3 }
+}

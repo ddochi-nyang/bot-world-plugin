@@ -1,0 +1,9 @@
+{
+  "extends": "./.orca/types/tsconfig.json",
+  "include": [
+    "src",
+    "shared",
+    "panel",
+    "editor"
+  ]
+}
