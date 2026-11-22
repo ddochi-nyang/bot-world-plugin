@@ -6,6 +6,7 @@ import {
 } from '../src/events.ts';
 import { redactLabel, scrubAll } from '../src/redact.ts';
 import {
+  type AtmosphereMode,
   type BotActivityStatus,
   type BotItemState,
   type BotState,
@@ -203,7 +204,11 @@ function formatDemoSnapshot(
       value: {
         ...auto,
         name: redactMode ? s.automationNumbered(autoIdx++) : scrubAll(tx(auto.name, locale)),
-        lastError: auto.lastError ? s.errorHiddenLabel : null,
+        lastError: auto.lastError
+          ? redactMode
+            ? s.errorHiddenLabel
+            : scrubAll(auto.lastError)
+          : null,
       },
       enumerable: true,
       writable: true,
@@ -1123,12 +1128,20 @@ export class DemoOfficeSession {
 
   getPayload(opts: {
     themeId: ThemeId;
+    atmosphereMode?: AtmosphereMode;
     redactMode: boolean;
     locale: UiLocale;
     languageSetting: LanguageSetting;
     botAppearances: Record<string, CharacterId>;
   }): BotWorldStatePayload {
-    const { themeId, redactMode, locale, languageSetting, botAppearances } = opts;
+    const {
+      themeId,
+      atmosphereMode = 'auto',
+      redactMode,
+      locale,
+      languageSetting,
+      botAppearances,
+    } = opts;
     const s = tStrings(locale);
     const snapshot = formatDemoSnapshot(this.snapshot, redactMode, locale);
 
@@ -1147,7 +1160,17 @@ export class DemoOfficeSession {
       const seqHint = rec.workerSeq ?? 1;
       const localizedEv = scrubWorldEvent(localizeWorldEvent(rec.event, locale));
       if (redactMode) {
-        const redactedEv = redactWorldEvent(localizedEv, workerLabelFor, locale);
+        const redactedEv = redactWorldEvent(
+          localizedEv,
+          (dispatchId) => {
+            if (localizedEv.kind === 'WorkerStart' && dispatchId === localizedEv.dispatchId) {
+              workerSeqMap.set(dispatchId, seqHint);
+              return s.workerNumbered(seqHint);
+            }
+            return workerLabelFor(dispatchId);
+          },
+          locale
+        );
         const [, redactedSummary] = formatEventSummaries(redactedEv, seqHint, locale);
         return {
           timestampMs: rec.timestampMs,
@@ -1189,6 +1212,7 @@ export class DemoOfficeSession {
       events,
       keyframes,
       activeTheme: themeId,
+      atmosphereMode,
       redactMode,
       botAppearances: safeAppearances,
       pollIntervalSec: 5,

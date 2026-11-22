@@ -19,6 +19,7 @@ import { redactLabel, scrubAll } from './redact.ts';
 import { TimelineBuffer, scrubFullSnapshot } from './timeline.ts';
 import {
   type ActorRef,
+  type AtmosphereMode,
   type BotWorldStatePayload,
   type CharacterId,
   type LanguageSetting,
@@ -31,6 +32,7 @@ import {
   createEmptySnapshot,
   isPoolCharacterId,
   isSafeKey,
+  isValidAtmosphereMode,
   isValidLanguageSetting,
   isValidThemeId,
   isWorkerActive,
@@ -77,10 +79,12 @@ function redactSafeHandle(actor: ActorRef, locale: UiLocale = 'en'): string {
 
 type StoredPrefs = {
   activeTheme: ThemeId;
+  atmosphereMode: AtmosphereMode;
   redactMode: boolean;
   botAppearances: Record<string, CharacterId>;
   languageSetting: LanguageSetting;
   hasThemeOverride: boolean;
+  hasAtmosphereOverride: boolean;
   hasRedactOverride: boolean;
   hasLanguageOverride: boolean;
 };
@@ -93,14 +97,21 @@ function makeHostError(code: string, message: string): Error & { code: string } 
 
 function validatePrefs(
   raw: unknown,
-  defaults: { theme: ThemeId; redact: boolean; language: LanguageSetting }
+  defaults: {
+    theme: ThemeId;
+    atmosphere: AtmosphereMode;
+    redact: boolean;
+    language: LanguageSetting;
+  }
 ): StoredPrefs {
   const base: StoredPrefs = {
     activeTheme: defaults.theme,
+    atmosphereMode: defaults.atmosphere,
     redactMode: defaults.redact,
     botAppearances: {},
     languageSetting: defaults.language,
     hasThemeOverride: false,
+    hasAtmosphereOverride: false,
     hasRedactOverride: false,
     hasLanguageOverride: false,
   };
@@ -111,6 +122,10 @@ function validatePrefs(
   if (isValidThemeId(clean.activeTheme)) {
     base.activeTheme = clean.activeTheme;
     base.hasThemeOverride = clean.hasThemeOverride === true;
+  }
+  if (isValidAtmosphereMode(clean.atmosphereMode)) {
+    base.atmosphereMode = clean.atmosphereMode;
+    base.hasAtmosphereOverride = clean.hasAtmosphereOverride === true;
   }
   if (typeof clean.redactMode === 'boolean') {
     base.redactMode = clean.redactMode;
@@ -462,10 +477,12 @@ export class BotWorldWorkerController {
   private timeline = new TimelineBuffer();
   private prefs: StoredPrefs = {
     activeTheme: 'startup_office',
+    atmosphereMode: 'auto',
     redactMode: false,
     botAppearances: {},
     languageSetting: 'auto',
     hasThemeOverride: false,
+    hasAtmosphereOverride: false,
     hasRedactOverride: false,
     hasLanguageOverride: false,
   };
@@ -473,11 +490,13 @@ export class BotWorldWorkerController {
   private hostLocale = 'en';
   private lastSettings: {
     defaultTheme: ThemeId;
+    atmosphereMode: AtmosphereMode;
     redactMode: boolean;
     pollIntervalSec: number;
     language: LanguageSetting;
   } = {
     defaultTheme: 'startup_office',
+    atmosphereMode: 'auto',
     redactMode: false,
     pollIntervalSec: 5,
     language: 'auto',
@@ -533,6 +552,7 @@ export class BotWorldWorkerController {
     const storedPrefs = await this.orca.storage.get(STORAGE_PREFS_KEY);
     this.prefs = validatePrefs(storedPrefs, {
       theme: settings.defaultTheme,
+      atmosphere: settings.atmosphereMode,
       redact: settings.redactMode,
       language: settings.language,
     });
@@ -567,11 +587,13 @@ export class BotWorldWorkerController {
 
   private async readSettings(): Promise<{
     defaultTheme: ThemeId;
+    atmosphereMode: AtmosphereMode;
     redactMode: boolean;
     pollIntervalSec: number;
     language: LanguageSetting;
   }> {
     let defaultTheme: ThemeId = 'startup_office';
+    let atmosphereMode: AtmosphereMode = 'auto';
     let redactMode = false;
     let pollIntervalSec = 5;
     let language: LanguageSetting = 'auto';
@@ -580,6 +602,9 @@ export class BotWorldWorkerController {
       if (all && typeof all === 'object') {
         if (isValidThemeId(all.defaultTheme)) {
           defaultTheme = all.defaultTheme;
+        }
+        if (isValidAtmosphereMode(all.atmosphereMode)) {
+          atmosphereMode = all.atmosphereMode;
         }
         if (typeof all.redactMode === 'boolean') {
           redactMode = all.redactMode;
@@ -592,7 +617,7 @@ export class BotWorldWorkerController {
     } catch {
       // Fallback to defaults if settings cannot be read
     }
-    return { defaultTheme, redactMode, pollIntervalSec, language };
+    return { defaultTheme, atmosphereMode, redactMode, pollIntervalSec, language };
   }
 
   private assignWorkerSeq(dispatchId: string): number {
@@ -617,6 +642,7 @@ export class BotWorldWorkerController {
       events: [],
       keyframes: [],
       activeTheme: this.prefs.activeTheme,
+      atmosphereMode: this.prefs.atmosphereMode,
       redactMode: redact,
       botAppearances: { ...this.prefs.botAppearances },
       pollIntervalSec: this.pollIntervalSec,
@@ -969,6 +995,21 @@ export class BotWorldWorkerController {
         return { themeId: this.prefs.activeTheme };
       }),
 
+      this.orca.panels.handle('botWorld.setAtmosphereMode', async (input) => {
+        if (!input || typeof input !== 'object' || Array.isArray(input)) {
+          throw makeHostError('invalid_params', 'input must be an object');
+        }
+        const clean = stripDangerousKeys(input as Record<string, unknown>);
+        if (!isValidAtmosphereMode(clean.atmosphereMode)) {
+          throw makeHostError('invalid_params', 'Invalid atmosphereMode');
+        }
+        this.prefs.atmosphereMode = clean.atmosphereMode;
+        this.prefs.hasAtmosphereOverride = true;
+        await this.persistPrefs();
+        this.postStateUpdated();
+        return { atmosphereMode: this.prefs.atmosphereMode };
+      }),
+
       this.orca.panels.handle('botWorld.setRedactMode', async (input) => {
         if (!input || typeof input !== 'object' || Array.isArray(input)) {
           throw makeHostError('invalid_params', 'input must be an object');
@@ -1043,6 +1084,13 @@ export class BotWorldWorkerController {
             this.prefs.activeTheme = next.defaultTheme;
             if (next.defaultTheme !== prev.defaultTheme) {
               this.prefs.hasThemeOverride = false;
+            }
+            prefsChanged = true;
+          }
+          if (next.atmosphereMode !== prev.atmosphereMode || !this.prefs.hasAtmosphereOverride) {
+            this.prefs.atmosphereMode = next.atmosphereMode;
+            if (next.atmosphereMode !== prev.atmosphereMode) {
+              this.prefs.hasAtmosphereOverride = false;
             }
             prefsChanged = true;
           }

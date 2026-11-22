@@ -1,6 +1,20 @@
 export type UiLocale = 'en' | 'ko';
 export type LanguageSetting = 'auto' | 'en' | 'ko';
 
+export type AtmosphereMode = 'auto' | 'day' | 'sunset' | 'night';
+export type AtmospherePhase = 'day' | 'sunset' | 'night';
+
+export const VALID_ATMOSPHERE_MODES: readonly AtmosphereMode[] = [
+  'auto',
+  'day',
+  'sunset',
+  'night',
+] as const;
+
+export function isValidAtmosphereMode(value: unknown): value is AtmosphereMode {
+  return typeof value === 'string' && (VALID_ATMOSPHERE_MODES as readonly string[]).includes(value);
+}
+
 export const VALID_LANGUAGE_SETTINGS: readonly LanguageSetting[] = [
   'auto',
   'en',
@@ -149,6 +163,7 @@ export const MAX_BOTWORLD_DOC_BYTES = 256 * 1024;
 export type BotWorldDocumentData = {
   version: 1;
   themeId: ThemeId;
+  atmosphereMode?: AtmosphereMode;
   redactMode: boolean;
   selectedBotId: string | null;
   botAppearances: Record<string, CharacterId>;
@@ -157,6 +172,7 @@ export type BotWorldDocumentData = {
 export const DEFAULT_BOTWORLD_DOCUMENT: BotWorldDocumentData = {
   version: 1,
   themeId: 'startup_office',
+  atmosphereMode: 'auto',
   redactMode: false,
   selectedBotId: null,
   botAppearances: {},
@@ -166,10 +182,14 @@ export function validateBotWorldDocument(
   rawText: string,
   fallback: BotWorldDocumentData = DEFAULT_BOTWORLD_DOCUMENT
 ): { data: BotWorldDocumentData; valid: boolean } {
+  const fallbackAtmosphere: AtmosphereMode = isValidAtmosphereMode(fallback.atmosphereMode)
+    ? fallback.atmosphereMode
+    : 'auto';
   if (typeof rawText !== 'string' || rawText.trim().length === 0) {
     return {
       data: {
         ...fallback,
+        atmosphereMode: fallbackAtmosphere,
         botAppearances: { ...fallback.botAppearances },
       },
       valid: false,
@@ -179,6 +199,7 @@ export function validateBotWorldDocument(
     return {
       data: {
         ...fallback,
+        atmosphereMode: fallbackAtmosphere,
         botAppearances: { ...fallback.botAppearances },
       },
       valid: false,
@@ -188,12 +209,19 @@ export function validateBotWorldDocument(
     const parsed = safeJsonParse<unknown>(rawText, MAX_BOTWORLD_DOC_BYTES);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       return {
-        data: { ...fallback, botAppearances: { ...fallback.botAppearances } },
+        data: {
+          ...fallback,
+          atmosphereMode: fallbackAtmosphere,
+          botAppearances: { ...fallback.botAppearances },
+        },
         valid: false,
       };
     }
     const rec = parsed as Record<string, unknown>;
     const themeId: ThemeId = isValidThemeId(rec.themeId) ? rec.themeId : fallback.themeId;
+    const atmosphereMode: AtmosphereMode = isValidAtmosphereMode(rec.atmosphereMode)
+      ? rec.atmosphereMode
+      : fallbackAtmosphere;
     const redactMode = typeof rec.redactMode === 'boolean' ? rec.redactMode : fallback.redactMode;
     const selectedBotId =
       typeof rec.selectedBotId === 'string' &&
@@ -222,6 +250,7 @@ export function validateBotWorldDocument(
       data: {
         version: 1,
         themeId,
+        atmosphereMode,
         redactMode,
         selectedBotId,
         botAppearances: toPlainSafeRecord(appearancesMap),
@@ -230,7 +259,11 @@ export function validateBotWorldDocument(
     };
   } catch {
     return {
-      data: { ...fallback, botAppearances: { ...fallback.botAppearances } },
+      data: {
+        ...fallback,
+        atmosphereMode: fallbackAtmosphere,
+        botAppearances: { ...fallback.botAppearances },
+      },
       valid: false,
     };
   }
@@ -557,6 +590,7 @@ export type BotWorldStatePayload = {
   events: WorldEventRecord[];
   keyframes: Keyframe[];
   activeTheme: ThemeId;
+  atmosphereMode: AtmosphereMode;
   redactMode: boolean;
   botAppearances: Record<string, CharacterId>;
   pollIntervalSec: number;

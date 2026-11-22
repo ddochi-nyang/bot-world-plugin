@@ -15,8 +15,21 @@ import { type ThemeConfig, deskPosition } from './assets-catalog.ts';
 export const MAX_CONCURRENT_WALKERS = 8;
 export const MAX_BUBBLES = 5;
 export const MAX_PARTICLES = 64;
+export const MAX_COURIERS = 6;
 export const FLOOD_QUEUE_THRESHOLD = 3;
 export const FLOOD_SPEED_MULTIPLIER = 4.0;
+
+export type CourierKind = 'paper_plane' | 'envelope';
+
+export type FlyingCourier = {
+  id: number;
+  kind: CourierKind;
+  from: [number, number];
+  to: [number, number];
+  control: [number, number];
+  elapsed: number;
+  duration: number;
+};
 
 export type Facing = 'Left' | 'Right';
 
@@ -88,7 +101,7 @@ export type WorkerMotion = {
   kind: 'Entering' | 'DeliveringToParent' | 'Leaving';
 };
 
-type BurstKind = 'None' | 'GreenCheckConfetti' | 'RedAlert';
+type BurstKind = 'None' | 'GreenCheckConfetti' | 'RedAlert' | 'Sparkle';
 
 type WalkSegment = {
   from: [number, number];
@@ -119,6 +132,7 @@ type ActiveWalk = {
   segElapsed: number;
   speedMultiplier: number;
   workerMotion: WorkerMotion | null;
+  trailAccum: number;
 };
 
 export type ActorPose = {
@@ -459,6 +473,7 @@ export class MotionDirector {
   private actorQueues = new Map<string, QueuedMotion[]>();
   private actorQueueOrder: string[] = [];
   flyingProps: FlyingProp[] = [];
+  couriers: FlyingCourier[] = [];
   bubbles: SpeechBubble[] = [];
   particles: Particle[] = [];
   private nextId = 1;
@@ -497,6 +512,7 @@ export class MotionDirector {
     this.actorQueues.clear();
     this.actorQueueOrder = [];
     this.flyingProps = [];
+    this.couriers = [];
     this.bubbles = [];
     this.particles = [];
   }
@@ -506,6 +522,7 @@ export class MotionDirector {
       this.activeWalks.length > 0 ||
       this.actorQueues.size > 0 ||
       this.flyingProps.length > 0 ||
+      this.couriers.length > 0 ||
       this.bubbles.length > 0 ||
       this.particles.length > 0
     );
@@ -552,6 +569,16 @@ export class MotionDirector {
     while (i < this.activeWalks.length) {
       const w = this.activeWalks[i];
       w.segElapsed += dt * w.speedMultiplier;
+      if (w.workerMotion && (w.workerMotion.kind === 'Entering' || w.workerMotion.kind === 'Leaving')) {
+        w.trailAccum += dt * w.speedMultiplier;
+        if (w.trailAccum >= 0.28) {
+          w.trailAccum %= 0.28;
+          if (this.particles.length < MAX_PARTICLES - 8) {
+            const pos = currentWalkPos(w);
+            this.spawnTrailSparkle([pos.x, pos.y], w.workerMotion.kind);
+          }
+        }
+      }
       while (w.segIdx < w.segments.length && w.segElapsed >= w.segments[w.segIdx].duration) {
         const seg = w.segments[w.segIdx];
         const overflow = w.segElapsed - seg.duration;
@@ -573,6 +600,8 @@ export class MotionDirector {
         this.spawnBurst('GreenCheckConfetti', b.pos, 10);
       } else if (b.kind === 'RedAlert') {
         this.spawnBurst('SweatDrop', b.pos, 4);
+      } else if (b.kind === 'Sparkle') {
+        this.spawnBurst('Sparkle', b.pos, 6);
       }
     }
 
@@ -580,6 +609,17 @@ export class MotionDirector {
 
     for (const fp of this.flyingProps) fp.elapsed += dt;
     this.flyingProps = this.flyingProps.filter((fp) => fp.elapsed < fp.duration);
+
+    const survivingCouriers: FlyingCourier[] = [];
+    for (const c of this.couriers) {
+      c.elapsed += dt;
+      if (c.elapsed >= c.duration) {
+        this.spawnBurst('Sparkle', c.to, 5);
+      } else {
+        survivingCouriers.push(c);
+      }
+    }
+    this.couriers = survivingCouriers;
 
     for (const b of this.bubbles) b.ttl -= dt;
     this.bubbles = this.bubbles.filter((b) => b.ttl > 0);
@@ -672,6 +712,8 @@ export class MotionDirector {
           this.layout.resolveActorPos(event.from) ??
           (event.kind === 'Handoff' ? this.layout.bossDesk : this.layout.officeDoor);
         const end = this.layout.resolveActorPos(event.to) ?? this.layout.bossDesk;
+        const courierKind: CourierKind = event.kind === 'Handoff' ? 'paper_plane' : 'envelope';
+        this.spawnCourier(courierKind, start, end, 1.1);
         const aKey = actorKeyFromRef(event.from);
         const visitEnd = this.resolveVisitStopPoint(aKey, start, end);
         const carry: CarryProp =
@@ -694,14 +736,6 @@ export class MotionDirector {
               duration: 0.72,
             },
           });
-        } else if (event.kind === 'Handoff') {
-          this.spawnFlyingProp(
-            { kind: 'PaperAirplane', isFloodReplacement: false },
-            start,
-            end,
-            68,
-            0.9
-          );
         }
         this.pushBubble(
           aKey,
@@ -718,13 +752,7 @@ export class MotionDirector {
       case 'Reply': {
         const start = this.layout.resolveActorPos(event.from) ?? this.layout.bossDesk;
         const end = this.layout.resolveActorPos(event.to) ?? this.layout.officeDoor;
-        this.spawnFlyingProp(
-          { kind: 'PaperAirplane', isFloodReplacement: false },
-          start,
-          end,
-          72,
-          1.2
-        );
+        this.spawnCourier('paper_plane', start, end, 1.1);
         this.pushBubble(
           actorKeyFromRef(event.from),
           start,
@@ -751,8 +779,9 @@ export class MotionDirector {
           'working',
           'Entering'
         );
+        this.spawnBurst('Sparkle', door, 4);
         this.scheduleWalkOrFlood(aKey, {
-          segments: [{ from: door, to: seat, duration: 2.2, carry: null, onDoneBurst: 'None' }],
+          segments: [{ from: door, to: seat, duration: 2.2, carry: null, onDoneBurst: 'Sparkle' }],
           workerMotion: meta,
           flyingFallback: null,
         });
@@ -771,6 +800,7 @@ export class MotionDirector {
               this.layout.officeDoor);
         const pDesk = event.parentBotId ? this.layout.botDesks.get(event.parentBotId) : undefined;
         const end: [number, number] = pDesk ? [pDesk.x, pDesk.y] : this.layout.bossDesk;
+        const door = this.layout.officeDoor;
         const aKey = `worker:${event.dispatchId}`;
         const visitEnd = this.resolveVisitStopPoint(aKey, start, end);
         const workerObj = Object.hasOwn(snapshot.workers, event.dispatchId)
@@ -778,25 +808,42 @@ export class MotionDirector {
           : undefined;
         const stillVisible = workerObj ? isWorkerVisibleOnStage(workerObj) : false;
         const isDone = event.kind === 'WorkerDone';
-        const segments =
+        const segments: WalkSegment[] =
           isDone && stillVisible
             ? roundTripSegments(start, visitEnd, 1.25, 'GreenRibbonBox', 'GreenCheckConfetti')
-            : [
-                {
-                  from: start,
-                  to: visitEnd,
-                  duration: 1.25,
-                  carry: isDone ? ('GreenRibbonBox' as const) : ('RedXDoc' as const),
-                  onDoneBurst: isDone ? ('GreenCheckConfetti' as const) : ('RedAlert' as const),
-                },
-              ];
+            : stillVisible
+              ? [
+                  {
+                    from: start,
+                    to: visitEnd,
+                    duration: 1.25,
+                    carry: 'RedXDoc' as const,
+                    onDoneBurst: 'RedAlert' as const,
+                  },
+                ]
+              : [
+                  {
+                    from: start,
+                    to: visitEnd,
+                    duration: 1.05,
+                    carry: isDone ? ('GreenRibbonBox' as const) : ('RedXDoc' as const),
+                    onDoneBurst: isDone ? ('GreenCheckConfetti' as const) : ('RedAlert' as const),
+                  },
+                  {
+                    from: visitEnd,
+                    to: door,
+                    duration: 1.35,
+                    carry: null,
+                    onDoneBurst: 'Sparkle' as const,
+                  },
+                ];
         const meta = this.buildWorkerMotion(
           snapshot,
           event.dispatchId,
           event.parentBotId,
           null,
           isDone ? 'done' : 'failed',
-          'DeliveringToParent'
+          stillVisible ? 'DeliveringToParent' : 'Leaving'
         );
         this.scheduleWalkOrFlood(aKey, {
           segments,
@@ -929,11 +976,31 @@ export class MotionDirector {
         break;
       }
       case 'WorkerExited': {
-        const pos =
-          this.layout.workerSeatOrOffset(event.dispatchId, event.parentBotId) ??
-          this.layout.officeDoor;
-        this.spawnBurst('GrayArchive', pos, 4);
-        this.pushBubble(`worker:${event.dispatchId}`, pos, normalText, redactedText, 'Normal', 1.6, event, seqHint);
+        const wSeat = this.layout.workerSeats.get(event.dispatchId);
+        const prevWSeat = prevWorkerSeats.get(event.dispatchId);
+        const start: [number, number] = wSeat
+          ? [wSeat.x, wSeat.y]
+          : prevWSeat
+            ? [prevWSeat.x, prevWSeat.y]
+            : (this.layout.workerSeatOrOffset(event.dispatchId, event.parentBotId) ??
+              this.layout.officeDoor);
+        const door = this.layout.officeDoor;
+        const aKey = `worker:${event.dispatchId}`;
+        const meta = this.buildWorkerMotion(
+          snapshot,
+          event.dispatchId,
+          event.parentBotId,
+          event.provider,
+          'exited',
+          'Leaving'
+        );
+        this.spawnBurst('GrayArchive', start, 4);
+        this.scheduleWalkOrFlood(aKey, {
+          segments: [{ from: start, to: door, duration: 1.6, carry: null, onDoneBurst: 'Sparkle' }],
+          workerMotion: meta,
+          flyingFallback: null,
+        });
+        this.pushBubble(aKey, start, normalText, redactedText, 'Normal', 1.6, event, seqHint);
         break;
       }
       case 'WorkerReleased': {
@@ -956,7 +1023,7 @@ export class MotionDirector {
           'Leaving'
         );
         this.scheduleWalkOrFlood(aKey, {
-          segments: [{ from: start, to: door, duration: 1.8, carry: null, onDoneBurst: 'None' }],
+          segments: [{ from: start, to: door, duration: 1.8, carry: null, onDoneBurst: 'Sparkle' }],
           workerMotion: meta,
           flyingFallback: null,
         });
@@ -1034,6 +1101,7 @@ export class MotionDirector {
         segElapsed: 0,
         speedMultiplier,
         workerMotion: motion.workerMotion,
+        trailAccum: 0,
       });
     }
 
@@ -1050,6 +1118,51 @@ export class MotionDirector {
       }
     }
     this.actorQueueOrder = this.actorQueueOrder.filter((k) => (this.actorQueues.get(k)?.length ?? 0) > 0);
+  }
+
+  private spawnCourier(
+    kind: CourierKind,
+    from: [number, number],
+    to: [number, number],
+    duration = 1.1
+  ): void {
+    if (this.couriers.length >= MAX_COURIERS) {
+      this.couriers.shift();
+    }
+    const midX = (from[0] + to[0]) * 0.5;
+    const midY = (from[1] + to[1]) * 0.5;
+    const dx = to[0] - from[0];
+    const dy = to[1] - from[1];
+    const dist = Math.hypot(dx, dy);
+    const arcLift = Math.max(54, Math.min(130, dist * 0.28 + 38));
+    const sideCurve = Math.abs(dx) < 40 ? (dy >= 0 ? 46 : -46) : 0;
+    const control: [number, number] = [midX + sideCurve, Math.max(40, midY - arcLift)];
+    this.couriers.push({
+      id: this.nextId++,
+      kind,
+      from: [from[0], from[1]],
+      to: [to[0], to[1]],
+      control,
+      elapsed: 0,
+      duration: Math.max(0.3, duration),
+    });
+  }
+
+  private spawnTrailSparkle(pos: [number, number], kind: 'Entering' | 'Leaving'): void {
+    if (this.particles.length >= MAX_PARTICLES) return;
+    const r1 = this.nextRand();
+    this.particles.push({
+      kind: 'Sparkle',
+      x: pos[0] + (r1 - 0.5) * 10,
+      y: pos[1] - 6,
+      vx: (r1 - 0.5) * 14,
+      vy: -14 - r1 * 10,
+      gravity: 12,
+      age: 0,
+      ttl: 0.48,
+      colorHex: kind === 'Entering' ? '#7dd3fc' : '#fde047',
+      size: 4.5,
+    });
   }
 
   private spawnFlyingProp(

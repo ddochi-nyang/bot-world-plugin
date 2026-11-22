@@ -1,4 +1,5 @@
 import type {
+  AtmosphereMode,
   BotWorldStatePayload,
   CharacterId,
   LanguageSetting,
@@ -19,6 +20,10 @@ declare module 'orca' {
     'botWorld.setTheme': {
       input: { themeId: string };
       output: { themeId: ThemeId };
+    };
+    'botWorld.setAtmosphereMode': {
+      input: { atmosphereMode: AtmosphereMode };
+      output: { atmosphereMode: AtmosphereMode };
     };
     'botWorld.setRedactMode': {
       input: { redactMode: boolean };

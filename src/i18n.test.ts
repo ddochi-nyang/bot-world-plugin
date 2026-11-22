@@ -47,7 +47,7 @@ function createMinimalClient(): OrcaClient {
       result: {
         bots: [
           { id: 'b1', name: 'Security', agent: 'claude', paused: false, specialty: 'Security' },
-          { id: 'b2', name: 'Ddochi', agent: 'claude', paused: false, specialty: 'Coordinator' },
+          { id: 'b2', name: 'Ops Lead', agent: 'claude', paused: false, specialty: 'Coordinator' },
         ],
       },
     }),

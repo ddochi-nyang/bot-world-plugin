@@ -1,5 +1,7 @@
 import { scrubAll } from '../src/redact.ts';
 import {
+  type AtmosphereMode,
+  type AtmospherePhase,
   type BotActivityStatus,
   type BotState,
   type CharacterId,
@@ -24,8 +26,10 @@ import {
   type BubbleKind,
   type CarryProp,
   type Facing,
+  type FlyingCourier,
   type FlyingProp,
   MAX_BUBBLES,
+  MAX_COURIERS,
   MAX_PARTICLES,
   type MotionDirector,
   type Particle,
@@ -296,9 +300,32 @@ function bubbleColors(kind: BubbleKind): { bg: string; border: string; fg: strin
   }
 }
 
+export function resolveAtmospherePhase(
+  mode: AtmosphereMode,
+  timestampMs: number
+): AtmospherePhase {
+  if (mode !== 'auto') return mode;
+  const ts = Number.isFinite(timestampMs) ? timestampMs : Date.now();
+  const hour = new Date(ts).getHours();
+  if (hour >= 7 && hour <= 16) return 'day';
+  if (hour >= 17 && hour <= 19) return 'sunset';
+  return 'night';
+}
+
+const IDLE_Z_THRESHOLD_MS = 5 * 60_000;
+
+function isBotLongIdle(bot: BotState, phase: AtmospherePhase, displayTimestampMs: number): boolean {
+  if (bot.status.kind !== 'Idle') return false;
+  if (phase === 'night') return true;
+  if (bot.lastActivityAt === null || !Number.isFinite(bot.lastActivityAt)) return false;
+  return displayTimestampMs - bot.lastActivityAt >= IDLE_Z_THRESHOLD_MS;
+}
+
 export type StageRenderInput = {
   snapshot: WorldSnapshot;
   themeId: ThemeId;
+  atmosphereMode?: AtmosphereMode;
+  displayTimestampMs?: number;
   selectedBotId: string | null;
   redactMode: boolean;
   botAppearances: Record<string, CharacterId>;
@@ -322,6 +349,7 @@ export class StageRenderer {
   private hitBoxes: HitBox[] = [];
   private rafId: number | null = null;
   private lastFrameMs = 0;
+  private lastIdleAnimRenderMs = 0;
   private animTick = 0;
   private tickAccumulatorMs = 0;
   private resizeObserver: ResizeObserver | null = null;
@@ -394,11 +422,18 @@ export class StageRenderer {
     this.ensureAnimationLoopIfNeeded();
   }
 
-  private shouldAnimate(input: StageRenderInput): boolean {
-    if (input.motion.hasActiveAnimations()) return true;
-    if (input.replay?.isReplay) {
-      return input.replay.isPlaying;
+  private resolveDisplayTimestampMs(input: StageRenderInput): number {
+    if (typeof input.displayTimestampMs === 'number' && Number.isFinite(input.displayTimestampMs)) {
+      return input.displayTimestampMs;
     }
+    if (input.replay?.isReplay) {
+      return input.replay.cursorMs;
+    }
+    return input.snapshot.capturedAt > 0 ? input.snapshot.capturedAt : Date.now();
+  }
+
+  private hasActiveOrWorkingAnimation(input: StageRenderInput): boolean {
+    if (input.motion.hasActiveAnimations()) return true;
     for (const bot of Object.values(input.snapshot.bots)) {
       if (
         bot.status.kind === 'Working' ||
@@ -409,6 +444,29 @@ export class StageRenderer {
       }
     }
     return false;
+  }
+
+  private hasAmbientIdleAnimation(input: StageRenderInput): boolean {
+    const mode = input.atmosphereMode ?? 'auto';
+    const displayTs = this.resolveDisplayTimestampMs(input);
+    const phase = resolveAtmospherePhase(mode, displayTs);
+    for (const bot of Object.values(input.snapshot.bots)) {
+      if (isBotLongIdle(bot, phase, displayTs)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private shouldAnimate(input: StageRenderInput): boolean {
+    if (input.motion.hasActiveAnimations()) return true;
+    if (input.replay?.isReplay) {
+      return input.replay.isPlaying;
+    }
+    if (this.hasActiveOrWorkingAnimation(input)) {
+      return true;
+    }
+    return this.hasAmbientIdleAnimation(input);
   }
 
   private ensureAnimationLoopIfNeeded(): void {
@@ -440,13 +498,17 @@ export class StageRenderer {
 
     const input = this.lastInput;
     const theme = getThemeConfig(input.themeId, input.locale ?? 'en');
-    if (input.replay?.isReplay && input.replay.isPlaying) {
-      // Replay controller advances its own motion director when playing
-    } else {
+    const isPlayingReplay = Boolean(input.replay?.isReplay && input.replay.isPlaying);
+    if (!isPlayingReplay) {
       input.motion.step(dtSecs, input.snapshot, theme);
     }
 
-    this.renderNow();
+    const isIdleOnlyAmbient =
+      !isPlayingReplay && !this.hasActiveOrWorkingAnimation(input) && this.hasAmbientIdleAnimation(input);
+    if (!isIdleOnlyAmbient || nowMs - this.lastIdleAnimRenderMs >= 80) {
+      this.lastIdleAnimRenderMs = nowMs;
+      this.renderNow();
+    }
     this.ensureAnimationLoopIfNeeded();
   };
 
@@ -520,6 +582,9 @@ export class StageRenderer {
     const { snapshot, motion, redactMode, selectedBotId, botAppearances } = input;
     const layout = motion.layout;
     const elapsedSecs = motion.elapsedSecs;
+    const displayTimestampMs = this.resolveDisplayTimestampMs(input);
+    const atmosphereMode = input.atmosphereMode ?? 'auto';
+    const atmospherePhase = resolveAtmospherePhase(atmosphereMode, displayTimestampMs);
     const pulseHigh = this.animTick % 2 === 0;
     const runtimeDimmed = !snapshot.runtime.connected && Object.keys(snapshot.bots).length > 0;
     const uiScale = Math.max(0.76, Math.min(1.05, vt.scale));
@@ -835,13 +900,40 @@ export class StageRenderer {
       }
     }
 
-    // Flying props & particles
+    // Flying props, curved couriers & particles
     for (const fp of motion.flyingProps) {
       this.paintFlyingProp(ctx, vt, fp);
+    }
+    for (const courier of motion.couriers.slice(0, MAX_COURIERS)) {
+      this.paintFlyingCourier(ctx, vt, courier);
     }
     for (const p of motion.particles.slice(0, MAX_PARTICLES)) {
       this.paintParticle(ctx, vt, p);
     }
+
+    // Atmosphere lighting glaze & desk lamps (before UI nameplates/bubbles so text stays 100% crisp)
+    this.paintAtmosphereOverlay(
+      ctx,
+      vt,
+      bgW,
+      bgH,
+      atmospherePhase,
+      orderedBots,
+      layout.botDesks,
+      layout.bossDesk
+    );
+
+    // Cozy ambient details: late-night/sunset coffee mug steam & long-idle Zzz floaters
+    this.paintCozyAmbientDetails(
+      ctx,
+      vt,
+      orderedBots,
+      layout.botDesks,
+      motion,
+      atmospherePhase,
+      displayTimestampMs,
+      elapsedSecs
+    );
 
     // Overlays & obstacles for speech bubbles
     const obstacles: Rect[] = [];
@@ -1051,6 +1143,303 @@ export class StageRenderer {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(truncateTextToWidth(ctx, text, estW - 14), bLeft + estW * 0.5, bTop + estH * 0.5);
+    }
+
+    ctx.restore();
+  }
+
+  private paintAtmosphereOverlay(
+    ctx: CanvasRenderingContext2D,
+    vt: ViewportTransform,
+    bgW: number,
+    bgH: number,
+    phase: AtmospherePhase,
+    orderedBots: readonly BotState[],
+    botDesks: ReadonlyMap<string, { x: number; y: number; workerOffset: [number, number] }>,
+    bossDesk: [number, number]
+  ): void {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(vt.originX, vt.originY, bgW, bgH);
+    ctx.clip();
+
+    if (phase === 'day') {
+      const beam = ctx.createLinearGradient(
+        vt.originX + bgW * 0.08,
+        vt.originY,
+        vt.originX + bgW * 0.56,
+        vt.originY + bgH * 0.68
+      );
+      beam.addColorStop(0, 'rgba(255, 248, 220, 0.065)');
+      beam.addColorStop(0.55, 'rgba(255, 248, 220, 0.03)');
+      beam.addColorStop(1, 'rgba(255, 248, 220, 0)');
+      ctx.fillStyle = beam;
+      ctx.beginPath();
+      ctx.moveTo(vt.originX + bgW * 0.06, vt.originY);
+      ctx.lineTo(vt.originX + bgW * 0.34, vt.originY);
+      ctx.lineTo(vt.originX + bgW * 0.62, vt.originY + bgH * 0.72);
+      ctx.lineTo(vt.originX + bgW * 0.24, vt.originY + bgH * 0.72);
+      ctx.closePath();
+      ctx.fill();
+    } else if (phase === 'sunset') {
+      ctx.fillStyle = 'rgba(255, 138, 76, 0.14)';
+      ctx.fillRect(vt.originX, vt.originY, bgW, bgH);
+
+      const rayGrad = ctx.createLinearGradient(
+        vt.originX + bgW * 0.05,
+        vt.originY,
+        vt.originX + bgW * 0.72,
+        vt.originY + bgH * 0.85
+      );
+      rayGrad.addColorStop(0, 'rgba(255, 206, 120, 0.16)');
+      rayGrad.addColorStop(0.6, 'rgba(255, 148, 86, 0.05)');
+      rayGrad.addColorStop(1, 'rgba(255, 138, 76, 0)');
+      ctx.fillStyle = rayGrad;
+      ctx.beginPath();
+      ctx.moveTo(vt.originX + bgW * 0.04, vt.originY);
+      ctx.lineTo(vt.originX + bgW * 0.38, vt.originY);
+      ctx.lineTo(vt.originX + bgW * 0.76, vt.originY + bgH * 0.9);
+      ctx.lineTo(vt.originX + bgW * 0.28, vt.originY + bgH * 0.9);
+      ctx.closePath();
+      ctx.fill();
+
+      const depthGrad = ctx.createRadialGradient(
+        vt.originX + bgW * 0.5,
+        vt.originY + bgH * 0.42,
+        bgW * 0.24,
+        vt.originX + bgW * 0.5,
+        vt.originY + bgH * 0.5,
+        bgW * 0.72
+      );
+      depthGrad.addColorStop(0, 'rgba(67, 20, 7, 0)');
+      depthGrad.addColorStop(1, 'rgba(67, 20, 7, 0.16)');
+      ctx.fillStyle = depthGrad;
+      ctx.fillRect(vt.originX, vt.originY, bgW, bgH);
+    } else {
+      ctx.fillStyle = 'rgba(12, 20, 44, 0.34)';
+      ctx.fillRect(vt.originX, vt.originY, bgW, bgH);
+
+      // Subtle warm pendant glow on Owner Desk
+      const [bx, by] = designToScreen(vt, bossDesk[0], bossDesk[1] - 20);
+      const bossRadius = 115 * vt.scale;
+      const bossGlow = ctx.createRadialGradient(bx, by, 6 * vt.scale, bx, by, bossRadius);
+      bossGlow.addColorStop(0, 'rgba(255, 214, 138, 0.18)');
+      bossGlow.addColorStop(0.55, 'rgba(255, 198, 108, 0.08)');
+      bossGlow.addColorStop(1, 'rgba(255, 214, 138, 0)');
+      ctx.fillStyle = bossGlow;
+      ctx.beginPath();
+      ctx.arc(bx, by, bossRadius, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Warm desk lamp radial glow over each Working or NeedsOwner bot desk
+      const lampRadius = 104 * vt.scale;
+      for (const bot of orderedBots) {
+        if (bot.status.kind !== 'Working' && bot.status.kind !== 'NeedsOwner') continue;
+        const desk = botDesks.get(bot.id);
+        if (!desk) continue;
+        const [lx, ly] = designToScreen(vt, desk.x, desk.y - 24);
+        const lampGlow = ctx.createRadialGradient(lx, ly, 4 * vt.scale, lx, ly, lampRadius);
+        lampGlow.addColorStop(0, 'rgba(255, 214, 138, 0.24)');
+        lampGlow.addColorStop(0.5, 'rgba(255, 204, 118, 0.11)');
+        lampGlow.addColorStop(1, 'rgba(255, 214, 138, 0)');
+        ctx.fillStyle = lampGlow;
+        ctx.beginPath();
+        ctx.arc(lx, ly, lampRadius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    ctx.restore();
+  }
+
+  private paintCozyAmbientDetails(
+    ctx: CanvasRenderingContext2D,
+    vt: ViewportTransform,
+    orderedBots: readonly BotState[],
+    botDesks: ReadonlyMap<string, { x: number; y: number; workerOffset: [number, number] }>,
+    motion: MotionDirector,
+    phase: AtmospherePhase,
+    displayTimestampMs: number,
+    elapsedSecs: number
+  ): void {
+    const s = Math.max(0.55, vt.scale);
+    orderedBots.forEach((bot, idx) => {
+      const desk = botDesks.get(bot.id);
+      if (!desk) return;
+      const pose = motion.actorPose(`bot:${bot.id}`, [desk.x, desk.y]);
+      if (pose.isWalking) return;
+      const [sx, sy] = designToScreen(vt, pose.footX, pose.footY);
+
+      // Steaming coffee mug for Working bots during sunset or night
+      if (bot.status.kind === 'Working' && (phase === 'sunset' || phase === 'night')) {
+        const sideSign = desk.workerOffset[0] > 0 ? -1 : 1;
+        const mx = sx + sideSign * 30 * s;
+        const my = sy - 10 * s;
+        ctx.save();
+        // Mug body
+        drawRoundedRect(ctx, mx - 5.5 * s, my - 5 * s, 11 * s, 9.5 * s, 2.2 * s);
+        ctx.fillStyle = '#f8fafc';
+        ctx.fill();
+        ctx.strokeStyle = '#78350f';
+        ctx.lineWidth = 1.2 * s;
+        ctx.stroke();
+        // Coffee rim
+        ctx.fillStyle = '#6b3e1f';
+        ctx.fillRect(mx - 4.2 * s, my - 4.2 * s, 8.4 * s, 2 * s);
+        // Handle
+        ctx.beginPath();
+        ctx.arc(mx + 5.8 * s, my - 0.5 * s, 2.7 * s, -Math.PI * 0.5, Math.PI * 0.5);
+        ctx.strokeStyle = '#e2e8f0';
+        ctx.lineWidth = 1.3 * s;
+        ctx.stroke();
+        // Rising steam wisps
+        for (let w = 0; w < 2; w++) {
+          const cycle = (elapsedSecs * 0.75 + idx * 0.37 + w * 0.48) % 1;
+          const wy = my - 7 * s - cycle * 14 * s;
+          const wx = mx + (-2 + w * 4) * s + Math.sin(cycle * Math.PI * 2 + w) * 2.2 * s;
+          ctx.globalAlpha = Math.max(0, (1 - cycle) * 0.75);
+          ctx.beginPath();
+          ctx.arc(wx, wy, (1.6 + cycle * 1.2) * s, 0, Math.PI * 2);
+          ctx.fillStyle = '#fef3c7';
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+
+      // Gentle floating Zzz letters for long-idle bots (Idle >= 5m or Idle at night)
+      if (isBotLongIdle(bot, phase, displayTimestampMs)) {
+        const letters = ['Z', 'z', 'z'] as const;
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        for (let i = 0; i < letters.length; i++) {
+          const cycle = (elapsedSecs * 0.45 + idx * 0.31 + i * 0.33) % 1;
+          const alpha = cycle < 0.2 ? cycle / 0.2 : Math.max(0, 1 - (cycle - 0.2) / 0.8);
+          const zx = sx + (20 + i * 6) * s + Math.sin(cycle * Math.PI * 2 + i) * 3 * s;
+          const zy = sy - (48 + i * 6) * s - cycle * 22 * s;
+          const fontPx = Math.round((10.5 - i * 1.3) * s);
+          ctx.globalAlpha = alpha * 0.9;
+          ctx.font = `700 ${fontPx}px ${CANVAS_FONT_FAMILY}`;
+          ctx.strokeStyle = 'rgba(15, 23, 42, 0.75)';
+          ctx.lineWidth = 2.2 * s;
+          ctx.strokeText(letters[i], zx, zy);
+          ctx.fillStyle = phase === 'night' ? '#bae6fd' : '#e0f2fe';
+          ctx.fillText(letters[i], zx, zy);
+        }
+        ctx.restore();
+      }
+    });
+  }
+
+  private paintFlyingCourier(
+    ctx: CanvasRenderingContext2D,
+    vt: ViewportTransform,
+    courier: FlyingCourier
+  ): void {
+    const t =
+      courier.duration <= 1e-6 ? 1 : Math.max(0, Math.min(1, courier.elapsed / courier.duration));
+    const oneMinusT = 1 - t;
+    const xDesign =
+      oneMinusT * oneMinusT * courier.from[0] +
+      2 * oneMinusT * t * courier.control[0] +
+      t * t * courier.to[0];
+    const yDesign =
+      oneMinusT * oneMinusT * courier.from[1] +
+      2 * oneMinusT * t * courier.control[1] +
+      t * t * courier.to[1];
+
+    const txDesign =
+      2 * oneMinusT * (courier.control[0] - courier.from[0]) +
+      2 * t * (courier.to[0] - courier.control[0]);
+    const tyDesign =
+      2 * oneMinusT * (courier.control[1] - courier.from[1]) +
+      2 * t * (courier.to[1] - courier.control[1]);
+
+    const groundXDesign = courier.from[0] + (courier.to[0] - courier.from[0]) * t;
+    const groundYDesign = courier.from[1] + (courier.to[1] - courier.from[1]) * t;
+    const [gx, gy] = designToScreen(vt, groundXDesign, groundYDesign);
+    const [x, y] = designToScreen(vt, xDesign, yDesign);
+    const s = Math.max(0.55, vt.scale);
+
+    ctx.save();
+    // Dashed curved trail tail behind courier
+    const trailStartT = Math.max(0, t - 0.36);
+    if (t > trailStartT + 0.01) {
+      ctx.beginPath();
+      const steps = 10;
+      for (let i = 0; i <= steps; i++) {
+        const st = trailStartT + ((t - trailStartT) * i) / steps;
+        const omt = 1 - st;
+        const pxD =
+          omt * omt * courier.from[0] + 2 * omt * st * courier.control[0] + st * st * courier.to[0];
+        const pyD =
+          omt * omt * courier.from[1] + 2 * omt * st * courier.control[1] + st * st * courier.to[1];
+        const [px, py] = designToScreen(vt, pxD, pyD);
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.setLineDash([4 * s, 4 * s]);
+      ctx.lineWidth = 1.6 * s;
+      ctx.strokeStyle =
+        courier.kind === 'paper_plane' ? 'rgba(125, 211, 252, 0.8)' : 'rgba(253, 224, 71, 0.8)';
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // Subtle ground drop shadow
+    drawRoundedRect(ctx, gx - 8 * s, gy - 2.5 * s, 16 * s, 5 * s, 4 * s);
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.28)';
+    ctx.fill();
+
+    // Rotated courier icon
+    const angle = Math.atan2(tyDesign, txDesign);
+    ctx.translate(x, y);
+    ctx.shadowColor = 'rgba(15, 23, 42, 0.45)';
+    ctx.shadowBlur = 4 * s;
+    ctx.shadowOffsetY = 2 * s;
+
+    if (courier.kind === 'paper_plane') {
+      ctx.rotate(angle);
+      ctx.beginPath();
+      ctx.moveTo(13 * s, 0);
+      ctx.lineTo(-9 * s, 7.5 * s);
+      ctx.lineTo(-4.5 * s, 0);
+      ctx.lineTo(-9 * s, -7.5 * s);
+      ctx.closePath();
+      ctx.fillStyle = '#f8fafc';
+      ctx.fill();
+      ctx.strokeStyle = '#0284c7';
+      ctx.lineWidth = 1.4 * s;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(13 * s, 0);
+      ctx.lineTo(-4.5 * s, 0);
+      ctx.lineTo(-9 * s, 7.5 * s);
+      ctx.closePath();
+      ctx.fillStyle = '#bae6fd';
+      ctx.fill();
+    } else {
+      const tilt = Math.max(-0.28, Math.min(0.28, angle * 0.25));
+      ctx.rotate(tilt);
+      const w = 18 * s;
+      const h = 13 * s;
+      drawRoundedRect(ctx, -w * 0.5, -h * 0.5, w, h, 2.2 * s);
+      ctx.fillStyle = '#fef9c3';
+      ctx.fill();
+      ctx.strokeStyle = '#d97706';
+      ctx.lineWidth = 1.4 * s;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-w * 0.45, -h * 0.38);
+      ctx.lineTo(0, h * 0.1);
+      ctx.lineTo(w * 0.45, -h * 0.38);
+      ctx.strokeStyle = '#b45309';
+      ctx.lineWidth = 1.2 * s;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(0, h * 0.08, 2.1 * s, 0, Math.PI * 2);
+      ctx.fillStyle = '#ef4444';
+      ctx.fill();
     }
 
     ctx.restore();

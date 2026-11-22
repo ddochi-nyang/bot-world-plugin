@@ -1,4 +1,5 @@
 import {
+  type AtmosphereMode,
   type CharacterId,
   type LanguageSetting,
   type ThemeId,
@@ -261,6 +262,25 @@ export type UiDictionary = {
   statusBarOfflineTooltip: string;
   statusBarBrand: string;
   statusBarRedactedTag: string;
+  atmosphereAriaLabel: string;
+  atmosphereModes: Record<AtmosphereMode, string>;
+  atmosphereToggleTitle: (modeLabel: string) => string;
+  themeToggleTitle: string;
+  redactToggleTitle: string;
+  demoToggleTitle: string;
+  playToggleTitle: string;
+  shortcutsTitle: string;
+  shortcutsSubtitle: string;
+  shortcutsButtonTitle: string;
+  shortcutsClose: string;
+  shortcutToggleTheme: string;
+  shortcutToggleRedact: string;
+  shortcutSwitchLanguage: string;
+  shortcutCycleAtmosphere: string;
+  shortcutToggleDemo: string;
+  shortcutTogglePlay: string;
+  shortcutClearOrClose: string;
+  shortcutShowHelp: string;
 };
 
 export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
@@ -410,6 +430,30 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     statusBarOfflineTooltip: 'Waiting for Orca runtime connection',
     statusBarBrand: 'Bot World',
     statusBarRedactedTag: 'Redacted',
+    atmosphereAriaLabel: 'Office Atmosphere',
+    atmosphereModes: {
+      auto: 'Auto',
+      day: 'Day',
+      sunset: 'Sunset',
+      night: 'Night',
+    },
+    atmosphereToggleTitle: (modeLabel) => `Cycle atmosphere (${modeLabel}) [A]`,
+    themeToggleTitle: 'Switch office theme [T]',
+    redactToggleTitle: 'Toggle redact mode [R]',
+    demoToggleTitle: 'Toggle Demo Office [D]',
+    playToggleTitle: 'Play / Pause replay [Space]',
+    shortcutsTitle: 'Keyboard Shortcuts',
+    shortcutsSubtitle: 'Press a key anywhere outside text inputs',
+    shortcutsButtonTitle: 'Keyboard shortcuts [?]',
+    shortcutsClose: 'Close',
+    shortcutToggleTheme: 'Toggle theme',
+    shortcutToggleRedact: 'Toggle redact mode',
+    shortcutSwitchLanguage: 'Switch language',
+    shortcutCycleAtmosphere: 'Cycle atmosphere',
+    shortcutToggleDemo: 'Toggle demo office',
+    shortcutTogglePlay: 'Play / Pause replay',
+    shortcutClearOrClose: 'Clear selection / Close',
+    shortcutShowHelp: 'Show shortcuts',
   },
   ko: {
     appTitlePanel: '봇 월드',
@@ -554,6 +598,30 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     statusBarOfflineTooltip: 'Orca 런타임 연결 대기 중',
     statusBarBrand: '봇 월드',
     statusBarRedactedTag: '가림',
+    atmosphereAriaLabel: '시간대 분위기',
+    atmosphereModes: {
+      auto: '자동',
+      day: '낮',
+      sunset: '노을',
+      night: '야간',
+    },
+    atmosphereToggleTitle: (modeLabel) => `시간대 분위기 전환 (${modeLabel}) [A]`,
+    themeToggleTitle: '사무실 테마 전환 [T]',
+    redactToggleTitle: '가림 모드 전환 [R]',
+    demoToggleTitle: '데모 오피스 전환 [D]',
+    playToggleTitle: '리플레이 재생 / 일시정지 [Space]',
+    shortcutsTitle: '단축키 안내',
+    shortcutsSubtitle: '입력창 밖에서 키를 눌러 바로 실행할 수 있습니다',
+    shortcutsButtonTitle: '단축키 도움말 [?]',
+    shortcutsClose: '닫기',
+    shortcutToggleTheme: '사무실 테마 전환',
+    shortcutToggleRedact: '가림 모드 전환',
+    shortcutSwitchLanguage: '언어 전환',
+    shortcutCycleAtmosphere: '시간대 분위기 전환',
+    shortcutToggleDemo: '데모 오피스 전환',
+    shortcutTogglePlay: '리플레이 재생 / 일시정지',
+    shortcutClearOrClose: '선택 해제 / 닫기',
+    shortcutShowHelp: '단축키 도움말',
   },
 };
 

@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "bot-world",
   "name": "Bot World",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "description": "Read-only virtual office visualizer for Orca bots and live sub-workers",
   "license": "MIT",
   "author": {
@@ -33,6 +33,12 @@
       "theme": "dark",
       "alt": "Bot World wide .botworld office board with Redact Mode enabled and 24-hour timeline replay paused at an earlier timestamp",
       "caption": "Redact Mode privacy masking paired with 24-hour timeline scrubbing and playback"
+    },
+    {
+      "path": "assets/showcase/night-office.jpg",
+      "theme": "dark",
+      "alt": "Bot World wide .botworld office board in Night mode with warm desk lamp glows, steaming coffee, idle Zzz bubbles, and a sub-worker entering through the door",
+      "caption": "Living Office Night mode with warm desk lamp spotlights, idle Zzz bubbles, and sub-worker commute animation"
     }
   ],
   "engines": {
@@ -153,6 +159,25 @@
         ],
         "default": "auto",
         "description": "Display language for Bot World (auto follows Orca UI locale)"
+      },
+      {
+        "key": "atmosphereMode",
+        "title": "Office Atmosphere",
+        "type": "string",
+        "enum": [
+          "auto",
+          "day",
+          "sunset",
+          "night"
+        ],
+        "enumLabels": [
+          "Auto (Time of Day)",
+          "Day",
+          "Sunset",
+          "Night"
+        ],
+        "default": "auto",
+        "description": "Office time-of-day lighting atmosphere (auto follows live or replay timestamp; day, sunset, or night overrides lighting)"
       }
     ]
   }

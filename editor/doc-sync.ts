@@ -1,10 +1,12 @@
 import {
+  type AtmosphereMode,
   type BotWorldDocumentData,
   type CharacterId,
   DEFAULT_BOTWORLD_DOCUMENT,
   MAX_BOT_APPEARANCES,
   isPoolCharacterId,
   isSafeKey,
+  isValidAtmosphereMode,
   isValidThemeId,
   toPlainSafeRecord,
   validateBotWorldDocument,
@@ -49,6 +51,17 @@ export function mergeBotWorldDocuments(
   const outsideTheme = isValidThemeId(outside?.themeId) ? outside.themeId : baseTheme;
   const themeId = mineTheme !== baseTheme ? mineTheme : outsideTheme;
 
+  const baseAtm: AtmosphereMode = isValidAtmosphereMode(base?.atmosphereMode)
+    ? base.atmosphereMode
+    : 'auto';
+  const mineAtm: AtmosphereMode = isValidAtmosphereMode(mine?.atmosphereMode)
+    ? mine.atmosphereMode
+    : baseAtm;
+  const outsideAtm: AtmosphereMode = isValidAtmosphereMode(outside?.atmosphereMode)
+    ? outside.atmosphereMode
+    : baseAtm;
+  const atmosphereMode = mineAtm !== baseAtm ? mineAtm : outsideAtm;
+
   const baseRedact =
     typeof base?.redactMode === 'boolean' ? base.redactMode : DEFAULT_BOTWORLD_DOCUMENT.redactMode;
   const mineRedact = typeof mine?.redactMode === 'boolean' ? mine.redactMode : baseRedact;
@@ -87,6 +100,7 @@ export function mergeBotWorldDocuments(
   return {
     version: 1,
     themeId,
+    atmosphereMode,
     redactMode,
     selectedBotId,
     botAppearances: toPlainSafeRecord(mergedAppearances),
@@ -107,6 +121,7 @@ export function encodeBotWorldContent(data: BotWorldDocumentData): { kind: 'text
   const safeDoc: BotWorldDocumentData = {
     version: 1,
     themeId: isValidThemeId(data.themeId) ? data.themeId : 'startup_office',
+    atmosphereMode: isValidAtmosphereMode(data.atmosphereMode) ? data.atmosphereMode : 'auto',
     redactMode: typeof data.redactMode === 'boolean' ? data.redactMode : false,
     selectedBotId: sanitizeSelectedBotId(data.selectedBotId),
     botAppearances: normalizeAppearances(data.botAppearances),
