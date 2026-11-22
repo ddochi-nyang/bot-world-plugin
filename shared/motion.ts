@@ -1,6 +1,7 @@
 import { formatEventSummaries } from '../src/events.ts';
 import {
   type ActorRef,
+  type BotState,
   type DeskCoordinate,
   type Keyframe,
   type UiLocale,
@@ -20,6 +21,133 @@ export const MAX_PARTICLES = 64;
 export const MAX_COURIERS = 6;
 export const FLOOD_QUEUE_THRESHOLD = 3;
 export const FLOOD_SPEED_MULTIPLIER = 4.0;
+export const MILESTONE_THRESHOLDS = [5, 10, 25, 50] as const;
+
+export function hasErrorDeskBeacon(bot: BotState): boolean {
+  return bot.status.kind === 'Error';
+}
+
+export function isCompletionEvent(event: WorldEvent): boolean {
+  if (!event || typeof event !== 'object') return false;
+  if (event.kind === 'ItemDone' || event.kind === 'WorkerDone') return true;
+  if (event.kind === 'AutomationRun') return event.success === true;
+  return false;
+}
+
+export function localDayKey(epochMs: number): string {
+  const ts = Number.isFinite(epochMs) && epochMs > 0 ? epochMs : Date.now();
+  const d = new Date(ts);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+export function countDailyCompletions(
+  events: readonly WorldEventRecord[],
+  nowMs: number
+): number {
+  const dayKey = localDayKey(nowMs);
+  let count = 0;
+  for (const rec of events) {
+    if (!rec || typeof rec.timestampMs !== 'number' || !Number.isFinite(rec.timestampMs)) continue;
+    if (localDayKey(rec.timestampMs) !== dayKey) continue;
+    if (isCompletionEvent(rec.event)) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+export function detectCrossedMilestone(
+  prevCount: number,
+  nextCount: number,
+  celebratedThresholds: ReadonlySet<number>
+): number | null {
+  let crossed: number | null = null;
+  for (const threshold of MILESTONE_THRESHOLDS) {
+    if (prevCount < threshold && nextCount >= threshold && !celebratedThresholds.has(threshold)) {
+      crossed = threshold;
+    }
+  }
+  return crossed;
+}
+
+export class MilestoneTracker {
+  private dayKey = '';
+  private completionCount = 0;
+  private celebrated = new Set<number>();
+  private seeded = false;
+
+  reset(): void {
+    this.dayKey = '';
+    this.completionCount = 0;
+    this.celebrated.clear();
+    this.seeded = false;
+  }
+
+  isSeeded(): boolean {
+    return this.seeded;
+  }
+
+  getCompletionCount(): number {
+    return this.completionCount;
+  }
+
+  seedBaseline(events: readonly WorldEventRecord[], nowMs: number): void {
+    const key = localDayKey(nowMs);
+    this.dayKey = key;
+    this.completionCount = countDailyCompletions(events, nowMs);
+    this.celebrated.clear();
+    for (const threshold of MILESTONE_THRESHOLDS) {
+      if (this.completionCount >= threshold) {
+        this.celebrated.add(threshold);
+      }
+    }
+    this.seeded = true;
+  }
+
+  evaluateNewEvents(events: readonly WorldEvent[], nowMs: number): number | null {
+    const key = localDayKey(nowMs);
+    if (!this.seeded || this.dayKey !== key) {
+      this.dayKey = key;
+      this.completionCount = 0;
+      this.celebrated.clear();
+      this.seeded = true;
+    }
+    let added = 0;
+    for (const ev of events) {
+      if (isCompletionEvent(ev)) added += 1;
+    }
+    if (added === 0) return null;
+    const prev = this.completionCount;
+    const next = prev + added;
+    this.completionCount = next;
+    const crossed = detectCrossedMilestone(prev, next, this.celebrated);
+    if (crossed !== null) {
+      for (const threshold of MILESTONE_THRESHOLDS) {
+        if (next >= threshold) this.celebrated.add(threshold);
+      }
+    }
+    return crossed;
+  }
+}
+
+export type HuddleSparkle = {
+  id: number;
+  botAId: string;
+  botBId: string;
+  from: [number, number];
+  to: [number, number];
+  elapsed: number;
+  duration: number;
+};
+
+export type MilestoneBanner = {
+  count: number;
+  ttl: number;
+  maxTtl: number;
+};
 
 export type CourierKind = 'paper_plane' | 'envelope';
 
@@ -75,6 +203,7 @@ export type SpeechBubble = {
 
 export type ParticleKind =
   | 'GreenCheckConfetti'
+  | 'MilestoneConfetti'
   | 'Sparkle'
   | 'SweatDrop'
   | 'LockOrange'
@@ -499,6 +628,10 @@ export class MotionDirector {
   couriers: FlyingCourier[] = [];
   bubbles: SpeechBubble[] = [];
   particles: Particle[] = [];
+  huddles: HuddleSparkle[] = [];
+  milestoneBanner: MilestoneBanner | null = null;
+  private recentBotPairs = new Map<string, number>();
+  private lastBotPairKey: string | null = null;
   private nextId = 1;
   private workerSeqCounter = 0;
   private workerSeqById = new Map<string, number>();
@@ -557,6 +690,10 @@ export class MotionDirector {
     this.couriers = [];
     this.bubbles = [];
     this.particles = [];
+    this.huddles = [];
+    this.milestoneBanner = null;
+    this.recentBotPairs.clear();
+    this.lastBotPairKey = null;
   }
 
   hasActiveAnimations(): boolean {
@@ -566,8 +703,23 @@ export class MotionDirector {
       this.flyingProps.length > 0 ||
       this.couriers.length > 0 ||
       this.bubbles.length > 0 ||
-      this.particles.length > 0
+      this.particles.length > 0 ||
+      this.huddles.length > 0 ||
+      this.milestoneBanner !== null
     );
+  }
+
+  triggerMilestone(count: number, centerPos?: [number, number]): void {
+    const origin: [number, number] = centerPos ?? [
+      this.layout.designSize[0] * 0.5,
+      this.layout.designSize[1] * 0.24,
+    ];
+    this.milestoneBanner = {
+      count,
+      ttl: 2.4,
+      maxTtl: 2.4,
+    };
+    this.spawnBurst('MilestoneConfetti', origin, 26);
   }
 
   private assignWorkerSeq(dispatchId: string): number {
@@ -679,6 +831,18 @@ export class MotionDirector {
       p.y += p.vy * dt;
     }
     this.particles = this.particles.filter((p) => p.age < p.ttl);
+
+    for (const h of this.huddles) {
+      h.elapsed += dt;
+    }
+    this.huddles = this.huddles.filter((h) => h.elapsed < h.duration);
+
+    if (this.milestoneBanner) {
+      this.milestoneBanner.ttl -= dt;
+      if (this.milestoneBanner.ttl <= 0) {
+        this.milestoneBanner = null;
+      }
+    }
   }
 
   actorPose(actorKey: string, defaultPos: [number, number]): ActorPose {
@@ -760,6 +924,7 @@ export class MotionDirector {
           this.layout.resolveActorPos(event.from) ??
           (event.kind === 'Handoff' ? this.layout.bossDesk : this.layout.officeDoor);
         const end = this.layout.resolveActorPos(event.to) ?? this.layout.bossDesk;
+        this.recordBotInteractionForHuddle(event.from, event.to, start, end);
         const courierKind: CourierKind = event.kind === 'Handoff' ? 'paper_plane' : 'envelope';
         this.spawnCourier(courierKind, start, end, 1.1);
         const aKey = actorKeyFromRef(event.from);
@@ -800,6 +965,7 @@ export class MotionDirector {
       case 'Reply': {
         const start = this.layout.resolveActorPos(event.from) ?? this.layout.bossDesk;
         const end = this.layout.resolveActorPos(event.to) ?? this.layout.officeDoor;
+        this.recordBotInteractionForHuddle(event.from, event.to, start, end);
         this.spawnCourier('paper_plane', start, end, 1.1);
         this.pushBubble(
           actorKeyFromRef(event.from),
@@ -1095,6 +1261,50 @@ export class MotionDirector {
     }
   }
 
+  private recordBotInteractionForHuddle(
+    from: ActorRef,
+    to: ActorRef,
+    fromPos: [number, number],
+    toPos: [number, number]
+  ): void {
+    if (from.kind !== 'Bot' || to.kind !== 'Bot' || from.botId === to.botId) {
+      return;
+    }
+    const [a, b] = from.botId < to.botId ? [from.botId, to.botId] : [to.botId, from.botId];
+    const pairKey = `${a}::${b}`;
+    const prevElapsed = this.recentBotPairs.get(pairKey);
+    const isConsecutiveOrRecent =
+      this.lastBotPairKey === pairKey ||
+      (prevElapsed !== undefined && this.elapsedSecs - prevElapsed <= 18);
+
+    this.recentBotPairs.set(pairKey, this.elapsedSecs);
+    this.lastBotPairKey = pairKey;
+
+    if (isConsecutiveOrRecent) {
+      const existing = this.huddles.find(
+        (h) => (h.botAId === a && h.botBId === b) || (h.botAId === b && h.botBId === a)
+      );
+      if (existing) {
+        existing.elapsed = 0;
+        existing.from = [fromPos[0], fromPos[1]];
+        existing.to = [toPos[0], toPos[1]];
+      } else {
+        if (this.huddles.length >= 4) {
+          this.huddles.shift();
+        }
+        this.huddles.push({
+          id: this.nextId++,
+          botAId: a,
+          botBId: b,
+          from: [fromPos[0], fromPos[1]],
+          to: [toPos[0], toPos[1]],
+          elapsed: 0,
+          duration: 2.6,
+        });
+      }
+    }
+  }
+
   private scheduleWalkOrFlood(actorKey: string, motion: QueuedMotion): void {
     const existing = this.actorQueues.get(actorKey)?.length ?? 0;
     const active = this.activeWalks.some((w) => w.actorKey === actorKey) ? 1 : 0;
@@ -1303,6 +1513,16 @@ export class MotionDirector {
         ttl = 0.95 + r1 * 0.35;
         colorHex = palette[i % palette.length];
         size = 6;
+      } else if (kind === 'MilestoneConfetti') {
+        const angle = (i / Math.max(1, count)) * Math.PI * 2 + r1 * 0.5;
+        const speed = 60 + r2 * 115;
+        const palette = ['#22c55e', '#38bdf8', '#facc15', '#f472b6', '#a78bfa', '#fb923c'];
+        vx = Math.cos(angle) * speed;
+        vy = Math.sin(angle) * speed * 0.65 - 70;
+        gravity = 135;
+        ttl = 1.9 + r1 * 0.5;
+        colorHex = palette[i % palette.length];
+        size = 6.5 + r2 * 2.5;
       } else if (kind === 'Sparkle') {
         const angle = (i / Math.max(1, count)) * Math.PI * 2;
         const speed = 18 + r1 * 28;

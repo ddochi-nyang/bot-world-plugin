@@ -24,8 +24,10 @@ import {
   type CharacterId,
   type LanguageSetting,
   MAX_BOT_APPEARANCES,
+  type SoundMode,
   type ThemeId,
   type UiLocale,
+  type WeatherMode,
   type WorldEventRecord,
   type WorldSnapshot,
   botStatusLabel,
@@ -34,7 +36,9 @@ import {
   isSafeKey,
   isValidAtmosphereMode,
   isValidLanguageSetting,
+  isValidSoundMode,
   isValidThemeId,
+  isValidWeatherMode,
   isWorkerActive,
   isWorkerVisibleOnStage,
   stripDangerousKeys,
@@ -80,11 +84,14 @@ function redactSafeHandle(actor: ActorRef, locale: UiLocale = 'en'): string {
 type StoredPrefs = {
   activeTheme: ThemeId;
   atmosphereMode: AtmosphereMode;
+  weatherMode: WeatherMode;
+  soundMode: SoundMode;
   redactMode: boolean;
   botAppearances: Record<string, CharacterId>;
   languageSetting: LanguageSetting;
   hasThemeOverride: boolean;
   hasAtmosphereOverride: boolean;
+  hasWeatherOverride: boolean;
   hasRedactOverride: boolean;
   hasLanguageOverride: boolean;
 };
@@ -100,6 +107,7 @@ function validatePrefs(
   defaults: {
     theme: ThemeId;
     atmosphere: AtmosphereMode;
+    weather: WeatherMode;
     redact: boolean;
     language: LanguageSetting;
   }
@@ -107,11 +115,14 @@ function validatePrefs(
   const base: StoredPrefs = {
     activeTheme: defaults.theme,
     atmosphereMode: defaults.atmosphere,
+    weatherMode: defaults.weather,
+    soundMode: 'off',
     redactMode: defaults.redact,
     botAppearances: {},
     languageSetting: defaults.language,
     hasThemeOverride: false,
     hasAtmosphereOverride: false,
+    hasWeatherOverride: false,
     hasRedactOverride: false,
     hasLanguageOverride: false,
   };
@@ -126,6 +137,13 @@ function validatePrefs(
   if (isValidAtmosphereMode(clean.atmosphereMode)) {
     base.atmosphereMode = clean.atmosphereMode;
     base.hasAtmosphereOverride = clean.hasAtmosphereOverride === true;
+  }
+  if (isValidWeatherMode(clean.weatherMode)) {
+    base.weatherMode = clean.weatherMode;
+    base.hasWeatherOverride = clean.hasWeatherOverride === true;
+  }
+  if (isValidSoundMode(clean.soundMode)) {
+    base.soundMode = clean.soundMode;
   }
   if (typeof clean.redactMode === 'boolean') {
     base.redactMode = clean.redactMode;
@@ -478,11 +496,14 @@ export class BotWorldWorkerController {
   private prefs: StoredPrefs = {
     activeTheme: 'startup_office',
     atmosphereMode: 'auto',
+    weatherMode: 'auto',
+    soundMode: 'off',
     redactMode: false,
     botAppearances: {},
     languageSetting: 'auto',
     hasThemeOverride: false,
     hasAtmosphereOverride: false,
+    hasWeatherOverride: false,
     hasRedactOverride: false,
     hasLanguageOverride: false,
   };
@@ -491,12 +512,14 @@ export class BotWorldWorkerController {
   private lastSettings: {
     defaultTheme: ThemeId;
     atmosphereMode: AtmosphereMode;
+    weatherMode: WeatherMode;
     redactMode: boolean;
     pollIntervalSec: number;
     language: LanguageSetting;
   } = {
     defaultTheme: 'startup_office',
     atmosphereMode: 'auto',
+    weatherMode: 'auto',
     redactMode: false,
     pollIntervalSec: 5,
     language: 'auto',
@@ -553,6 +576,7 @@ export class BotWorldWorkerController {
     this.prefs = validatePrefs(storedPrefs, {
       theme: settings.defaultTheme,
       atmosphere: settings.atmosphereMode,
+      weather: settings.weatherMode,
       redact: settings.redactMode,
       language: settings.language,
     });
@@ -588,12 +612,14 @@ export class BotWorldWorkerController {
   private async readSettings(): Promise<{
     defaultTheme: ThemeId;
     atmosphereMode: AtmosphereMode;
+    weatherMode: WeatherMode;
     redactMode: boolean;
     pollIntervalSec: number;
     language: LanguageSetting;
   }> {
     let defaultTheme: ThemeId = 'startup_office';
     let atmosphereMode: AtmosphereMode = 'auto';
+    let weatherMode: WeatherMode = 'auto';
     let redactMode = false;
     let pollIntervalSec = 5;
     let language: LanguageSetting = 'auto';
@@ -606,6 +632,9 @@ export class BotWorldWorkerController {
         if (isValidAtmosphereMode(all.atmosphereMode)) {
           atmosphereMode = all.atmosphereMode;
         }
+        if (isValidWeatherMode(all.weatherMode)) {
+          weatherMode = all.weatherMode;
+        }
         if (typeof all.redactMode === 'boolean') {
           redactMode = all.redactMode;
         }
@@ -617,7 +646,7 @@ export class BotWorldWorkerController {
     } catch {
       // Fallback to defaults if settings cannot be read
     }
-    return { defaultTheme, atmosphereMode, redactMode, pollIntervalSec, language };
+    return { defaultTheme, atmosphereMode, weatherMode, redactMode, pollIntervalSec, language };
   }
 
   private assignWorkerSeq(dispatchId: string): number {
@@ -643,6 +672,8 @@ export class BotWorldWorkerController {
       keyframes: [],
       activeTheme: this.prefs.activeTheme,
       atmosphereMode: this.prefs.atmosphereMode,
+      weatherMode: this.prefs.weatherMode,
+      soundMode: this.prefs.soundMode,
       redactMode: redact,
       botAppearances: { ...this.prefs.botAppearances },
       pollIntervalSec: this.pollIntervalSec,
@@ -1010,6 +1041,35 @@ export class BotWorldWorkerController {
         return { atmosphereMode: this.prefs.atmosphereMode };
       }),
 
+      this.orca.panels.handle('botWorld.setWeatherMode', async (input) => {
+        if (!input || typeof input !== 'object' || Array.isArray(input)) {
+          throw makeHostError('invalid_params', 'input must be an object');
+        }
+        const clean = stripDangerousKeys(input as Record<string, unknown>);
+        if (!isValidWeatherMode(clean.weatherMode)) {
+          throw makeHostError('invalid_params', 'Invalid weatherMode');
+        }
+        this.prefs.weatherMode = clean.weatherMode;
+        this.prefs.hasWeatherOverride = true;
+        await this.persistPrefs();
+        this.postStateUpdated();
+        return { weatherMode: this.prefs.weatherMode };
+      }),
+
+      this.orca.panels.handle('botWorld.setSoundMode', async (input) => {
+        if (!input || typeof input !== 'object' || Array.isArray(input)) {
+          throw makeHostError('invalid_params', 'input must be an object');
+        }
+        const clean = stripDangerousKeys(input as Record<string, unknown>);
+        if (!isValidSoundMode(clean.soundMode)) {
+          throw makeHostError('invalid_params', 'Invalid soundMode');
+        }
+        this.prefs.soundMode = clean.soundMode;
+        await this.persistPrefs();
+        this.postStateUpdated();
+        return { soundMode: this.prefs.soundMode };
+      }),
+
       this.orca.panels.handle('botWorld.setRedactMode', async (input) => {
         if (!input || typeof input !== 'object' || Array.isArray(input)) {
           throw makeHostError('invalid_params', 'input must be an object');
@@ -1091,6 +1151,13 @@ export class BotWorldWorkerController {
             this.prefs.atmosphereMode = next.atmosphereMode;
             if (next.atmosphereMode !== prev.atmosphereMode) {
               this.prefs.hasAtmosphereOverride = false;
+            }
+            prefsChanged = true;
+          }
+          if (next.weatherMode !== prev.weatherMode || !this.prefs.hasWeatherOverride) {
+            this.prefs.weatherMode = next.weatherMode;
+            if (next.weatherMode !== prev.weatherMode) {
+              this.prefs.hasWeatherOverride = false;
             }
             prefsChanged = true;
           }

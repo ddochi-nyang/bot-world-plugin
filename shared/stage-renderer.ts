@@ -8,6 +8,8 @@ import {
   type DeskCoordinate,
   type ThemeId,
   type UiLocale,
+  type WeatherKind,
+  type WeatherMode,
   type WorldSnapshot,
   botStatusLabel,
   clampDeskCoordinate,
@@ -40,14 +42,18 @@ import {
   type Facing,
   type FlyingCourier,
   type FlyingProp,
+  type HuddleSparkle,
   MAX_BUBBLES,
   MAX_COURIERS,
   MAX_PARTICLES,
+  type MilestoneBanner,
   type MotionDirector,
   type Particle,
   type Rect,
   type ReplayController,
+  hasErrorDeskBeacon,
 } from './motion.ts';
+import { WeatherSystem, resolveWeatherKind } from './weather.ts';
 
 const BOT_SPRITE_DESIGN_PX = 90;
 const WORKER_SPRITE_DESIGN_PX = 74;
@@ -310,6 +316,7 @@ export type StageRenderInput = {
   snapshot: WorldSnapshot;
   themeId: ThemeId;
   atmosphereMode?: AtmosphereMode;
+  weatherMode?: WeatherMode;
   displayTimestampMs?: number;
   selectedBotId: string | null;
   redactMode: boolean;
@@ -356,6 +363,7 @@ export class StageRenderer {
   private readonly onMoveBot?: (botId: string, pos: DeskCoordinate) => void;
   private readonly onCameraChange?: () => void;
   readonly camera: CameraController;
+  readonly weather = new WeatherSystem();
   private lastInput: StageRenderInput | null = null;
   private lastViewport: ViewportTransform | null = null;
   private lastStageViewport: StageViewport | null = null;
@@ -442,6 +450,10 @@ export class StageRenderer {
     this.lastInput = input;
     const locale = input.locale ?? 'en';
     const theme = getThemeConfig(input.themeId, locale);
+    const displayTs = this.resolveDisplayTimestampMs(input);
+    const phase = resolveAtmospherePhase(input.atmosphereMode ?? 'auto', displayTs);
+    const weatherKind = resolveWeatherKind(input.weatherMode ?? 'auto', phase, input.themeId);
+    this.weather.syncKind(weatherKind, theme.designSize);
     input.motion.setLocale(locale);
     input.motion.syncLayout(input.snapshot, theme, input.customDeskPositions);
     if (this.camera.followBotId) {
@@ -530,13 +542,24 @@ export class StageRenderer {
     return input.snapshot.capturedAt > 0 ? input.snapshot.capturedAt : Date.now();
   }
 
+  private resolveWeatherForInput(input: StageRenderInput): {
+    phase: AtmospherePhase;
+    weatherKind: WeatherKind;
+  } {
+    const displayTs = this.resolveDisplayTimestampMs(input);
+    const phase = resolveAtmospherePhase(input.atmosphereMode ?? 'auto', displayTs);
+    const weatherKind = resolveWeatherKind(input.weatherMode ?? 'auto', phase, input.themeId);
+    return { phase, weatherKind };
+  }
+
   private hasActiveOrWorkingAnimation(input: StageRenderInput): boolean {
     if (input.motion.hasActiveAnimations()) return true;
     for (const bot of Object.values(input.snapshot.bots)) {
       if (
         bot.status.kind === 'Working' ||
         bot.status.kind === 'NeedsOwner' ||
-        bot.status.kind === 'Blocked'
+        bot.status.kind === 'Blocked' ||
+        hasErrorDeskBeacon(bot)
       ) {
         return true;
       }
@@ -562,6 +585,9 @@ export class StageRenderer {
     if (input.motion.hasActiveAnimations()) return true;
     if (input.replay?.isReplay) {
       return input.replay.isPlaying;
+    }
+    if (this.resolveWeatherForInput(input).weatherKind !== 'clear') {
+      return true;
     }
     if (this.hasActiveOrWorkingAnimation(input)) {
       return true;
@@ -598,9 +624,11 @@ export class StageRenderer {
 
     const input = this.lastInput;
     const theme = getThemeConfig(input.themeId, input.locale ?? 'en');
+    const { weatherKind } = this.resolveWeatherForInput(input);
     const isPlayingReplay = Boolean(input.replay?.isReplay && input.replay.isPlaying);
     if (!isPlayingReplay) {
       input.motion.step(dtSecs, input.snapshot, theme, input.customDeskPositions);
+      this.weather.step(dtSecs, weatherKind, theme.designSize);
     }
     if (this.camera.followBotId) {
       this.syncFollowTarget(input, theme.designSize, false);
@@ -609,6 +637,7 @@ export class StageRenderer {
 
     const isIdleOnlyAmbient =
       !camStillAnimating &&
+      weatherKind === 'clear' &&
       !(input.showCollabNetwork && input.collabEdges && input.collabEdges.length > 0) &&
       !isPlayingReplay &&
       !this.hasActiveOrWorkingAnimation(input) &&
@@ -873,6 +902,8 @@ export class StageRenderer {
     const displayTimestampMs = this.resolveDisplayTimestampMs(input);
     const atmosphereMode = input.atmosphereMode ?? 'auto';
     const atmospherePhase = resolveAtmospherePhase(atmosphereMode, displayTimestampMs);
+    const weatherKind = resolveWeatherKind(input.weatherMode ?? 'auto', atmospherePhase, input.themeId);
+    this.weather.syncKind(weatherKind, theme.designSize);
     const pulseHigh = this.animTick % 2 === 0;
     const runtimeDimmed = !snapshot.runtime.connected && Object.keys(snapshot.bots).length > 0;
     const uiScale = Math.max(0.76, Math.min(1.18, vt.scale));
@@ -1312,7 +1343,10 @@ export class StageRenderer {
       layout.bossDesk
     );
 
-    // Cozy ambient details: late-night/sunset coffee mug steam & long-idle Zzz floaters
+    // Ambient Weather Layer (rain, snow, starlight)
+    this.paintWeatherOverlay(ctx, vt, bgW, bgH, weatherKind, atmospherePhase, elapsedSecs);
+
+    // Cozy ambient details: coffee mug steam, long-idle Zzz floaters & error desk beacon/smoke
     this.paintCozyAmbientDetails(
       ctx,
       vt,
@@ -1323,6 +1357,11 @@ export class StageRenderer {
       displayTimestampMs,
       elapsedSecs
     );
+
+    // Huddle / Mini Standup golden collaboration sparkle rings (visible even with Collab Overlay OFF)
+    if (motion.huddles.length > 0) {
+      this.paintHuddleSparkles(ctx, vt, motion.huddles, uiScale);
+    }
 
     // Overlays & obstacles for speech bubbles
     const obstacles: Rect[] = [];
@@ -1562,6 +1601,11 @@ export class StageRenderer {
       ctx.fillText(truncateTextToWidth(ctx, text, estW - 14), bLeft + estW * 0.5, bTop + estH * 0.5);
     }
 
+    // Milestone celebration banner pill (top-center, translucent, unobtrusive)
+    if (motion.milestoneBanner) {
+      this.paintMilestoneBanner(ctx, vt, bgW, motion.milestoneBanner, s.milestoneBannerText(motion.milestoneBanner.count), uiScale);
+    }
+
     ctx.restore();
   }
 
@@ -1745,7 +1789,215 @@ export class StageRenderer {
         }
         ctx.restore();
       }
+
+      // Error desk warning beacon & tiny rising smoke puffs (clear of nameplates & Needs You badges)
+      if (hasErrorDeskBeacon(bot)) {
+        const sideSign = desk.workerOffset[0] > 0 ? -1 : 1;
+        const bx = sx + sideSign * 26 * s;
+        const by = sy - 54 * s;
+        const pulse = 0.5 + 0.5 * Math.sin(elapsedSecs * 8.5 + idx * 1.1);
+        ctx.save();
+        // Beacon halo
+        const haloRadius = (10 + pulse * 6) * s;
+        const halo = ctx.createRadialGradient(bx, by, 1 * s, bx, by, haloRadius);
+        halo.addColorStop(0, `rgba(239, 68, 68, ${0.35 + pulse * 0.28})`);
+        halo.addColorStop(0.55, `rgba(245, 158, 11, ${0.14 + pulse * 0.14})`);
+        halo.addColorStop(1, 'rgba(239, 68, 68, 0)');
+        ctx.fillStyle = halo;
+        ctx.beginPath();
+        ctx.arc(bx, by, haloRadius, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Beacon dome
+        ctx.beginPath();
+        ctx.arc(bx, by, 3.8 * s, 0, Math.PI * 2);
+        ctx.fillStyle = pulse > 0.5 ? '#ef4444' : '#f59e0b';
+        ctx.fill();
+        ctx.lineWidth = 1 * s;
+        ctx.strokeStyle = '#fef2f2';
+        ctx.stroke();
+
+        // 3 tiny rising grey-white smoke puffs
+        for (let p = 0; p < 3; p++) {
+          const cycle = (elapsedSecs * 0.65 + idx * 0.29 + p * 0.33) % 1;
+          const px = bx + Math.sin(cycle * Math.PI * 2 + p * 1.4) * 3.5 * s + (p - 1) * 1.4 * s;
+          const py = by - 7 * s - cycle * 19 * s;
+          const pr = (2.1 + cycle * 2.6) * s;
+          ctx.globalAlpha = Math.max(0, (1 - cycle) * 0.62);
+          ctx.beginPath();
+          ctx.arc(px, py, pr, 0, Math.PI * 2);
+          ctx.fillStyle = p % 2 === 0 ? '#e2e8f0' : '#cbd5e1';
+          ctx.fill();
+        }
+        ctx.restore();
+      }
     });
+  }
+
+  private paintWeatherOverlay(
+    ctx: CanvasRenderingContext2D,
+    vt: ViewportTransform,
+    bgW: number,
+    bgH: number,
+    weatherKind: WeatherKind,
+    phase: AtmospherePhase,
+    elapsedSecs: number
+  ): void {
+    if (weatherKind === 'clear') return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(vt.originX, vt.originY, bgW, bgH);
+    ctx.clip();
+
+    if (weatherKind === 'rain') {
+      ctx.fillStyle = phase === 'night' ? 'rgba(12, 26, 52, 0.12)' : 'rgba(14, 30, 58, 0.08)';
+      ctx.fillRect(vt.originX, vt.originY, bgW, bgH);
+
+      ctx.lineCap = 'round';
+      for (const p of this.weather.particles) {
+        const [x1, y1] = designToScreen(vt, p.x, p.y);
+        const [x2, y2] = designToScreen(vt, p.x - p.length * 0.22, p.y + p.length);
+        ctx.globalAlpha = p.alpha;
+        ctx.strokeStyle = p.tint;
+        ctx.lineWidth = Math.max(1, p.radius * vt.scale);
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+      }
+
+      for (const r of this.weather.ripples) {
+        const t = Math.max(0, Math.min(1, r.age / Math.max(0.01, r.duration)));
+        const [rx, ry] = designToScreen(vt, r.x, r.y);
+        const rad = (2 + t * r.maxRadius) * vt.scale;
+        ctx.globalAlpha = (1 - t) * 0.42;
+        ctx.strokeStyle = '#bae6fd';
+        ctx.lineWidth = Math.max(0.8, 1.2 * vt.scale);
+        ctx.beginPath();
+        ctx.ellipse(rx, ry, rad, rad * 0.36, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    } else if (weatherKind === 'snow') {
+      for (const p of this.weather.particles) {
+        const [sx, sy] = designToScreen(vt, p.x, p.y);
+        ctx.globalAlpha = p.alpha;
+        ctx.fillStyle = p.tint;
+        ctx.beginPath();
+        ctx.arc(sx, sy, Math.max(1.2, p.radius * vt.scale), 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else {
+      // starlight motes
+      const phaseBoost = phase === 'night' ? 1.0 : phase === 'sunset' ? 0.82 : 0.58;
+      for (const p of this.weather.particles) {
+        const twinkle = 0.45 + 0.55 * Math.sin(elapsedSecs * 2.4 + p.phase + p.age);
+        const [sx, sy] = designToScreen(vt, p.x, p.y);
+        const r = Math.max(1.3, p.radius * vt.scale);
+        ctx.globalAlpha = p.alpha * twinkle * phaseBoost;
+        ctx.fillStyle = p.tint;
+        ctx.beginPath();
+        ctx.arc(sx, sy, r * 2.1, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Crisp 4-point star core
+        ctx.globalAlpha = Math.min(1, p.alpha * twinkle * 1.25 * phaseBoost);
+        ctx.beginPath();
+        ctx.moveTo(sx, sy - r * 1.6);
+        ctx.lineTo(sx + r * 0.5, sy);
+        ctx.lineTo(sx, sy + r * 1.6);
+        ctx.lineTo(sx - r * 0.5, sy);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+
+    ctx.restore();
+  }
+
+  private paintHuddleSparkles(
+    ctx: CanvasRenderingContext2D,
+    vt: ViewportTransform,
+    huddles: readonly HuddleSparkle[],
+    uiScale: number
+  ): void {
+    for (const h of huddles) {
+      const t = Math.max(0, Math.min(1, h.elapsed / Math.max(0.01, h.duration)));
+      const fade = t < 0.15 ? t / 0.15 : t > 0.72 ? Math.max(0, (1 - t) / 0.28) : 1;
+      const [fx, fy] = designToScreen(vt, h.from[0], h.from[1] - 24);
+      const [tx, ty] = designToScreen(vt, h.to[0], h.to[1] - 24);
+      const mx = (fx + tx) * 0.5;
+      const my = (fy + ty) * 0.5 - 12 * vt.scale;
+
+      ctx.save();
+      ctx.globalAlpha = fade * 0.88;
+      ctx.beginPath();
+      ctx.moveTo(fx, fy);
+      ctx.quadraticCurveTo(mx, my - 18 * vt.scale, tx, ty);
+      ctx.setLineDash([4 * uiScale, 4 * uiScale]);
+      ctx.lineWidth = 1.8 * uiScale;
+      ctx.strokeStyle = 'rgba(250, 204, 21, 0.72)';
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      const ringR = (12 + Math.sin(h.elapsed * 6) * 2.5) * vt.scale;
+      ctx.beginPath();
+      ctx.ellipse(mx, my, ringR * 1.25, ringR * 0.75, 0, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(250, 204, 21, 0.16)';
+      ctx.fill();
+      ctx.lineWidth = 1.6 * uiScale;
+      ctx.strokeStyle = '#fde047';
+      ctx.stroke();
+
+      for (let i = 0; i < 4; i++) {
+        const ang = h.elapsed * 3.2 + (i * Math.PI) / 2;
+        const sx = mx + Math.cos(ang) * ringR * 1.25;
+        const sy = my + Math.sin(ang) * ringR * 0.75;
+        const sr = 3.2 * uiScale;
+        ctx.beginPath();
+        ctx.moveTo(sx, sy - sr);
+        ctx.lineTo(sx + sr * 0.6, sy);
+        ctx.lineTo(sx, sy + sr);
+        ctx.lineTo(sx - sr * 0.6, sy);
+        ctx.closePath();
+        ctx.fillStyle = i % 2 === 0 ? '#fef08a' : '#facc15';
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+  }
+
+  private paintMilestoneBanner(
+    ctx: CanvasRenderingContext2D,
+    vt: ViewportTransform,
+    bgW: number,
+    banner: MilestoneBanner,
+    label: string,
+    uiScale: number
+  ): void {
+    const progress = 1 - banner.ttl / Math.max(0.01, banner.maxTtl);
+    const alpha = progress < 0.12 ? progress / 0.12 : banner.ttl < 0.45 ? Math.max(0, banner.ttl / 0.45) : 1;
+    if (alpha <= 0.02) return;
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.font = `700 ${Math.round(11.5 * uiScale)}px ${CANVAS_FONT_FAMILY}`;
+    const pillW = Math.min(bgW - 24, Math.max(180 * uiScale, ctx.measureText(label).width + 28 * uiScale));
+    const pillH = 28 * uiScale;
+    const x = vt.originX + bgW * 0.5 - pillW * 0.5;
+    const y = vt.originY + 12 * uiScale;
+
+    drawRoundedRect(ctx, x, y, pillW, pillH, 999);
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(250, 204, 21, 0.88)';
+    ctx.stroke();
+
+    ctx.fillStyle = '#fef9c3';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(truncateTextToWidth(ctx, label, pillW - 18), x + pillW * 0.5, y + pillH * 0.5);
+    ctx.restore();
   }
 
   private paintFlyingCourier(
@@ -2160,9 +2412,15 @@ export class StageRenderer {
 
     ctx.save();
     ctx.globalAlpha = alpha;
-    if (p.kind === 'GreenCheckConfetti' || p.kind === 'GrayArchive') {
+    if (p.kind === 'GreenCheckConfetti' || p.kind === 'GrayArchive' || p.kind === 'MilestoneConfetti') {
       ctx.fillStyle = p.colorHex;
-      ctx.fillRect(x - sz * 0.5, y - sz * 0.5, sz, sz * 0.8);
+      if (p.kind === 'MilestoneConfetti') {
+        ctx.translate(x, y);
+        ctx.rotate(p.age * 7 + p.vx * 0.05);
+        ctx.fillRect(-sz * 0.55, -sz * 0.35, sz * 1.1, sz * 0.7);
+      } else {
+        ctx.fillRect(x - sz * 0.5, y - sz * 0.5, sz, sz * 0.8);
+      }
     } else if (p.kind === 'Sparkle') {
       ctx.beginPath();
       ctx.moveTo(x, y - sz);

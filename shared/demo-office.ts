@@ -15,8 +15,10 @@ import {
   type InboxMessage,
   type Keyframe,
   type LanguageSetting,
+  type SoundMode,
   type ThemeId,
   type UiLocale,
+  type WeatherMode,
   type WorkerState,
   type WorldEvent,
   type WorldEventRecord,
@@ -92,6 +94,7 @@ const KO_DEMO_TEXT = new Map<string, string>([
   ['Idle staging workers scaled down cleanly.', '유휴 스테이징 워커가 정상 축소되었습니다.'],
   ['Terraform plan validated (0 destructive changes)', 'Terraform plan 검증 완료 (파괴적 변경 0건)'],
   ['Lockfile scan clean (0 critical advisories)', '락파일 스캔 정상 (심각 권고 0건)'],
+  ['Registry probe timeout', '레지스트리 상태 점검 시간 초과'],
 ]);
 
 function tx(text: string, locale: UiLocale): string {
@@ -998,7 +1001,7 @@ export class DemoOfficeSession {
         break;
       }
       case 3: {
-        // ItemNeedsYou on Security
+        // ItemNeedsYou on Security + brief Error desk on Cost Guard (showcases error beacon & smoke)
         const sec = this.snapshot.bots['demo-security'];
         sec.status = {
           kind: 'NeedsOwner',
@@ -1022,6 +1025,20 @@ export class DemoOfficeSession {
         };
         this.pushEvent(ev, ts);
         generated.push(ev);
+
+        const cost = this.snapshot.bots['demo-cost-guard'];
+        cost.status = { kind: 'Error', message: 'Registry probe timeout' };
+        cost.currentTool = null;
+        cost.currentTaskTitle = 'Daily cloud spend variance check';
+        cost.lastActivityAt = ts;
+        const evErr: WorldEvent = {
+          kind: 'BotFailed',
+          botId: 'demo-cost-guard',
+          botName: 'Cost Guard',
+          message: 'Registry probe timeout',
+        };
+        this.pushEvent(evErr, ts + 1);
+        generated.push(evErr);
         break;
       }
       case 4: {
@@ -1050,7 +1067,7 @@ export class DemoOfficeSession {
         break;
       }
       case 5: {
-        // Reply from Security -> Ops Lead + Bot World tool switch
+        // Reply from Security -> Ops Lead (triggers huddle sparkle) + ItemDone + Bot World tool switch
         const msgId = `demo-msg-${this.msgSeq}`;
         this.pushMessage({
           id: msgId,
@@ -1074,6 +1091,17 @@ export class DemoOfficeSession {
         this.pushEvent(evReply, ts);
         generated.push(evReply);
 
+        const evDone: WorldEvent = {
+          kind: 'ItemDone',
+          itemUid: 'demo-item-15',
+          number: 15,
+          botId: 'demo-ops-lead',
+          botName: 'Ops Lead',
+          title: 'Coordinate v0.1.3 release checklist',
+        };
+        this.pushEvent(evDone, ts + 1);
+        generated.push(evDone);
+
         const bw = this.snapshot.bots['demo-bot-world'];
         const nextBwTool = bw.currentTool === 'call_mcp_tool' ? 'edit_file' : 'call_mcp_tool';
         bw.status = { kind: 'Working', tool: nextBwTool };
@@ -1085,7 +1113,7 @@ export class DemoOfficeSession {
           botName: 'Bot World',
           tool: nextBwTool,
         };
-        this.pushEvent(evTool, ts + 1);
+        this.pushEvent(evTool, ts + 2);
         generated.push(evTool);
         break;
       }
@@ -1121,8 +1149,19 @@ export class DemoOfficeSession {
       }
       case 7:
       default: {
-        // Handoff Infra Ops -> Cloud Ops; settle ephemeral worker & Doc Review to Idle
-        delete this.snapshot.workers['demo-w-ephemeral'];
+        // Handoff Infra Ops -> Cloud Ops; settle ephemeral worker (triggers WorkerDone milestone) & Doc Review to Idle
+        if (this.snapshot.workers['demo-w-ephemeral']) {
+          delete this.snapshot.workers['demo-w-ephemeral'];
+          const evWorkerDone: WorldEvent = {
+            kind: 'WorkerDone',
+            dispatchId: 'demo-w-ephemeral',
+            parentBotId: 'demo-infra-ops',
+            parentBotName: 'Infra Ops',
+            subject: 'Terraform plan validated (0 destructive changes)',
+          };
+          this.pushEvent(evWorkerDone, ts);
+          generated.push(evWorkerDone);
+        }
         this.snapshot.bots['demo-infra-ops'].activeWorkerCount = 1;
 
         const doc = this.snapshot.bots['demo-doc-review'];
@@ -1182,6 +1221,8 @@ export class DemoOfficeSession {
   getPayload(opts: {
     themeId: ThemeId;
     atmosphereMode?: AtmosphereMode;
+    weatherMode?: WeatherMode;
+    soundMode?: SoundMode;
     redactMode: boolean;
     locale: UiLocale;
     languageSetting: LanguageSetting;
@@ -1190,6 +1231,8 @@ export class DemoOfficeSession {
     const {
       themeId,
       atmosphereMode = 'auto',
+      weatherMode = 'auto',
+      soundMode = 'off',
       redactMode,
       locale,
       languageSetting,
@@ -1266,6 +1309,8 @@ export class DemoOfficeSession {
       keyframes,
       activeTheme: themeId,
       atmosphereMode,
+      weatherMode,
+      soundMode,
       redactMode,
       botAppearances: safeAppearances,
       pollIntervalSec: 5,

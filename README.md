@@ -3,11 +3,11 @@
   <h1>Bot World</h1>
   <p><strong>Read-only virtual office visualizer (HTML5 Canvas) for Orca bots and live sub-workers.</strong></p>
   <p>
-    <code>Read-Only</code> · <code>4 Office Themes</code> · <code>Smart Camera</code> · <code>Filters &amp; Search</code> · <code>Collab Network</code> · <code>Daily MVP &amp; Badges</code> · <code>24h Office Digest</code> · <code>Bilingual EN / 한국어</code> · <code>Redact Mode</code> · <code>24h Replay</code>
+    <code>Read-Only</code> · <code>4 Office Themes</code> · <code>Smart Camera</code> · <code>Filters &amp; Search</code> · <code>Collab Network</code> · <code>Daily MVP &amp; Badges</code> · <code>24h Office Digest</code> · <code>Cozy Sound &amp; Weather</code> · <code>Bilingual EN / 한국어</code> · <code>Redact Mode</code> · <code>24h Replay</code>
   </p>
   <br />
-  <img src="assets/showcase/preview.gif" alt="Bot World v0.4.0 animated preview showing 4 office themes, Living Office atmosphere, Smart Camera zoom/pan and Focus Spotlight, status filters and search, collaboration network overlay, Daily MVP and Office Badges in the 24h Office Digest Report, Redact Mode with 24h Replay, and EN/KO toggle" />
-  <p><em>Interactive preview (v0.4.0 Command &amp; Focus): 4 isometric office themes (Startup, Corporate, Cozy Cafe, Cyber Ops), Day / Sunset / Night atmosphere, Smart Camera zoom/pan &amp; Focus Spotlight, status filters &amp; search, 24h collaboration network overlay, Daily MVP &amp; Office Badges in the 24h Office Digest Report, Redact Mode + 24h Replay, and instant EN / 한국어 toggle.</em></p>
+  <img src="assets/showcase/preview.gif" alt="Bot World v0.5.0 animated preview showing 4 office themes, Living Office atmosphere, ambient Rain/Snow/Starlight weather, procedural Web Audio soundscape toggle, office micro-events (error beacons, milestone confetti, huddle sparkles), Smart Camera, filters and search, collaboration network, 24h Office Digest Report, Redact Mode with 24h Replay, and EN/KO toggle" />
+  <p><em>Interactive preview (v0.5.0 Cozy Sound &amp; Weather): 4 isometric office themes (Startup, Corporate, Cozy Cafe, Cyber Ops), Day / Sunset / Night atmosphere, ambient Rain / Snow / Starlight weather &amp; procedural Web Audio soundscapes, error beacons, milestone confetti &amp; huddle sparkles, Smart Camera zoom/pan &amp; Focus Spotlight, status filters &amp; search, 24h collaboration network overlay, Daily MVP &amp; Office Badges in the 24h Office Digest Report, Redact Mode + 24h Replay, and instant EN / 한국어 toggle.</em></p>
 </div>
 
 ---
@@ -44,6 +44,15 @@ Press `I` or click **Report** in the toolbar to review a 24-hour activity summar
 <div align="center">
   <img src="assets/showcase/office-report.jpg" alt="24h Daily Office Digest Report modal showing KPIs, Daily MVP and Office Badges, Top 3 active bots, 12 hourly buckets activity bar chart, and Copy Markdown button" />
   <p><em>24h Daily Office Digest Report modal: KPIs, Daily MVP &amp; Office Badges, Top 3 active bots, 12 hourly buckets activity bar chart, and 1-click Copy Markdown (Redact-safe).</em></p>
+</div>
+
+### Cozy Sound & Weather (`v0.5.0`)
+
+Add tactile atmosphere without leaving your editor: press `W` to cycle `Auto / Clear / Rain / Snow / Starlight` weather particles tuned to the active theme and time of day, and press `M` to enable 100% locally synthesized Web Audio cues (`Off` / `Chimes` / `Ambient`) paired with canvas micro-events for errors, daily completion milestones (`5 / 10 / 25 / 50`), and collaborative huddles.
+
+<div align="center">
+  <img src="assets/showcase/cozy-rain.jpg" alt="Bot World Cozy Cafe Sunset theme with Rain weather particles, Ambient sound mode enabled, flying handoff courier, and Daily MVP badges" />
+  <p><em>Cozy Cafe Sunset + Rain + Ambient Sound (v0.5.0): falling rain &amp; ground ripples (<code>W</code>), Web Audio ambient soundbed (<code>M</code>), flying envelope handoff courier, and Daily MVP inspector badges.</em></p>
 </div>
 
 ### Living Office Atmosphere (`Day` · `Sunset` · `Night`)
@@ -90,8 +99,14 @@ Keep a live office overview docked beside your code and terminals without leavin
 
 - **Dual Surfaces**:
   - **Sidebar Panel (`Bot World`)**: Compact docked canvas, bot roster pills, detail inspector, 24h Report button, and recent event timeline.
-  - **Wide `.botworld` Office Board**: Create via **New File → New Bot World Board (`.botworld`)** for a full-screen 2-column stage with a **24-hour timeline scrubber** and replay controls. `.botworld` files store view preferences only (`themeId`, `atmosphereMode`, `redactMode`, `selectedBotId`, `botAppearances`, `customDeskPositions`) and never persist sensitive task text.
+  - **Wide `.botworld` Office Board**: Create via **New File → New Bot World Board (`.botworld`)** for a full-screen 2-column stage with a **24-hour timeline scrubber** and replay controls. `.botworld` files store view preferences only (`themeId`, `atmosphereMode`, `weatherMode`, `redactMode`, `selectedBotId`, `botAppearances`, `customDeskPositions`) and never persist sensitive task text.
   - **Status Bar Summary (`bot-world-status`)**: Live counts of active bots, running sub-workers, and bots awaiting owner input (anonymized in Redact Mode).
+- **Procedural Web Audio Soundscape (`M`, default OFF — v0.5.0)**:
+  - 100% locally synthesized zero-asset Web Audio cues (`Off` / `Chimes` / `Ambient`) — soft knock on `Needs You`, harmonic chime on task completion/milestones, muted alert on errors, paper swoosh on couriers, plus an optional cozy rain, cafe hum, or night breeze ambient soundbed (only activates after an explicit user gesture; respects strict zero-egress CSP).
+- **Ambient Weather Layer (`W` + `weatherMode` setting — v0.5.0)**:
+  - Cycle `Auto / Clear / Rain / Snow / Starlight` from the toolbar or by pressing `W` (or set `weatherMode` in Settings). Renders lightweight canvas particles and rain ripples tuned to the current theme and time of day (`Auto` brings evening/night rain to Cozy Cafe and starlight to Night phases).
+- **Office Micro-Events (v0.5.0)**:
+  - Blinking red error desk beacon with rising smoke puffs for failed desks, celebratory daily completion milestone confetti &amp; banner (`5 / 10 / 25 / 50` completed tasks), and collaborative huddle sparkles when bots interact.
 - **Smart Camera (`N`, `F`, `0`, Wheel Zoom & Drag Pan — v0.4.0)**:
   - Zoom smoothly (`100%`–`260%`) with the mouse wheel or the bottom-right Zoom HUD (`-`, `100%`, `+`), pan by dragging empty office background, press `N` (or click **Focus**) to jump Focus Spotlight onto `Needs You` / `Error` bots (cycling active bots when none are urgent), press `F` (or click **Follow**) to track the selected bot across seat moves, and press `0` to reset camera zoom and pan.
 - **Status Filter & Live Search (`/` — v0.4.0)**:
@@ -123,6 +138,8 @@ Keep a live office overview docked beside your code and terminals without leavin
   | `R` | Toggle Redact Mode (`ON` / `OFF`) | Panel & `.botworld` |
   | `L` | Switch language (`EN` / `한국어`) | Panel & `.botworld` |
   | `A` | Cycle atmosphere (`Auto` → `Day` → `Sunset` → `Night`) | Panel & `.botworld` |
+  | `W` | Cycle weather (`Auto` → `Clear` → `Rain` → `Snow` → `Starlight`) | Panel & `.botworld` |
+  | `M` | Cycle sound mode (`Off` → `Chimes` → `Ambient`) | Panel & `.botworld` |
   | `D` | Toggle Demo Office (`ON` / `OFF`) | Panel & `.botworld` |
   | `I` | Open / close 24h Office Digest Report | Panel & `.botworld` |
   | `Space` | Play / Pause 24h Replay | `.botworld` Editor |
@@ -171,6 +188,7 @@ orca plugin dev load .
 | `pollIntervalSec` | `integer` (`2`–`60`) | `5` | Default status polling interval in seconds. |
 | `language` | `string` (`auto`, `en`, `ko`) | `auto` | Display language for Bot World (`auto` follows Orca UI locale). |
 | `atmosphereMode` | `string` (`auto`, `day`, `sunset`, `night`) | `auto` | Office time-of-day lighting atmosphere (`auto` follows live or replay timestamp; `day`, `sunset`, or `night` overrides lighting). |
+| `weatherMode` | `string` (`auto`, `clear`, `rain`, `snow`, `starlight`) | `auto` | Ambient office weather effect (`auto` follows theme and time of day; `clear`, `rain`, `snow`, or `starlight` overrides weather). |
 
 ---
 
@@ -201,7 +219,11 @@ orca plugin test . --json
 
 - **이중 화면 구성**:
   - **우측 사이드바 패널 (`봇 월드`)**: 4가지 사무실 테마 순환, 24시간 리포트(`I`), 시간대 분위기 전환(`자동`·`낮`·`노을`·`야간`), 가림 모드(`가림 ON/OFF`), 언어 전환(`EN` / `한`), 봇별 진행 작업·요청/답변·세부 항목·하위 워커·정기 자동화 조회, 10종 동물 캐릭터 즉시 교체.
-  - **넓은 `.botworld` 오피스 보드**: **새 파일 → 새 봇 월드 보드 (`.botworld`)** 로 생성하면 2단 전체 오피스 뷰와 **24시간 타임라인 스크러버(`1x / 2x / 5x / 10x` 재생)**, 드래그 앤 드롭 좌석 배치를 사용할 수 있습니다. `.botworld` 파일은 화면 설정(`themeId`, `atmosphereMode`, `redactMode`, `selectedBotId`, `botAppearances`, `customDeskPositions`)만 저장하며 민감한 작업 내용은 저장하지 않습니다.
+  - **넓은 `.botworld` 오피스 보드**: **새 파일 → 새 봇 월드 보드 (`.botworld`)** 로 생성하면 2단 전체 오피스 뷰와 **24시간 타임라인 스크러버(`1x / 2x / 5x / 10x` 재생)**, 드래그 앤 드롭 좌석 배치를 사용할 수 있습니다. `.botworld` 파일은 화면 설정(`themeId`, `atmosphereMode`, `weatherMode`, `redactMode`, `selectedBotId`, `botAppearances`, `customDeskPositions`)만 저장하며 민감한 작업 내용은 저장하지 않습니다.
+- **v0.5.0 (Cozy Sound & Weather) 주요 기능**:
+  - **절차적 Web Audio 사운드스케이프 (`M`, 기본 음소거 OFF)**: 외부 오디오 파일 없이 브라우저 Web Audio API로 100% 로컬 합성하는 사운드 큐(`음소거` / `효과음` / `앰비언트`)를 제공합니다. `결정 대기` 부드러운 노크음, 작업 완료·마일스톤 화음 차임, 오류 억제 알림, 전달 종이 스침음과 함께 비·카페·야간 환경 배경음(사용자 클릭·단축키 입력 이후에만 재생)을 지원합니다.
+  - **시간대·테마 연동 앰비언트 날씨 레이어 (`W` + `weatherMode` 설정)**: `자동` / `맑음` / `비` / `눈` / `별빛` 파티클 효과를 테마와 시간대에 맞춰 렌더링합니다(`자동` 모드에서는 코지 카페 노을·야간에 비, 일반 야간에 별빛 적용).
+  - **오피스 마이크로 이벤트**: 오류 책상의 점멸 적색 경고등과 피어오르는 작은 연기, 일일 완료 마일스톤(`5 / 10 / 25 / 50`건) 축하 콘페티와 배너, 봇 협업 허들 반짝임을 캔버스에 표시합니다.
 - **v0.4.0 (Command & Focus) 주요 기능**:
   - **스마트 카메라 (`N`, `F`, `0`, 마우스 휠 확대/축소 & 배경 드래그 이동)**: `N` 키(**포커스**)로 `결정 대기`/`오류` 상태의 봇(없으면 활성 봇)에 포커스 스포트라이트를 맞추고, `F` 키(**추적**)로 선택한 봇을 따라가며, 휠·줌 HUD(`-` / `100%` / `+`)로 100%–260% 배율을 조절하고 `0` 키로 초기화합니다.
   - **상태 필터 & 실시간 검색 (`/`)**: `전체`, `작업 중`, `결정 대기`, `오류`, `워커 보유` 필터 칩과 `/` 검색으로 일치하지 않는 책상을 부드럽게 어둡게 처리해 원하는 봇만 빠르게 찾습니다. 가림 모드에서는 익명 별칭(`봇 #1` 등)과 상태명만 검색해 실제 이름·작업·도구가 노출되지 않습니다.
@@ -214,7 +236,7 @@ orca plugin test . --json
 - **살아 움직이는 사무실 분위기와 단축키**:
   - **시간대 조명 (`자동` · `낮` · `노을` · `야간`)**: `자동` 모드에서는 현재 시각과 24시간 리플레이 타임스탬프에 맞춰 조명이 전환되며, 야간에는 작업 중인 봇 책상의 조명 스포트라이트·김이 오르는 커피·대기 `Zzz` 말풍선을 표시합니다.
   - **곡선 전달 애니메이션 & 도우미 출입**: 인계 사건은 종이비행기, 질문/답변 사건은 편지봉투 곡선 비행으로 표현하고, 하위 도우미는 출입구를 통해 사무실로 들어가고 나가는 이동 애니메이션을 보여 줍니다.
-  - **키보드 단축키**: `N`(긴급·작업 봇 포커스), `F`(카메라 추적), `0`(카메라 배율·위치 초기화), `/`(봇 검색창 포커스), `C`(협업 네트워크 오버레이), `T`(4종 테마 순환), `R`(가림 모드), `L`(언어), `A`(시간대 분위기), `D`(데모 오피스), `I`(24시간 리포트), `Space`(리플레이 재생/일시정지, `.botworld` 전용), `Esc`(모달 닫기/추적·필터·선택 해제), `?`(단축키 안내)를 지원합니다.
+  - **키보드 단축키**: `N`(긴급·작업 봇 포커스), `F`(카메라 추적), `0`(카메라 배율·위치 초기화), `/`(봇 검색창 포커스), `C`(협업 네트워크 오버레이), `T`(4종 테마 순환), `R`(가림 모드), `L`(언어), `A`(시간대 분위기), `W`(날씨 효과 전환), `M`(사운드 모드 전환), `D`(데모 오피스), `I`(24시간 리포트), `Space`(리플레이 재생/일시정지, `.botworld` 전용), `Esc`(모달 닫기/추적·필터·선택 해제), `?`(단축키 안내)를 지원합니다.
 - **모든 Orca 워크스페이스 자동 대응 및 1클릭 데모 체험**:
   - **데모 오피스 체험(읽기 전용 시뮬레이션)**: 실행 중인 봇이 없을 때 표시되는 초기 안내 카드의 **데모 오피스 체험** 버튼이나 상단 도구 모음의 **데모** 버튼으로 가상 봇·하위 워커 협업, 테마 전환, 가림 모드, 24시간 타임라인 재생을 바로 체험할 수 있습니다. **데모 종료**를 누르면 `.botworld` 설정을 변경하지 않고 실시간 Orca 상태로 돌아갑니다.
   - **0개부터 15개 이상 봇까지 자동 배치**: 봇이 없는 초기 안내 상태부터 14개 전용 책상, 15개 이상 봇을 위한 확장 좌석 그리드와 축약 이름표까지 자동으로 배치합니다. 영문·한글 역할 키워드(`security`, `infra`, `cloud`, `cost`, `docs`, `cve`, `보안`, `인프라` 등)에 맞춰 부엉이·고슴도치·문어·여우·개구리·너구리·펭귄·탐정 곰·알파카·고양이 봇 캐릭터를 자동 배정하며 클릭 한 번으로 바꿀 수 있습니다.

@@ -6,10 +6,12 @@ import {
   type DeskCoordinate,
   MAX_BOT_APPEARANCES,
   MAX_CUSTOM_DESK_POSITIONS,
+  type WeatherMode,
   isPoolCharacterId,
   isSafeKey,
   isValidAtmosphereMode,
   isValidThemeId,
+  isValidWeatherMode,
   sanitizeCustomDeskPositions,
   toPlainSafeRecord,
   validateBotWorldDocument,
@@ -70,6 +72,17 @@ export function mergeBotWorldDocuments(
     ? outside.atmosphereMode
     : baseAtm;
   const atmosphereMode = mineAtm !== baseAtm ? mineAtm : outsideAtm;
+
+  const baseWeather: WeatherMode = isValidWeatherMode(base?.weatherMode)
+    ? base.weatherMode
+    : 'auto';
+  const mineWeather: WeatherMode = isValidWeatherMode(mine?.weatherMode)
+    ? mine.weatherMode
+    : baseWeather;
+  const outsideWeather: WeatherMode = isValidWeatherMode(outside?.weatherMode)
+    ? outside.weatherMode
+    : baseWeather;
+  const weatherMode = mineWeather !== baseWeather ? mineWeather : outsideWeather;
 
   const baseRedact =
     typeof base?.redactMode === 'boolean' ? base.redactMode : DEFAULT_BOTWORLD_DOCUMENT.redactMode;
@@ -134,6 +147,7 @@ export function mergeBotWorldDocuments(
     version: 1,
     themeId,
     atmosphereMode,
+    weatherMode,
     redactMode,
     selectedBotId,
     botAppearances: toPlainSafeRecord(mergedAppearances),
@@ -157,6 +171,7 @@ export function encodeBotWorldContent(data: BotWorldDocumentData): { kind: 'text
     version: 1,
     themeId: isValidThemeId(data.themeId) ? data.themeId : 'startup_office',
     atmosphereMode: isValidAtmosphereMode(data.atmosphereMode) ? data.atmosphereMode : 'auto',
+    weatherMode: isValidWeatherMode(data.weatherMode) ? data.weatherMode : 'auto',
     redactMode: typeof data.redactMode === 'boolean' ? data.redactMode : false,
     selectedBotId: sanitizeSelectedBotId(data.selectedBotId),
     botAppearances: normalizeAppearances(data.botAppearances),

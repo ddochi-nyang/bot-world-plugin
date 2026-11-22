@@ -10,9 +10,11 @@ import {
   DEFAULT_BOTWORLD_DOCUMENT,
   type DeskCoordinate,
   type LanguageSetting,
+  type SoundMode,
   type ThemeId,
   type UiLocale,
   VALID_THEME_IDS,
+  type WeatherMode,
   type WorldSnapshot,
   createEmptySnapshot,
   isSafeKey,
@@ -26,6 +28,7 @@ import {
 import {
   CAMERA_ZOOM_STEP,
   pickNextFocusBotId,
+  resolveFollowTargetBotId,
 } from '../shared/camera.ts';
 import { buildCollabNetwork } from '../shared/collab-network.ts';
 import { type DemoOfficeSession, createDemoOfficeSession } from '../shared/demo-office.ts';
@@ -39,6 +42,7 @@ import {
 } from '../shared/filter.ts';
 import { effectiveLocale, getHostLocale, resolveUiLocale, tStrings } from '../shared/i18n.ts';
 import {
+  MilestoneTracker,
   MotionDirector,
   REPLAY_SPEEDS,
   ReplayController,
@@ -54,11 +58,17 @@ import {
   atmosphereIcon,
   mapKeyToShortcutAction,
   nextAtmosphereMode,
+  nextSoundMode,
   nextThemeId,
+  nextWeatherMode,
   renderShortcutsModal,
   shouldIgnoreShortcutEvent,
+  soundIcon,
+  weatherIcon,
 } from '../shared/shortcuts.ts';
-import { StageRenderer } from '../shared/stage-renderer.ts';
+import { SoundscapeEngine } from '../shared/soundscape.ts';
+import { StageRenderer, resolveAtmospherePhase } from '../shared/stage-renderer.ts';
+import { resolveWeatherKind } from '../shared/weather.ts';
 import { startBotWorldDocSession } from './doc-sync.ts';
 
 const root = document.getElementById('app');
@@ -88,6 +98,8 @@ const state: {
     keyframes: [],
     activeTheme: 'startup_office',
     atmosphereMode: 'auto',
+    weatherMode: 'auto',
+    soundMode: 'off',
     redactMode: false,
     botAppearances: {},
     pollIntervalSec: 5,
@@ -113,16 +125,23 @@ const state: {
 let docSession: Awaited<ReturnType<typeof startBotWorldDocSession>> | null = null;
 const liveMotion = new MotionDirector();
 const replay = new ReplayController();
+const soundscape = new SoundscapeEngine();
+const liveMilestones = new MilestoneTracker();
+const demoMilestones = new MilestoneTracker();
 let prevLiveSnapshot: WorldSnapshot = createEmptySnapshot();
 let livePayload: BotWorldStatePayload = state.payload;
 let replayTimerId: number | null = null;
 let lastReplayTickMs = 0;
 let reportCopiedTimer: number | null = null;
+let followNoticeTimer: number | null = null;
+let followNoticeActive = false;
 
 let demoSession: DemoOfficeSession | null = null;
 let demoTimerId: number | null = null;
 let demoThemeId: ThemeId = 'startup_office';
 let demoAtmosphereMode: AtmosphereMode = 'auto';
+let demoWeatherMode: WeatherMode = 'auto';
+let demoSoundMode: SoundMode = 'off';
 let demoRedactMode = false;
 let demoLanguageSetting: LanguageSetting = 'auto';
 let demoAppearances: Record<string, CharacterId> = {};
@@ -182,6 +201,28 @@ const atmoBtn = el(
     onClick: () => void cycleAtmosphere().catch(() => {}),
   },
   `${atmosphereIcon('auto')} ${initialStrings.atmosphereModes.auto}`
+);
+
+const weatherBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-btn',
+    ariaLabel: initialStrings.weatherAriaLabel,
+    onClick: () => void cycleWeather().catch(() => {}),
+  },
+  `${weatherIcon('auto')} ${initialStrings.weatherModes.auto}`
+);
+
+const soundBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-btn',
+    ariaLabel: initialStrings.soundAriaLabel,
+    onClick: () => void cycleSound(true).catch(() => {}),
+  },
+  `${soundIcon('off')} ${initialStrings.soundModes.off}`
 );
 
 const focusBtn = el(
@@ -312,6 +353,8 @@ const toolbar = el(
     themeSelect,
     resetSeatsBtn,
     atmoBtn,
+    weatherBtn,
+    soundBtn,
     focusBtn,
     collabBtn,
     redactBtn,
@@ -629,6 +672,16 @@ function activeAtmosphereMode(): AtmosphereMode {
   return state.docData.atmosphereMode ?? state.payload.atmosphereMode ?? 'auto';
 }
 
+function activeWeatherMode(): WeatherMode {
+  if (isDemoMode()) return demoWeatherMode;
+  return state.docData.weatherMode ?? state.payload.weatherMode ?? 'auto';
+}
+
+function activeSoundMode(): SoundMode {
+  if (isDemoMode()) return demoSoundMode;
+  return state.payload.soundMode ?? 'off';
+}
+
 function activeRedactMode(): boolean {
   if (isDemoMode()) return demoRedactMode;
   return Boolean(state.payload.redactMode) || Boolean(state.docData.redactMode);
@@ -665,6 +718,7 @@ function updateDocumentPrefs(patch: Partial<BotWorldDocumentData>): void {
     version: 1,
     themeId: patch.themeId ?? state.docData.themeId,
     atmosphereMode: patch.atmosphereMode ?? state.docData.atmosphereMode ?? 'auto',
+    weatherMode: patch.weatherMode ?? state.docData.weatherMode ?? 'auto',
     redactMode: patch.redactMode ?? state.docData.redactMode,
     selectedBotId:
       patch.selectedBotId !== undefined ? patch.selectedBotId : state.docData.selectedBotId,
@@ -678,9 +732,26 @@ function updateDocumentPrefs(patch: Partial<BotWorldDocumentData>): void {
   }
 }
 
+function showFollowNoMatchNotice(): void {
+  followNoticeActive = true;
+  if (followNoticeTimer !== null) {
+    clearTimeout(followNoticeTimer);
+  }
+  updateStageOverlayLabel();
+  followNoticeTimer = window.setTimeout(() => {
+    followNoticeActive = false;
+    followNoticeTimer = null;
+    updateStageOverlayLabel();
+  }, 2400);
+}
+
 function updateStageOverlayLabel(): void {
   const locale = currentLocale();
   const s = tStrings(locale);
+  if (followNoticeActive) {
+    stageOverlayNote.textContent = s.followNoMatchNotice;
+    return;
+  }
   const snap = currentDisplayedSnapshot();
   if (replay.isReplay) {
     stageOverlayNote.textContent = s.stageOverlayReplay(formatTimeHms(replay.cursorMs, locale));
@@ -849,16 +920,45 @@ function cycleFocusSpotlight(): void {
 
 function toggleFollowCam(): void {
   const snap = currentDisplayedSnapshot();
-  let targetId = resolveSelectedBotId(snap);
-  if (!targetId && renderer.camera.followBotId === null) {
-    targetId = pickNextFocusBotId(snap, null);
-    if (targetId) {
-      state.selectionCleared = false;
-      if (isDemoMode()) {
-        demoSelectedBotId = targetId;
-      } else {
-        updateDocumentPrefs({ selectedBotId: targetId });
-      }
+  const locale = currentLocale();
+  const redactMode = activeRedactMode();
+  const activeFilter = isFilterActive(state.filterPreset, state.searchQuery)
+    ? filterBotIds(snap, {
+        preset: state.filterPreset,
+        query: state.searchQuery,
+        redactMode,
+        locale,
+      })
+    : null;
+
+  const currentFollow = renderer.camera.followBotId;
+  if (currentFollow !== null) {
+    if (activeFilter && activeFilter.size === 0) {
+      renderer.camera.releaseFollow();
+      showFollowNoMatchNotice();
+      renderUi();
+      return;
+    }
+    if (!activeFilter || activeFilter.has(currentFollow)) {
+      renderer.toggleFollow(currentFollow);
+      renderUi();
+      return;
+    }
+  }
+
+  const selectedId = resolveSelectedBotId(snap);
+  const targetId = resolveFollowTargetBotId(snap, selectedId, activeFilter);
+  if (!targetId) {
+    showFollowNoMatchNotice();
+    renderUi();
+    return;
+  }
+  if (targetId !== selectedId) {
+    state.selectionCleared = false;
+    if (isDemoMode()) {
+      demoSelectedBotId = targetId;
+    } else {
+      updateDocumentPrefs({ selectedBotId: targetId });
     }
   }
   renderer.toggleFollow(targetId);
@@ -869,6 +969,10 @@ function syncChromeLocale(locale: UiLocale): void {
   const s = tStrings(locale);
   const atmoMode = activeAtmosphereMode();
   const atmoLabel = s.atmosphereModes[atmoMode];
+  const wMode = activeWeatherMode();
+  const wLabel = s.weatherModes[wMode];
+  const sndMode = activeSoundMode();
+  const sndLabel = s.soundModes[sndMode];
   document.documentElement.lang = locale;
   document.title = s.appTitleEditor;
   titleEl.textContent = s.appTitleEditor;
@@ -882,6 +986,12 @@ function syncChromeLocale(locale: UiLocale): void {
   atmoBtn.textContent = `${atmosphereIcon(atmoMode)} ${atmoLabel}`;
   atmoBtn.title = s.atmosphereToggleTitle(atmoLabel);
   atmoBtn.className = atmoMode !== 'auto' ? 'bw-btn bw-btn-active' : 'bw-btn';
+  weatherBtn.textContent = `${weatherIcon(wMode)} ${wLabel}`;
+  weatherBtn.title = s.weatherToggleTitle(wLabel);
+  weatherBtn.className = wMode !== 'auto' ? 'bw-btn bw-btn-active' : 'bw-btn';
+  soundBtn.textContent = `${soundIcon(sndMode)} ${sndLabel}`;
+  soundBtn.title = s.soundToggleTitle(sndLabel);
+  soundBtn.className = sndMode !== 'off' ? 'bw-btn bw-btn-active' : 'bw-btn';
   focusBtn.textContent = `🎯 ${s.focusButton}`;
   focusBtn.title = s.focusButtonTitle;
   focusBtn.setAttribute('aria-label', s.focusButtonTitle);
@@ -1020,10 +1130,16 @@ function renderStageFrame(
     locale,
   });
   updateStageOverlayLabel();
+  const atmoMode = activeAtmosphereMode();
+  const wMode = activeWeatherMode();
+  const phase = resolveAtmospherePhase(atmoMode, displayTimestampMs);
+  const wKind = resolveWeatherKind(wMode, phase, themeId);
+  soundscape.updateAmbientContext(wKind, phase, themeId);
   renderer.update({
     snapshot: snap,
     themeId,
-    atmosphereMode: activeAtmosphereMode(),
+    atmosphereMode: atmoMode,
+    weatherMode: wMode,
     displayTimestampMs,
     selectedBotId: selectedId,
     redactMode,
@@ -1222,6 +1338,8 @@ function buildDemoPayload(): BotWorldStatePayload | null {
   return demoSession.getPayload({
     themeId: demoThemeId,
     atmosphereMode: demoAtmosphereMode,
+    weatherMode: demoWeatherMode,
+    soundMode: demoSoundMode,
     redactMode: demoRedactMode,
     locale: currentLocale(),
     languageSetting: demoLanguageSetting,
@@ -1236,9 +1354,18 @@ function syncDemoTick(advance: boolean, forceSidePanels = false): void {
   if (!nextPayload) return;
   const locale = currentLocale();
   const theme = getThemeConfig(demoThemeId, locale);
-  if (generatedCount > 0 && !replay.isReplay) {
+  if (advance && generatedCount > 0 && !replay.isReplay) {
     const newEvents = nextPayload.events.slice(-generatedCount).map((r) => r.event);
     liveMotion.enqueueEvents(newEvents, nextPayload.snapshot, theme, locale, activeCustomPositions());
+    const crossed = demoMilestones.evaluateNewEvents(
+      newEvents,
+      nextPayload.snapshot.capturedAt || Date.now()
+    );
+    if (crossed !== null) {
+      liveMotion.triggerMilestone(crossed, [theme.designSize[0] * 0.5, theme.designSize[1] * 0.24]);
+      soundscape.playMilestoneCue({ suppressed: false });
+    }
+    soundscape.playEvents(newEvents, { suppressed: false });
   }
   state.payload = nextPayload;
   if (replay.isReplay) {
@@ -1258,6 +1385,8 @@ function enterDemoMode(): void {
   state.selectionCleared = false;
   demoThemeId = state.docData.themeId ?? livePayload.activeTheme;
   demoAtmosphereMode = state.docData.atmosphereMode ?? livePayload.atmosphereMode ?? 'auto';
+  demoWeatherMode = state.docData.weatherMode ?? livePayload.weatherMode ?? 'auto';
+  demoSoundMode = livePayload.soundMode ?? 'off';
   demoRedactMode = Boolean(livePayload.redactMode) || Boolean(state.docData.redactMode);
   demoLanguageSetting = livePayload.languageSetting;
   demoAppearances = {};
@@ -1271,6 +1400,12 @@ function enterDemoMode(): void {
   if (initialDemo) {
     state.payload = initialDemo;
     demoSelectedBotId = initialDemo.snapshot.botOrder[0] ?? null;
+    demoMilestones.seedBaseline(
+      initialDemo.events,
+      initialDemo.snapshot.capturedAt || Date.now()
+    );
+  } else {
+    demoMilestones.reset();
   }
   demoTimerId = window.setInterval(() => {
     if (!demoSession || replay.isReplay) return;
@@ -1288,10 +1423,15 @@ function exitDemoMode(): void {
   demoSession = null;
   demoCustomPositions = {};
   demoSelectedBotId = null;
+  demoMilestones.reset();
   replay.returnToLive();
   liveMotion.clearTransients();
   syncReplayLoop();
   state.payload = livePayload;
+  liveMilestones.seedBaseline(
+    livePayload.events,
+    livePayload.snapshot.capturedAt || Date.now()
+  );
   renderUi(true);
   void triggerRefresh().catch(() => {});
 }
@@ -1301,13 +1441,26 @@ function applyIncomingPayload(nextPayload: BotWorldStatePayload): void {
   if (isDemoMode()) {
     return;
   }
+  soundscape.setMode(nextPayload.soundMode ?? 'off', { fromUserGesture: false });
   const locale = effectiveLocale(nextPayload.languageSetting, getHostLocale());
   const theme = getThemeConfig(activeThemeId(), locale);
+  const nowMs = nextPayload.snapshot.capturedAt > 0 ? nextPayload.snapshot.capturedAt : Date.now();
   const hadPrev = Object.keys(prevLiveSnapshot.bots).length > 0;
-  if (hadPrev && nextPayload.snapshot.initialSyncComplete) {
+  if (!liveMilestones.isSeeded() || !hadPrev || !nextPayload.snapshot.initialSyncComplete) {
+    liveMilestones.seedBaseline(nextPayload.events, nowMs);
+  } else {
     const newEvents = diffSnapshots(prevLiveSnapshot, nextPayload.snapshot, false, locale);
     if (newEvents.length > 0) {
       liveMotion.enqueueEvents(newEvents, nextPayload.snapshot, theme, locale, activeCustomPositions());
+      const crossed = liveMilestones.evaluateNewEvents(newEvents, nowMs);
+      if (crossed !== null && !replay.isReplay) {
+        liveMotion.triggerMilestone(crossed, [
+          theme.designSize[0] * 0.5,
+          theme.designSize[1] * 0.24,
+        ]);
+        soundscape.playMilestoneCue({ suppressed: replay.isReplay });
+      }
+      soundscape.playEvents(newEvents, { suppressed: replay.isReplay });
     }
   }
   prevLiveSnapshot = nextPayload.snapshot;
@@ -1360,6 +1513,50 @@ async function cycleAtmosphere(): Promise<void> {
     renderUi();
   } catch {
     // Document change is already persisted locally in .botworld
+  }
+}
+
+async function cycleWeather(): Promise<void> {
+  const nextMode = nextWeatherMode(activeWeatherMode());
+  if (isDemoMode()) {
+    demoWeatherMode = nextMode;
+    syncDemoTick(false, true);
+    return;
+  }
+  updateDocumentPrefs({ weatherMode: nextMode });
+  renderUi();
+  try {
+    const res = await orca.plugin.request('botWorld.setWeatherMode', {
+      weatherMode: nextMode,
+    });
+    state.payload = { ...state.payload, weatherMode: res.weatherMode };
+    livePayload = state.payload;
+    renderUi();
+  } catch {
+    // Document change is already persisted locally in .botworld
+  }
+}
+
+async function cycleSound(fromUserGesture = false): Promise<void> {
+  const nextMode = nextSoundMode(activeSoundMode());
+  soundscape.setMode(nextMode, { fromUserGesture });
+  if (isDemoMode()) {
+    demoSoundMode = nextMode;
+    syncDemoTick(false, false);
+    return;
+  }
+  state.payload = { ...state.payload, soundMode: nextMode };
+  livePayload = state.payload;
+  renderUi();
+  try {
+    const res = await orca.plugin.request('botWorld.setSoundMode', {
+      soundMode: nextMode,
+    });
+    state.payload = { ...state.payload, soundMode: res.soundMode };
+    livePayload = state.payload;
+    renderUi();
+  } catch {
+    // Keep local UI sound mode even if worker RPC fails
   }
 }
 
@@ -1490,9 +1687,26 @@ async function boot(): Promise<void> {
   }
 }
 
+const handleGestureUnlock = (): void => {
+  if (activeSoundMode() !== 'off' && !soundscape.isUnlocked()) {
+    if (soundscape.unlockFromUserGesture()) {
+      const displayTs = replay.isReplay
+        ? replay.cursorMs
+        : state.payload.snapshot.capturedAt > 0
+          ? state.payload.snapshot.capturedAt
+          : Date.now();
+      const phase = resolveAtmospherePhase(activeAtmosphereMode(), displayTs);
+      const wKind = resolveWeatherKind(activeWeatherMode(), phase, activeThemeId());
+      soundscape.updateAmbientContext(wKind, phase, activeThemeId());
+    }
+  }
+};
+
 const handleKeyDown = (ev: KeyboardEvent): void => {
-  if (shouldIgnoreShortcutEvent(ev)) return;
-  const action = mapKeyToShortcutAction(ev.key, { isEditor: true });
+  handleGestureUnlock();
+  const modalOpen = state.shortcutsOpen || state.reportOpen;
+  if (shouldIgnoreShortcutEvent(ev, { modalOpen })) return;
+  const action = mapKeyToShortcutAction(ev.key, { isEditor: true, modalOpen });
   if (!action) return;
   switch (action) {
     case 'toggleTheme': {
@@ -1507,6 +1721,12 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
       break;
     case 'cycleAtmosphere':
       void cycleAtmosphere().catch(() => {});
+      break;
+    case 'cycleWeather':
+      void cycleWeather().catch(() => {});
+      break;
+    case 'toggleSound':
+      void cycleSound(true).catch(() => {});
       break;
     case 'toggleDemo':
       if (isDemoMode()) exitDemoMode();
@@ -1595,6 +1815,7 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
 };
 
 window.addEventListener('keydown', handleKeyDown);
+window.addEventListener('pointerdown', handleGestureUnlock);
 
 let cleanedUp = false;
 function cleanup(): void {
@@ -1608,11 +1829,17 @@ function cleanup(): void {
     clearTimeout(reportCopiedTimer);
     reportCopiedTimer = null;
   }
+  if (followNoticeTimer !== null) {
+    clearTimeout(followNoticeTimer);
+    followNoticeTimer = null;
+  }
   if (replayTimerId !== null) {
     cancelAnimationFrame(replayTimerId);
     replayTimerId = null;
   }
   window.removeEventListener('keydown', handleKeyDown);
+  window.removeEventListener('pointerdown', handleGestureUnlock);
+  soundscape.dispose();
   docSession?.dispose();
   renderer.dispose();
 }

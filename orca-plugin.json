@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "bot-world",
   "name": "Bot World",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Read-only virtual office visualizer for Orca bots and live sub-workers",
   "license": "MIT",
   "author": {
@@ -194,6 +194,27 @@
         ],
         "default": "auto",
         "description": "Office time-of-day lighting atmosphere (auto follows live or replay timestamp; day, sunset, or night overrides lighting)"
+      },
+      {
+        "key": "weatherMode",
+        "title": "Office Weather",
+        "type": "string",
+        "enum": [
+          "auto",
+          "clear",
+          "rain",
+          "snow",
+          "starlight"
+        ],
+        "enumLabels": [
+          "Auto (Theme & Time)",
+          "Clear",
+          "Rain",
+          "Snow",
+          "Starlight"
+        ],
+        "default": "auto",
+        "description": "Ambient office weather effect (auto follows theme and time of day; clear, rain, snow, or starlight overrides weather)"
       }
     ]
   }

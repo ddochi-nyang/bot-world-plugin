@@ -314,7 +314,7 @@ export function formatReportMarkdown(
     `| ${opts.locale === 'ko' ? '활성 봇 / 결정 요청' : 'Active Bots / Needs You'} | ${report.activeBotsCount}/${report.totalBotsCount} · ${report.needsOwnerCount} |`
   );
   lines.push('');
-  const needsFallbackMask = opts.redactMode && report.redacted === false;
+  const needsFallbackMask = opts.redactMode && report.redacted !== true;
   lines.push(`## ${s.reportSectionTopBots}`);
   if (report.topBots.length === 0) {
     lines.push(`- ${s.reportNoBotActivity}`);
@@ -366,7 +366,7 @@ export function renderOfficeReportModal(
 
   const s = tStrings(opts.locale);
   const { report, redactMode, copied } = opts;
-  const needsFallbackMask = redactMode && report.redacted === false;
+  const needsFallbackMask = redactMode && report.redacted !== true;
   const generatedHms = formatTimeHms(report.generatedAtMs, opts.locale);
 
   const autoRateLabel =

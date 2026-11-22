@@ -1,4 +1,5 @@
 import { isSafeKey, type WorldSnapshot } from '../src/types.ts';
+import { orderedSnapshotBotIds } from './filter.ts';
 
 export const MIN_CAMERA_ZOOM = 1.0;
 export const MAX_CAMERA_ZOOM = 2.6;
@@ -162,6 +163,32 @@ export function pickNextFocusBotId(
 
   const curIdx = currentFocusedId ? tier.indexOf(currentFocusedId) : -1;
   return tier[(curIdx + 1) % tier.length];
+}
+
+export function resolveFollowTargetBotId(
+  snapshot: WorldSnapshot,
+  selectedBotId: string | null,
+  allowedBotIds?: ReadonlySet<string> | null
+): string | null {
+  const hasValidSelected =
+    selectedBotId !== null &&
+    isSafeKey(selectedBotId) &&
+    Object.hasOwn(snapshot.bots, selectedBotId);
+
+  if (allowedBotIds !== undefined && allowedBotIds !== null) {
+    if (allowedBotIds.size === 0) {
+      return null;
+    }
+    if (hasValidSelected && allowedBotIds.has(selectedBotId)) {
+      return selectedBotId;
+    }
+    return orderedSnapshotBotIds(snapshot).find((id) => allowedBotIds.has(id)) ?? null;
+  }
+
+  if (hasValidSelected) {
+    return selectedBotId;
+  }
+  return pickNextFocusBotId(snapshot, null);
 }
 
 export class CameraController {

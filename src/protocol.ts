@@ -3,8 +3,10 @@ import type {
   BotWorldStatePayload,
   CharacterId,
   LanguageSetting,
+  SoundMode,
   ThemeId,
   UiLocale,
+  WeatherMode,
 } from './types.ts';
 
 declare module 'orca' {
@@ -24,6 +26,14 @@ declare module 'orca' {
     'botWorld.setAtmosphereMode': {
       input: { atmosphereMode: AtmosphereMode };
       output: { atmosphereMode: AtmosphereMode };
+    };
+    'botWorld.setWeatherMode': {
+      input: { weatherMode: WeatherMode };
+      output: { weatherMode: WeatherMode };
+    };
+    'botWorld.setSoundMode': {
+      input: { soundMode: SoundMode };
+      output: { soundMode: SoundMode };
     };
     'botWorld.setRedactMode': {
       input: { redactMode: boolean };

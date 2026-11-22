@@ -2,8 +2,10 @@ import {
   type AtmosphereMode,
   type CharacterId,
   type LanguageSetting,
+  type SoundMode,
   type ThemeId,
   type UiLocale,
+  type WeatherMode,
   isValidLanguageSetting,
 } from '../src/types.ts';
 
@@ -335,6 +337,16 @@ export type UiDictionary = {
   shortcutResetCamera: string;
   shortcutFocusSearch: string;
   shortcutToggleCollab: string;
+  weatherAriaLabel: string;
+  weatherModes: Record<WeatherMode, string>;
+  weatherToggleTitle: (modeLabel: string) => string;
+  soundAriaLabel: string;
+  soundModes: Record<SoundMode, string>;
+  soundToggleTitle: (modeLabel: string) => string;
+  milestoneBannerText: (count: number) => string;
+  followNoMatchNotice: string;
+  shortcutCycleWeather: string;
+  shortcutToggleSound: string;
 };
 
 export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
@@ -574,6 +586,26 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     shortcutResetCamera: 'Reset camera zoom & pan',
     shortcutFocusSearch: 'Search bots',
     shortcutToggleCollab: 'Toggle collaboration network',
+    weatherAriaLabel: 'Office Weather',
+    weatherModes: {
+      auto: 'Auto',
+      clear: 'Clear',
+      rain: 'Rain',
+      snow: 'Snow',
+      starlight: 'Stars',
+    },
+    weatherToggleTitle: (modeLabel) => `Cycle weather (${modeLabel}) [W]`,
+    soundAriaLabel: 'Office Sound',
+    soundModes: {
+      off: 'Off',
+      chimes: 'Chimes',
+      ambient: 'Ambient',
+    },
+    soundToggleTitle: (modeLabel) => `Cycle sound (${modeLabel}) [M]`,
+    milestoneBannerText: (count) => `🎉 Milestone: ${count} Tasks Completed!`,
+    followNoMatchNotice: 'No bots match active filter',
+    shortcutCycleWeather: 'Cycle weather effect',
+    shortcutToggleSound: 'Cycle sound mode',
   },
   ko: {
     appTitlePanel: '봇 월드',
@@ -808,6 +840,26 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     shortcutResetCamera: '카메라 배율·위치 초기화',
     shortcutFocusSearch: '봇 검색창 포커스',
     shortcutToggleCollab: '협업 네트워크 오버레이',
+    weatherAriaLabel: '사무실 날씨',
+    weatherModes: {
+      auto: '자동',
+      clear: '맑음',
+      rain: '비',
+      snow: '눈',
+      starlight: '별빛',
+    },
+    weatherToggleTitle: (modeLabel) => `날씨 전환 (${modeLabel}) [W]`,
+    soundAriaLabel: '오피스 사운드',
+    soundModes: {
+      off: '음소거',
+      chimes: '효과음',
+      ambient: '앰비언트',
+    },
+    soundToggleTitle: (modeLabel) => `사운드 전환 (${modeLabel}) [M]`,
+    milestoneBannerText: (count) => `🎉 마일스톤: 작업 ${count}건 완료!`,
+    followNoMatchNotice: '현재 필터와 일치하는 봇이 없습니다',
+    shortcutCycleWeather: '날씨 효과 전환',
+    shortcutToggleSound: '사운드 모드 전환',
   },
 };
 

@@ -4,6 +4,10 @@ export type LanguageSetting = 'auto' | 'en' | 'ko';
 export type AtmosphereMode = 'auto' | 'day' | 'sunset' | 'night';
 export type AtmospherePhase = 'day' | 'sunset' | 'night';
 
+export type WeatherMode = 'auto' | 'clear' | 'rain' | 'snow' | 'starlight';
+export type WeatherKind = 'clear' | 'rain' | 'snow' | 'starlight';
+export type SoundMode = 'off' | 'chimes' | 'ambient';
+
 export const VALID_ATMOSPHERE_MODES: readonly AtmosphereMode[] = [
   'auto',
   'day',
@@ -13,6 +17,28 @@ export const VALID_ATMOSPHERE_MODES: readonly AtmosphereMode[] = [
 
 export function isValidAtmosphereMode(value: unknown): value is AtmosphereMode {
   return typeof value === 'string' && (VALID_ATMOSPHERE_MODES as readonly string[]).includes(value);
+}
+
+export const VALID_WEATHER_MODES: readonly WeatherMode[] = [
+  'auto',
+  'clear',
+  'rain',
+  'snow',
+  'starlight',
+] as const;
+
+export function isValidWeatherMode(value: unknown): value is WeatherMode {
+  return typeof value === 'string' && (VALID_WEATHER_MODES as readonly string[]).includes(value);
+}
+
+export const VALID_SOUND_MODES: readonly SoundMode[] = [
+  'off',
+  'chimes',
+  'ambient',
+] as const;
+
+export function isValidSoundMode(value: unknown): value is SoundMode {
+  return typeof value === 'string' && (VALID_SOUND_MODES as readonly string[]).includes(value);
 }
 
 export const VALID_LANGUAGE_SETTINGS: readonly LanguageSetting[] = [
@@ -221,6 +247,7 @@ export type BotWorldDocumentData = {
   version: 1;
   themeId: ThemeId;
   atmosphereMode?: AtmosphereMode;
+  weatherMode?: WeatherMode;
   redactMode: boolean;
   selectedBotId: string | null;
   botAppearances: Record<string, CharacterId>;
@@ -231,6 +258,7 @@ export const DEFAULT_BOTWORLD_DOCUMENT: BotWorldDocumentData = {
   version: 1,
   themeId: 'startup_office',
   atmosphereMode: 'auto',
+  weatherMode: 'auto',
   redactMode: false,
   selectedBotId: null,
   botAppearances: {},
@@ -244,12 +272,16 @@ export function validateBotWorldDocument(
   const fallbackAtmosphere: AtmosphereMode = isValidAtmosphereMode(fallback.atmosphereMode)
     ? fallback.atmosphereMode
     : 'auto';
+  const fallbackWeather: WeatherMode = isValidWeatherMode(fallback.weatherMode)
+    ? fallback.weatherMode
+    : 'auto';
   const fallbackPositions = sanitizeCustomDeskPositions(fallback.customDeskPositions);
   if (typeof rawText !== 'string' || rawText.trim().length === 0) {
     return {
       data: {
         ...fallback,
         atmosphereMode: fallbackAtmosphere,
+        weatherMode: fallbackWeather,
         botAppearances: { ...fallback.botAppearances },
         customDeskPositions: fallbackPositions,
       },
@@ -261,6 +293,7 @@ export function validateBotWorldDocument(
       data: {
         ...fallback,
         atmosphereMode: fallbackAtmosphere,
+        weatherMode: fallbackWeather,
         botAppearances: { ...fallback.botAppearances },
         customDeskPositions: fallbackPositions,
       },
@@ -274,6 +307,7 @@ export function validateBotWorldDocument(
         data: {
           ...fallback,
           atmosphereMode: fallbackAtmosphere,
+          weatherMode: fallbackWeather,
           botAppearances: { ...fallback.botAppearances },
           customDeskPositions: fallbackPositions,
         },
@@ -285,6 +319,9 @@ export function validateBotWorldDocument(
     const atmosphereMode: AtmosphereMode = isValidAtmosphereMode(rec.atmosphereMode)
       ? rec.atmosphereMode
       : fallbackAtmosphere;
+    const weatherMode: WeatherMode = isValidWeatherMode(rec.weatherMode)
+      ? rec.weatherMode
+      : fallbackWeather;
     const redactMode = typeof rec.redactMode === 'boolean' ? rec.redactMode : fallback.redactMode;
     const selectedBotId =
       typeof rec.selectedBotId === 'string' &&
@@ -316,6 +353,7 @@ export function validateBotWorldDocument(
         version: 1,
         themeId,
         atmosphereMode,
+        weatherMode,
         redactMode,
         selectedBotId,
         botAppearances: toPlainSafeRecord(appearancesMap),
@@ -328,6 +366,7 @@ export function validateBotWorldDocument(
       data: {
         ...fallback,
         atmosphereMode: fallbackAtmosphere,
+        weatherMode: fallbackWeather,
         botAppearances: { ...fallback.botAppearances },
         customDeskPositions: fallbackPositions,
       },
@@ -658,6 +697,8 @@ export type BotWorldStatePayload = {
   keyframes: Keyframe[];
   activeTheme: ThemeId;
   atmosphereMode: AtmosphereMode;
+  weatherMode?: WeatherMode;
+  soundMode?: SoundMode;
   redactMode: boolean;
   botAppearances: Record<string, CharacterId>;
   pollIntervalSec: number;

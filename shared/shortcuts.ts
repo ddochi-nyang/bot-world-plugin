@@ -1,9 +1,13 @@
 import {
   type AtmosphereMode,
+  type SoundMode,
   type ThemeId,
   type UiLocale,
   VALID_ATMOSPHERE_MODES,
+  VALID_SOUND_MODES,
   VALID_THEME_IDS,
+  VALID_WEATHER_MODES,
+  type WeatherMode,
 } from '../src/types.ts';
 import { clearChildren, el } from './dom.ts';
 import { tStrings } from './i18n.ts';
@@ -13,6 +17,8 @@ export type ShortcutAction =
   | 'toggleRedact'
   | 'toggleLanguage'
   | 'cycleAtmosphere'
+  | 'cycleWeather'
+  | 'toggleSound'
   | 'toggleDemo'
   | 'toggleReplayPlay'
   | 'toggleReport'
@@ -32,11 +38,15 @@ export type ShortcutEventLike = {
   altKey?: boolean;
 };
 
-export function shouldIgnoreShortcutEvent(ev: ShortcutEventLike): boolean {
+export function shouldIgnoreShortcutEvent(
+  ev: ShortcutEventLike,
+  options?: { modalOpen?: boolean }
+): boolean {
   if (ev.ctrlKey || ev.metaKey || ev.altKey) {
     return true;
   }
-  if (typeof ev.key === 'string' && ev.key.toLowerCase() === 'escape') {
+  const lowerKey = typeof ev.key === 'string' ? ev.key.toLowerCase() : '';
+  if (lowerKey === 'escape') {
     return false;
   }
   const target = ev.target as { tagName?: unknown; isContentEditable?: unknown } | null | undefined;
@@ -51,21 +61,31 @@ export function shouldIgnoreShortcutEvent(ev: ShortcutEventLike): boolean {
       }
     }
   }
+  if (options?.modalOpen) {
+    return lowerKey !== '?' && lowerKey !== 'i';
+  }
   return false;
 }
 
 export function mapKeyToShortcutAction(
   key: string,
-  options?: { isEditor?: boolean }
+  options?: { isEditor?: boolean; modalOpen?: boolean }
 ): ShortcutAction | null {
   if (typeof key !== 'string' || key.length === 0) return null;
+  const lower = key.toLowerCase();
+  if (options?.modalOpen) {
+    if (key === '?') return 'toggleHelp';
+    if (lower === 'i') return 'toggleReport';
+    if (lower === 'escape') return 'closeOrClearSelection';
+    return null;
+  }
   if (key === '?') return 'toggleHelp';
   if (key === '/') return 'focusSearch';
   if (key === '0') return 'resetCamera';
   if (key === ' ' || key === 'Spacebar') {
     return options?.isEditor ? 'toggleReplayPlay' : null;
   }
-  switch (key.toLowerCase()) {
+  switch (lower) {
     case 't':
       return 'toggleTheme';
     case 'r':
@@ -74,6 +94,10 @@ export function mapKeyToShortcutAction(
       return 'toggleLanguage';
     case 'a':
       return 'cycleAtmosphere';
+    case 'w':
+      return 'cycleWeather';
+    case 'm':
+      return 'toggleSound';
     case 'd':
       return 'toggleDemo';
     case 'i':
@@ -116,6 +140,44 @@ export function atmosphereIcon(mode: AtmosphereMode): string {
   }
 }
 
+export function nextWeatherMode(current: WeatherMode): WeatherMode {
+  const idx = VALID_WEATHER_MODES.indexOf(current);
+  if (idx < 0) return 'auto';
+  return VALID_WEATHER_MODES[(idx + 1) % VALID_WEATHER_MODES.length];
+}
+
+export function weatherIcon(mode: WeatherMode): string {
+  switch (mode) {
+    case 'auto':
+      return '🌦';
+    case 'clear':
+      return '🌤';
+    case 'rain':
+      return '🌧';
+    case 'snow':
+      return '❄';
+    case 'starlight':
+      return '✨';
+  }
+}
+
+export function nextSoundMode(current: SoundMode): SoundMode {
+  const idx = VALID_SOUND_MODES.indexOf(current);
+  if (idx < 0) return 'off';
+  return VALID_SOUND_MODES[(idx + 1) % VALID_SOUND_MODES.length];
+}
+
+export function soundIcon(mode: SoundMode): string {
+  switch (mode) {
+    case 'off':
+      return '🔇';
+    case 'chimes':
+      return '🔔';
+    case 'ambient':
+      return '🎵';
+  }
+}
+
 export function renderShortcutsModal(
   container: HTMLElement,
   options: {
@@ -142,6 +204,8 @@ export function renderShortcutsModal(
     { keyLabel: 'R', description: s.shortcutToggleRedact },
     { keyLabel: 'L', description: s.shortcutSwitchLanguage },
     { keyLabel: 'A', description: s.shortcutCycleAtmosphere },
+    { keyLabel: 'W', description: s.shortcutCycleWeather },
+    { keyLabel: 'M', description: s.shortcutToggleSound },
     { keyLabel: 'D', description: s.shortcutToggleDemo },
     { keyLabel: 'I', description: s.shortcutToggleReport },
   ];
