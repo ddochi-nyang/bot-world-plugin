@@ -11,11 +11,13 @@ import {
   type DeskCoordinate,
   type LanguageSetting,
   type SoundMode,
+  type TeamZone,
   type ThemeId,
   type UiLocale,
   VALID_THEME_IDS,
   type WeatherMode,
   type WorldSnapshot,
+  type ZoneColor,
   createEmptySnapshot,
   isSafeKey,
   isValidThemeId,
@@ -54,6 +56,7 @@ import {
   formatReportMarkdown,
   renderOfficeReportModal,
 } from '../shared/office-report.ts';
+import { capturePhotoCard } from '../shared/photo-card.ts';
 import {
   atmosphereIcon,
   mapKeyToShortcutAction,
@@ -68,7 +71,14 @@ import {
 } from '../shared/shortcuts.ts';
 import { SoundscapeEngine } from '../shared/soundscape.ts';
 import { StageRenderer, resolveAtmospherePhase } from '../shared/stage-renderer.ts';
+import { TimelapseController } from '../shared/timelapse.ts';
 import { resolveWeatherKind } from '../shared/weather.ts';
+import {
+  cloneStarterTeamZones,
+  createNextZonePlacement,
+  renderZonesModal,
+  zonesModalRenderKey,
+} from '../shared/zones.ts';
 import { startBotWorldDocSession } from './doc-sync.ts';
 
 const root = document.getElementById('app');
@@ -86,6 +96,7 @@ const state: {
   eventsDrawerOpen: boolean;
   shortcutsOpen: boolean;
   reportOpen: boolean;
+  zonesOpen: boolean;
   reportCopied: boolean;
   selectionCleared: boolean;
   filterPreset: StatusFilterPreset;
@@ -105,16 +116,20 @@ const state: {
     pollIntervalSec: 5,
     locale: initialLocale,
     languageSetting: 'auto',
+    weeklyTrend: [],
   },
   docData: {
     ...DEFAULT_BOTWORLD_DOCUMENT,
     botAppearances: {},
     customDeskPositions: {},
+    zones: [],
+    showZones: true,
   },
   hoveredBotId: null,
   eventsDrawerOpen: true,
   shortcutsOpen: false,
   reportOpen: false,
+  zonesOpen: false,
   reportCopied: false,
   selectionCleared: false,
   filterPreset: 'all',
@@ -125,6 +140,7 @@ const state: {
 let docSession: Awaited<ReturnType<typeof startBotWorldDocSession>> | null = null;
 const liveMotion = new MotionDirector();
 const replay = new ReplayController();
+const timelapse = new TimelapseController();
 const soundscape = new SoundscapeEngine();
 const liveMilestones = new MilestoneTracker();
 const demoMilestones = new MilestoneTracker();
@@ -135,6 +151,7 @@ let lastReplayTickMs = 0;
 let reportCopiedTimer: number | null = null;
 let followNoticeTimer: number | null = null;
 let followNoticeActive = false;
+let stageToastTimer: number | null = null;
 
 let demoSession: DemoOfficeSession | null = null;
 let demoTimerId: number | null = null;
@@ -146,6 +163,8 @@ let demoRedactMode = false;
 let demoLanguageSetting: LanguageSetting = 'auto';
 let demoAppearances: Record<string, CharacterId> = {};
 let demoCustomPositions: Record<string, DeskCoordinate> = {};
+let demoZones: TeamZone[] = [];
+let demoShowZones = true;
 let demoSelectedBotId: string | null = null;
 
 function isDemoMode(): boolean {
@@ -302,6 +321,30 @@ const reportBtn = el(
   initialStrings.reportButton
 );
 
+const zonesBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-btn',
+    title: initialStrings.zonesButtonTitle,
+    ariaLabel: initialStrings.zonesButtonTitle,
+    onClick: () => toggleZonesModal(),
+  },
+  `🗺 ${initialStrings.zonesButton}`
+);
+
+const photoBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-btn',
+    title: initialStrings.photoButtonTitle,
+    ariaLabel: initialStrings.photoButtonTitle,
+    onClick: () => void triggerPhotoCardSnapshot().catch(() => {}),
+  },
+  `📸 ${initialStrings.photoButton}`
+);
+
 const helpBtn = el(
   'button',
   {
@@ -313,7 +356,9 @@ const helpBtn = el(
       state.shortcutsOpen = !state.shortcutsOpen;
       if (state.shortcutsOpen) {
         state.reportOpen = false;
+        state.zonesOpen = false;
         renderReportModal();
+        renderZonesManager();
       }
       renderShortcutsHelp();
       syncChromeLocale(currentLocale());
@@ -357,6 +402,8 @@ const toolbar = el(
     soundBtn,
     focusBtn,
     collabBtn,
+    zonesBtn,
+    photoBtn,
     redactBtn,
     langBtn,
     demoBtn,
@@ -424,6 +471,7 @@ const filterBar = el(
 // Main 2-column area
 const canvasEl = el('canvas', { className: 'bw-stage-canvas' }) as HTMLCanvasElement;
 const stageOverlayNote = el('div', { className: 'bw-stage-overlay-note' }, initialStrings.live);
+const stageToast = el('div', { className: 'bw-stage-toast bw-hidden' });
 const zoomOutBtn = el(
   'button',
   {
@@ -479,6 +527,7 @@ const stageWrap = el(
   { className: 'bw-stage-wrap-editor' },
   canvasEl,
   stageOverlayNote,
+  stageToast,
   cameraHud
 );
 const detailSidebar = el('div', { className: 'bw-editor-sidebar' });
@@ -491,6 +540,7 @@ const playBtn = el(
     type: 'button',
     className: 'bw-btn',
     onClick: () => {
+      timelapse.stop();
       const locale = currentLocale();
       const theme = getThemeConfig(activeThemeId(), locale);
       replay.togglePlay(
@@ -508,12 +558,25 @@ const playBtn = el(
   initialStrings.play
 );
 
+const timelapseBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-btn',
+    title: initialStrings.timelapseButtonTitle,
+    ariaLabel: initialStrings.timelapseButtonTitle,
+    onClick: () => toggleTimelapse(),
+  },
+  `⏱ ${initialStrings.timelapseButton}`
+);
+
 const liveBtn = el(
   'button',
   {
     type: 'button',
     className: 'bw-btn bw-btn-active',
     onClick: () => {
+      timelapse.stop();
       replay.returnToLive();
       syncReplayLoop();
       renderUi();
@@ -554,6 +617,7 @@ const scrubber = el('input', {
   value: '1000',
   ariaLabel: initialStrings.scrubberAriaLabel,
   onInput: () => {
+    timelapse.stop();
     const frac = Number(scrubber.value) / 1000;
     const locale = currentLocale();
     const theme = getThemeConfig(activeThemeId(), locale);
@@ -590,6 +654,7 @@ const timelineControls = el(
   { className: 'bw-timeline-controls' },
   liveBtn,
   playBtn,
+  timelapseBtn,
   speedSeg,
   scrubber,
   timeLabel,
@@ -613,6 +678,14 @@ const reportBackdrop = el('div', {
     syncChromeLocale(currentLocale());
   },
 });
+const zonesBackdrop = el('div', {
+  className: 'bw-modal-backdrop bw-hidden',
+  onClick: () => {
+    state.zonesOpen = false;
+    renderZonesManager();
+    syncChromeLocale(currentLocale());
+  },
+});
 
 root.appendChild(toolbar);
 root.appendChild(filterBar);
@@ -621,6 +694,7 @@ root.appendChild(editorBody);
 root.appendChild(timelineBar);
 root.appendChild(shortcutsBackdrop);
 root.appendChild(reportBackdrop);
+root.appendChild(zonesBackdrop);
 
 const renderer = new StageRenderer(canvasEl, {
   onSelectBot: (botId) => {
@@ -700,6 +774,39 @@ function activeCustomPositions(): Record<string, DeskCoordinate> {
   return state.docData.customDeskPositions ?? {};
 }
 
+function activeZones(): TeamZone[] {
+  if (isDemoMode()) return demoZones;
+  return state.docData.zones ?? [];
+}
+
+function activeShowZones(): boolean {
+  if (isDemoMode()) return demoShowZones;
+  return state.docData.showZones !== false;
+}
+
+function setZonesState(nextZones: TeamZone[], nextShow?: boolean): void {
+  if (isDemoMode()) {
+    demoZones = nextZones;
+    if (nextShow !== undefined) demoShowZones = nextShow;
+  } else {
+    updateDocumentPrefs({
+      zones: nextZones,
+      ...(nextShow !== undefined ? { showZones: nextShow } : {}),
+    });
+  }
+  renderUi();
+}
+
+function toggleZonesVisibility(): void {
+  const nextShow = !activeShowZones();
+  if (isDemoMode()) {
+    demoShowZones = nextShow;
+  } else {
+    updateDocumentPrefs({ showZones: nextShow });
+  }
+  renderUi();
+}
+
 function resetCustomSeats(): void {
   if (isDemoMode()) {
     demoCustomPositions = {};
@@ -725,10 +832,49 @@ function updateDocumentPrefs(patch: Partial<BotWorldDocumentData>): void {
     botAppearances: patch.botAppearances ?? { ...state.docData.botAppearances },
     customDeskPositions:
       patch.customDeskPositions ?? { ...(state.docData.customDeskPositions ?? {}) },
+    zones: patch.zones ?? [...(state.docData.zones ?? [])],
+    showZones: patch.showZones !== undefined ? patch.showZones : (state.docData.showZones !== false),
   };
   state.docData = next;
   if (docSession && !docSession.readOnly) {
     docSession.change(next);
+  }
+}
+
+function showStageToast(message: string): void {
+  stageToast.textContent = message;
+  stageToast.classList.remove('bw-hidden');
+  if (stageToastTimer !== null) {
+    clearTimeout(stageToastTimer);
+  }
+  stageToastTimer = window.setTimeout(() => {
+    stageToast.classList.add('bw-hidden');
+    stageToastTimer = null;
+  }, 2200);
+}
+
+async function triggerPhotoCardSnapshot(): Promise<void> {
+  renderer.renderNow();
+  const locale = currentLocale();
+  const s = tStrings(locale);
+  const snap = currentDisplayedSnapshot();
+  const timestampMs = replay.isReplay
+    ? replay.cursorMs
+    : snap.capturedAt > 0
+      ? snap.capturedAt
+      : Date.now();
+  const res = await capturePhotoCard(canvasEl, {
+    snapshot: snap,
+    events: state.payload.events,
+    themeId: activeThemeId(),
+    atmosphereMode: activeAtmosphereMode(),
+    weatherMode: activeWeatherMode(),
+    redactMode: activeRedactMode(),
+    locale,
+    timestampMs,
+  });
+  if (res.ok) {
+    showStageToast(s.photoSavedToast);
   }
 }
 
@@ -847,6 +993,7 @@ function renderReportModal(): void {
   const report = buildOfficeReport(state.payload.events, state.payload.snapshot, {
     redactMode,
     locale,
+    weeklyTrend: state.payload.weeklyTrend,
   });
   renderOfficeReportModal(reportBackdrop, {
     open: state.reportOpen,
@@ -870,11 +1017,102 @@ function toggleReportModal(): void {
   state.reportOpen = !state.reportOpen;
   if (state.reportOpen) {
     state.shortcutsOpen = false;
+    state.zonesOpen = false;
     state.reportCopied = false;
     renderShortcutsHelp();
+    renderZonesManager();
   }
   renderReportModal();
   syncChromeLocale(currentLocale());
+}
+
+let lastZonesModalKey: string | null = null;
+
+function renderZonesManager(): void {
+  const open = state.zonesOpen;
+  const zones = activeZones();
+  const showZones = activeShowZones();
+  const redactMode = activeRedactMode();
+  const locale = currentLocale();
+  const demoMode = isDemoMode();
+  const nextKey = zonesModalRenderKey({
+    open,
+    zones,
+    showZones,
+    redactMode,
+    locale,
+    demoMode,
+    persisted: true,
+  });
+  if (nextKey === lastZonesModalKey) {
+    return;
+  }
+  lastZonesModalKey = nextKey;
+  renderZonesModal(zonesBackdrop, {
+    open,
+    zones,
+    showZones,
+    redactMode,
+    locale,
+    persisted: true,
+    onToggleShowZones: () => toggleZonesVisibility(),
+    onLoadStarterPreset: () => setZonesState(cloneStarterTeamZones(), true),
+    onAddZone: (label: string, color: ZoneColor) => {
+      const current = activeZones();
+      const next = createNextZonePlacement(current, label, color);
+      if (next) {
+        setZonesState([...current, next], true);
+      }
+    },
+    onDeleteZone: (zoneId: string) => {
+      setZonesState(activeZones().filter((z) => z.id !== zoneId));
+    },
+    onClearZones: () => setZonesState([]),
+    onClose: () => {
+      state.zonesOpen = false;
+      renderZonesManager();
+      syncChromeLocale(currentLocale());
+    },
+  });
+}
+
+function toggleZonesModal(): void {
+  state.zonesOpen = !state.zonesOpen;
+  if (state.zonesOpen) {
+    state.shortcutsOpen = false;
+    state.reportOpen = false;
+    renderShortcutsHelp();
+    renderReportModal();
+  }
+  renderZonesManager();
+  syncChromeLocale(currentLocale());
+}
+
+function toggleTimelapse(): void {
+  if (timelapse.active) {
+    timelapse.stop();
+    syncReplayLoop();
+    renderUi();
+    return;
+  }
+  const locale = currentLocale();
+  const theme = getThemeConfig(activeThemeId(), locale);
+  const bounds = replay.timeBounds(state.payload.keyframes, state.payload.events);
+  const fallbackMs =
+    state.payload.snapshot.capturedAt > 0 ? state.payload.snapshot.capturedAt : Date.now();
+  const start = timelapse.start(bounds, fallbackMs);
+  replay.isPlaying = false;
+  replay.seekTo(
+    start.cursorMs,
+    state.payload.keyframes,
+    state.payload.events,
+    state.payload.snapshot,
+    theme,
+    locale,
+    activeCustomPositions()
+  );
+  syncReplayLoop();
+  renderUi();
 }
 
 function updateCameraHud(locale: UiLocale): void {
@@ -999,6 +1237,16 @@ function syncChromeLocale(locale: UiLocale): void {
   collabBtn.title = s.collabButtonTitle;
   collabBtn.setAttribute('aria-label', s.collabButtonTitle);
   collabBtn.className = state.showCollabNetwork ? 'bw-btn bw-btn-active' : 'bw-btn';
+  zonesBtn.textContent = `🗺 ${s.zonesButton}`;
+  zonesBtn.title = s.zonesButtonTitle;
+  zonesBtn.setAttribute('aria-label', s.zonesButtonTitle);
+  zonesBtn.className =
+    state.zonesOpen || (activeShowZones() && activeZones().length > 0)
+      ? 'bw-btn bw-btn-active'
+      : 'bw-btn';
+  photoBtn.textContent = `📸 ${s.photoButton}`;
+  photoBtn.title = s.photoButtonTitle;
+  photoBtn.setAttribute('aria-label', s.photoButtonTitle);
   redactBtn.title = s.redactToggleTitle;
   langBtn.textContent = s.langToggleText;
   langBtn.title = `${s.langToggleTitle} [L]`;
@@ -1064,6 +1312,12 @@ function renderTimelineControlsOnly(snap: WorldSnapshot, locale: UiLocale): void
   const s = tStrings(locale);
   liveBtn.className = !replay.isReplay ? 'bw-btn bw-btn-active' : 'bw-btn';
   playBtn.textContent = replay.isReplay && replay.isPlaying ? s.pause : s.play;
+  timelapseBtn.textContent = timelapse.active
+    ? `⏱ ${timelapse.formatProgress()}`
+    : `⏱ ${s.timelapseButton}`;
+  timelapseBtn.title = s.timelapseButtonTitle;
+  timelapseBtn.setAttribute('aria-label', s.timelapseButtonTitle);
+  timelapseBtn.className = timelapse.active ? 'bw-btn bw-btn-active' : 'bw-btn';
   for (const [spd, btn] of speedButtons.entries()) {
     btn.className = replay.speed === spd ? 'bw-seg-btn bw-seg-btn-active' : 'bw-seg-btn';
   }
@@ -1152,6 +1406,9 @@ function renderStageFrame(
     showCollabNetwork: state.showCollabNetwork,
     collabEdges,
     mvpBotId: badgeSummary.mvpBotId,
+    zones: activeZones(),
+    showZones: activeShowZones(),
+    timelapseActive: timelapse.active,
   });
 }
 
@@ -1253,6 +1510,7 @@ function renderSidePanelsIfNeeded(
         limit: 120,
         locale,
         onJumpToTime: (ts) => {
+          timelapse.stop();
           const curLocale = currentLocale();
           replay.seekTo(
             ts,
@@ -1274,27 +1532,50 @@ function renderSidePanelsIfNeeded(
 }
 
 function syncReplayLoop(): void {
-  if (replay.isReplay && replay.isPlaying) {
+  if ((replay.isReplay && replay.isPlaying) || timelapse.active) {
     if (replayTimerId === null) {
       lastReplayTickMs = performance.now();
       const tick = (nowMs: number) => {
-        if (!replay.isReplay || !replay.isPlaying) {
+        if ((!replay.isReplay || !replay.isPlaying) && !timelapse.active) {
           replayTimerId = null;
           return;
         }
-        const dtSecs = Math.max(0, Math.min(0.25, (nowMs - lastReplayTickMs) / 1000));
+        const dtMs = Math.max(0, Math.min(250, nowMs - lastReplayTickMs));
+        const dtSecs = dtMs / 1000;
         lastReplayTickMs = nowMs;
         const themeId = activeThemeId();
         const locale = currentLocale();
-        replay.step(
-          dtSecs,
-          state.payload.keyframes,
-          state.payload.events,
-          state.payload.snapshot,
-          getThemeConfig(themeId, locale),
-          locale,
-          activeCustomPositions()
-        );
+        const theme = getThemeConfig(themeId, locale);
+
+        if (timelapse.active) {
+          const stepRes = timelapse.advance(dtMs);
+          replay.advanceToTimestamp(
+            stepRes.cursorMs,
+            dtSecs,
+            state.payload.keyframes,
+            state.payload.events,
+            state.payload.snapshot,
+            theme,
+            locale,
+            activeCustomPositions()
+          );
+          const displayTs = replay.isReplay
+            ? replay.cursorMs
+            : state.payload.snapshot.capturedAt || Date.now();
+          const phase = resolveAtmospherePhase(activeAtmosphereMode(), displayTs);
+          const wKind = resolveWeatherKind(activeWeatherMode(), phase, themeId);
+          renderer.weather.step(dtSecs, wKind, theme.designSize);
+        } else {
+          replay.step(
+            dtSecs,
+            state.payload.keyframes,
+            state.payload.events,
+            state.payload.snapshot,
+            theme,
+            locale,
+            activeCustomPositions()
+          );
+        }
         const snap = currentDisplayedSnapshot();
         const redactMode = activeRedactMode();
         const appearances = mergedAppearances();
@@ -1302,7 +1583,7 @@ function syncReplayLoop(): void {
         renderTimelineControlsOnly(snap, locale);
         renderStageFrame(themeId, redactMode, appearances, snap, selectedId, locale);
         renderSidePanelsIfNeeded(snap, selectedId, redactMode, appearances, locale, false);
-        if (replay.isPlaying) {
+        if (replay.isPlaying || timelapse.active) {
           replayTimerId = requestAnimationFrame(tick);
         } else {
           replayTimerId = null;
@@ -1331,6 +1612,7 @@ function renderUi(forceSidePanels = false): void {
   renderSidePanelsIfNeeded(snap, selectedId, redactMode, appearances, locale, forceSidePanels);
   renderShortcutsHelp();
   renderReportModal();
+  renderZonesManager();
 }
 
 function buildDemoPayload(): BotWorldStatePayload | null {
@@ -1391,8 +1673,11 @@ function enterDemoMode(): void {
   demoLanguageSetting = livePayload.languageSetting;
   demoAppearances = {};
   demoCustomPositions = {};
+  demoZones = (state.docData.zones ?? []).map((z) => ({ ...z }));
+  demoShowZones = state.docData.showZones !== false;
   demoSelectedBotId = null;
   demoSession = createDemoOfficeSession();
+  timelapse.stop();
   replay.returnToLive();
   liveMotion.clearTransients();
   syncReplayLoop();
@@ -1422,12 +1707,16 @@ function exitDemoMode(): void {
   state.selectionCleared = false;
   demoSession = null;
   demoCustomPositions = {};
+  demoZones = [];
+  demoShowZones = true;
   demoSelectedBotId = null;
   demoMilestones.reset();
+  timelapse.stop();
   replay.returnToLive();
   liveMotion.clearTransients();
   syncReplayLoop();
   state.payload = livePayload;
+  soundscape.setMode(livePayload.soundMode ?? 'off', { fromUserGesture: false });
   liveMilestones.seedBaseline(
     livePayload.events,
     livePayload.snapshot.capturedAt || Date.now()
@@ -1704,7 +1993,7 @@ const handleGestureUnlock = (): void => {
 
 const handleKeyDown = (ev: KeyboardEvent): void => {
   handleGestureUnlock();
-  const modalOpen = state.shortcutsOpen || state.reportOpen;
+  const modalOpen = state.shortcutsOpen || state.reportOpen || state.zonesOpen;
   if (shouldIgnoreShortcutEvent(ev, { modalOpen })) return;
   const action = mapKeyToShortcutAction(ev.key, { isEditor: true, modalOpen });
   if (!action) return;
@@ -1734,6 +2023,13 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
       break;
     case 'toggleReplayPlay': {
       ev.preventDefault();
+      if (timelapse.active) {
+        timelapse.stop();
+        replay.isPlaying = false;
+        syncReplayLoop();
+        renderUi();
+        break;
+      }
       const locale = currentLocale();
       const theme = getThemeConfig(activeThemeId(), locale);
       replay.togglePlay(
@@ -1750,6 +2046,12 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
     }
     case 'toggleReport':
       toggleReportModal();
+      break;
+    case 'takePhotoCard':
+      void triggerPhotoCardSnapshot().catch(() => {});
+      break;
+    case 'toggleZones':
+      toggleZonesVisibility();
       break;
     case 'focusUrgent':
       cycleFocusSpotlight();
@@ -1773,7 +2075,9 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
       state.shortcutsOpen = !state.shortcutsOpen;
       if (state.shortcutsOpen) {
         state.reportOpen = false;
+        state.zonesOpen = false;
         renderReportModal();
+        renderZonesManager();
       }
       renderShortcutsHelp();
       syncChromeLocale(currentLocale());
@@ -1784,6 +2088,10 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
         searchInput.value = '';
         searchInput.blur();
         renderUi();
+      } else if (state.zonesOpen) {
+        state.zonesOpen = false;
+        renderZonesManager();
+        syncChromeLocale(currentLocale());
       } else if (state.reportOpen) {
         state.reportOpen = false;
         renderReportModal();
@@ -1792,6 +2100,10 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
         state.shortcutsOpen = false;
         renderShortcutsHelp();
         syncChromeLocale(currentLocale());
+      } else if (timelapse.active) {
+        timelapse.stop();
+        syncReplayLoop();
+        renderUi();
       } else if (renderer.camera.followBotId !== null) {
         renderer.camera.releaseFollow();
         updateCameraHud(currentLocale());
@@ -1833,6 +2145,11 @@ function cleanup(): void {
     clearTimeout(followNoticeTimer);
     followNoticeTimer = null;
   }
+  if (stageToastTimer !== null) {
+    clearTimeout(stageToastTimer);
+    stageToastTimer = null;
+  }
+  timelapse.stop();
   if (replayTimerId !== null) {
     cancelAnimationFrame(replayTimerId);
     replayTimerId = null;

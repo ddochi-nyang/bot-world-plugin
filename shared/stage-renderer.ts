@@ -6,6 +6,7 @@ import {
   type BotState,
   type CharacterId,
   type DeskCoordinate,
+  type TeamZone,
   type ThemeId,
   type UiLocale,
   type WeatherKind,
@@ -54,6 +55,7 @@ import {
   hasErrorDeskBeacon,
 } from './motion.ts';
 import { WeatherSystem, resolveWeatherKind } from './weather.ts';
+import { formatZoneDisplayLabel, zoneColorPalette } from './zones.ts';
 
 const BOT_SPRITE_DESIGN_PX = 90;
 const WORKER_SPRITE_DESIGN_PX = 74;
@@ -329,6 +331,9 @@ export type StageRenderInput = {
   showCollabNetwork?: boolean;
   collabEdges?: readonly CollabEdge[];
   mvpBotId?: string | null;
+  zones?: readonly TeamZone[];
+  showZones?: boolean;
+  timelapseActive?: boolean;
 };
 
 type HitBox = {
@@ -583,6 +588,7 @@ export class StageRenderer {
     if (this.camera.isAnimating()) return true;
     if (input.showCollabNetwork && input.collabEdges && input.collabEdges.length > 0) return true;
     if (input.motion.hasActiveAnimations()) return true;
+    if (input.timelapseActive) return false;
     if (input.replay?.isReplay) {
       return input.replay.isPlaying;
     }
@@ -626,7 +632,7 @@ export class StageRenderer {
     const theme = getThemeConfig(input.themeId, input.locale ?? 'en');
     const { weatherKind } = this.resolveWeatherForInput(input);
     const isPlayingReplay = Boolean(input.replay?.isReplay && input.replay.isPlaying);
-    if (!isPlayingReplay) {
+    if (!isPlayingReplay && !input.timelapseActive) {
       input.motion.step(dtSecs, input.snapshot, theme, input.customDeskPositions);
       this.weather.step(dtSecs, weatherKind, theme.designSize);
     }
@@ -1210,6 +1216,19 @@ export class StageRenderer {
     actors.sort((a, b) => a.footY - b.footY || a.zBias - b.zBias);
     botOverlays.sort((a, b) => a.screenY - b.screenY || a.botId.localeCompare(b.botId));
 
+    // Team Zones Floor Overlay (drawn beneath desks, collab overlay, and actors)
+    if (input.showZones !== false && input.zones && input.zones.length > 0) {
+      this.paintTeamZonesOverlay(
+        ctx,
+        vt,
+        theme.designSize,
+        input.zones,
+        redactMode,
+        locale,
+        uiScale
+      );
+    }
+
     // Collaboration Network Overlay (drawn beneath actors & nameplates)
     if (input.showCollabNetwork && input.collabEdges && input.collabEdges.length > 0) {
       this.paintCollabNetworkOverlay(
@@ -1355,7 +1374,8 @@ export class StageRenderer {
       motion,
       atmospherePhase,
       displayTimestampMs,
-      elapsedSecs
+      elapsedSecs,
+      filterSet
     );
 
     // Huddle / Mini Standup golden collaboration sparkle rings (visible even with Collab Overlay OFF)
@@ -1713,6 +1733,58 @@ export class StageRenderer {
     ctx.restore();
   }
 
+  private paintTeamZonesOverlay(
+    ctx: CanvasRenderingContext2D,
+    vt: ViewportTransform,
+    designSize: readonly [number, number],
+    zones: readonly TeamZone[],
+    redactMode: boolean,
+    locale: UiLocale,
+    uiScale: number
+  ): void {
+    const [designW, designH] = designSize;
+    ctx.save();
+    zones.forEach((zone, idx) => {
+      const palette = zoneColorPalette(zone.color);
+      const [zx, zy] = designToScreen(vt, zone.x * designW, zone.y * designH);
+      const zw = zone.w * designW * vt.scale;
+      const zh = zone.h * designH * vt.scale;
+      const radius = 14 * vt.scale;
+
+      drawRoundedRect(ctx, zx, zy, zw, zh, radius);
+      ctx.fillStyle = palette.fill;
+      ctx.fill();
+
+      ctx.save();
+      ctx.setLineDash([6 * vt.scale, 4 * vt.scale]);
+      ctx.lineWidth = 1.6 * uiScale;
+      ctx.strokeStyle = palette.border;
+      ctx.stroke();
+      ctx.restore();
+
+      const label = formatZoneDisplayLabel(zone, idx, redactMode, locale);
+      ctx.font = `700 ${Math.round(9.5 * uiScale)}px ${CANVAS_FONT_FAMILY}`;
+      const padX = 7 * uiScale;
+      const pillW = Math.min(Math.max(36 * uiScale, zw - 12 * uiScale), ctx.measureText(label).width + padX * 2);
+      const pillH = 18 * uiScale;
+      const pillX = zx + 7 * uiScale;
+      const pillY = zy + 7 * uiScale;
+
+      drawRoundedRect(ctx, pillX, pillY, pillW, pillH, 6 * uiScale);
+      ctx.fillStyle = palette.pillBg;
+      ctx.fill();
+      ctx.strokeStyle = palette.border;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      ctx.fillStyle = palette.pillFg;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(truncateTextToWidth(ctx, label, pillW - padX), pillX + pillW * 0.5, pillY + pillH * 0.52);
+    });
+    ctx.restore();
+  }
+
   private paintCozyAmbientDetails(
     ctx: CanvasRenderingContext2D,
     vt: ViewportTransform,
@@ -1721,7 +1793,8 @@ export class StageRenderer {
     motion: MotionDirector,
     phase: AtmospherePhase,
     displayTimestampMs: number,
-    elapsedSecs: number
+    elapsedSecs: number,
+    filterSet: ReadonlySet<string> | null
   ): void {
     const s = Math.max(0.55, vt.scale);
     orderedBots.forEach((bot, idx) => {
@@ -1730,6 +1803,7 @@ export class StageRenderer {
       const pose = motion.actorPose(`bot:${bot.id}`, [desk.x, desk.y]);
       if (pose.isWalking) return;
       const [sx, sy] = designToScreen(vt, pose.footX, pose.footY);
+      const dimmedAlpha = filterSet !== null && !filterSet.has(bot.id) ? 0.24 : 1;
 
       // Steaming coffee mug for Working bots during sunset or night
       if (bot.status.kind === 'Working' && (phase === 'sunset' || phase === 'night')) {
@@ -1737,6 +1811,7 @@ export class StageRenderer {
         const mx = sx + sideSign * 30 * s;
         const my = sy - 10 * s;
         ctx.save();
+        ctx.globalAlpha = dimmedAlpha;
         // Mug body
         drawRoundedRect(ctx, mx - 5.5 * s, my - 5 * s, 11 * s, 9.5 * s, 2.2 * s);
         ctx.fillStyle = '#f8fafc';
@@ -1758,7 +1833,7 @@ export class StageRenderer {
           const cycle = (elapsedSecs * 0.75 + idx * 0.37 + w * 0.48) % 1;
           const wy = my - 7 * s - cycle * 14 * s;
           const wx = mx + (-2 + w * 4) * s + Math.sin(cycle * Math.PI * 2 + w) * 2.2 * s;
-          ctx.globalAlpha = Math.max(0, (1 - cycle) * 0.75);
+          ctx.globalAlpha = Math.max(0, (1 - cycle) * 0.75) * dimmedAlpha;
           ctx.beginPath();
           ctx.arc(wx, wy, (1.6 + cycle * 1.2) * s, 0, Math.PI * 2);
           ctx.fillStyle = '#fef3c7';
@@ -1779,7 +1854,7 @@ export class StageRenderer {
           const zx = sx + (20 + i * 6) * s + Math.sin(cycle * Math.PI * 2 + i) * 3 * s;
           const zy = sy - (48 + i * 6) * s - cycle * 22 * s;
           const fontPx = Math.round((10.5 - i * 1.3) * s);
-          ctx.globalAlpha = alpha * 0.9;
+          ctx.globalAlpha = alpha * 0.9 * dimmedAlpha;
           ctx.font = `700 ${fontPx}px ${CANVAS_FONT_FAMILY}`;
           ctx.strokeStyle = 'rgba(15, 23, 42, 0.75)';
           ctx.lineWidth = 2.2 * s;
@@ -1797,6 +1872,7 @@ export class StageRenderer {
         const by = sy - 54 * s;
         const pulse = 0.5 + 0.5 * Math.sin(elapsedSecs * 8.5 + idx * 1.1);
         ctx.save();
+        ctx.globalAlpha = dimmedAlpha;
         // Beacon halo
         const haloRadius = (10 + pulse * 6) * s;
         const halo = ctx.createRadialGradient(bx, by, 1 * s, bx, by, haloRadius);
@@ -1823,7 +1899,7 @@ export class StageRenderer {
           const px = bx + Math.sin(cycle * Math.PI * 2 + p * 1.4) * 3.5 * s + (p - 1) * 1.4 * s;
           const py = by - 7 * s - cycle * 19 * s;
           const pr = (2.1 + cycle * 2.6) * s;
-          ctx.globalAlpha = Math.max(0, (1 - cycle) * 0.62);
+          ctx.globalAlpha = Math.max(0, (1 - cycle) * 0.62) * dimmedAlpha;
           ctx.beginPath();
           ctx.arc(px, py, pr, 0, Math.PI * 2);
           ctx.fillStyle = p % 2 === 0 ? '#e2e8f0' : '#cbd5e1';

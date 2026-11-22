@@ -25,11 +25,11 @@ describe('DemoOfficeSession, character keyword priority, overflow grid, and 0-bo
     assert.ok(Object.values(payloadEn.snapshot.items).some((it) => it.status === 'needs_you'));
     assert.ok(Object.keys(payloadEn.snapshot.automations).length >= 3);
     assert.ok(payloadEn.snapshot.recentMessages.length >= 3);
-    assert.ok(payloadEn.events.length >= 6);
-    assert.equal(payloadEn.keyframes.length, 4);
+    assert.ok(payloadEn.events.length >= 10);
+    assert.equal(payloadEn.keyframes.length, 8);
     assert.equal(
-      payloadEn.keyframes[3].timestampMs - payloadEn.keyframes[0].timestampMs,
-      120 * 60_000
+      payloadEn.keyframes[payloadEn.keyframes.length - 1].timestampMs - payloadEn.keyframes[0].timestampMs,
+      18 * 60 * 60_000
     );
     assert.deepEqual(payloadEn.botAppearances, { 'demo-ops-lead': 'bot_world' });
 

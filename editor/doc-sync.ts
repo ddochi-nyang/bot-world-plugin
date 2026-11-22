@@ -13,6 +13,8 @@ import {
   isValidThemeId,
   isValidWeatherMode,
   sanitizeCustomDeskPositions,
+  sanitizeTeamZones,
+  teamZonesEqual,
   toPlainSafeRecord,
   validateBotWorldDocument,
 } from '../src/types.ts';
@@ -143,6 +145,16 @@ export function mergeBotWorldDocuments(
     }
   }
 
+  const baseZones = sanitizeTeamZones(base?.zones);
+  const outZones = sanitizeTeamZones(outside?.zones);
+  const mineZones = sanitizeTeamZones(mine?.zones);
+  const zones = !teamZonesEqual(mineZones, baseZones) ? mineZones : outZones;
+
+  const baseShowZones = typeof base?.showZones === 'boolean' ? base.showZones : true;
+  const mineShowZones = typeof mine?.showZones === 'boolean' ? mine.showZones : baseShowZones;
+  const outShowZones = typeof outside?.showZones === 'boolean' ? outside.showZones : baseShowZones;
+  const showZones = mineShowZones !== baseShowZones ? mineShowZones : outShowZones;
+
   return {
     version: 1,
     themeId,
@@ -152,6 +164,8 @@ export function mergeBotWorldDocuments(
     selectedBotId,
     botAppearances: toPlainSafeRecord(mergedAppearances),
     customDeskPositions: toPlainSafeRecord(mergedPositions),
+    zones,
+    showZones,
   };
 }
 
@@ -161,6 +175,7 @@ export function decodeBotWorldContent(content: { kind: 'text'; text: string } | 
       ...DEFAULT_BOTWORLD_DOCUMENT,
       botAppearances: {},
       customDeskPositions: {},
+      zones: [],
     };
   }
   return validateBotWorldDocument(content.text).data;
@@ -176,6 +191,8 @@ export function encodeBotWorldContent(data: BotWorldDocumentData): { kind: 'text
     selectedBotId: sanitizeSelectedBotId(data.selectedBotId),
     botAppearances: normalizeAppearances(data.botAppearances),
     customDeskPositions: sanitizeCustomDeskPositions(data.customDeskPositions),
+    zones: sanitizeTeamZones(data.zones),
+    showZones: typeof data.showZones === 'boolean' ? data.showZones : true,
   };
   return {
     kind: 'text',

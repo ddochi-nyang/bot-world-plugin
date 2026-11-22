@@ -696,6 +696,10 @@ export class MotionDirector {
     this.lastBotPairKey = null;
   }
 
+  recentBotPairCount(): number {
+    return this.recentBotPairs.size;
+  }
+
   hasActiveAnimations(): boolean {
     return (
       this.activeWalks.length > 0 ||
@@ -762,6 +766,13 @@ export class MotionDirector {
     const dt = Math.max(0, Math.min(0.25, dtSecs));
     if (dt <= 0) return;
     this.elapsedSecs += dt;
+    if (this.recentBotPairs.size > 0) {
+      for (const [pairKey, recordedAt] of this.recentBotPairs.entries()) {
+        if (this.elapsedSecs - recordedAt > 18) {
+          this.recentBotPairs.delete(pairKey);
+        }
+      }
+    }
     this.syncLayout(snapshot, theme, customDeskPositions);
 
     const bursts: Array<{ kind: BurstKind; pos: [number, number] }> = [];
@@ -1938,6 +1949,55 @@ export class ReplayController {
 
     if (nextCursor >= maxTs) {
       this.isPlaying = false;
+    }
+  }
+
+  advanceToTimestamp(
+    targetMs: number,
+    realDtSecs: number,
+    keyframes: readonly Keyframe[],
+    events: readonly WorldEventRecord[],
+    liveSnapshot: WorldSnapshot,
+    theme: ThemeConfig,
+    locale?: UiLocale,
+    customDeskPositions?: Readonly<Record<string, DeskCoordinate>>
+  ): void {
+    if (locale) {
+      this.motion.setLocale(locale);
+    }
+    const bounds = this.timeBounds(keyframes, events);
+    if (!bounds) {
+      this.isReplay = true;
+      this.cursorMs = liveSnapshot.capturedAt;
+      this.snapshot = liveSnapshot;
+      this.motion.syncLayout(this.snapshot, theme, customDeskPositions);
+      return;
+    }
+    const [minTs, maxTs] = bounds;
+    const clampedTarget = Math.max(minTs, Math.min(maxTs, targetMs));
+    if (!this.isReplay) {
+      this.seekTo(clampedTarget, keyframes, events, liveSnapshot, theme, locale, customDeskPositions);
+      return;
+    }
+
+    const prevCursor = Math.max(minTs, Math.min(maxTs, this.cursorMs));
+    const nextCursor = Math.max(prevCursor, clampedTarget);
+    this.cursorMs = nextCursor;
+    this.snapshot =
+      this.snapshotAt(keyframes, nextCursor) ?? { ...liveSnapshot, capturedAt: nextCursor };
+
+    const crossed = events
+      .filter((r) => r.timestampMs > prevCursor && r.timestampMs <= nextCursor)
+      .sort((a, b) => a.timestampMs - b.timestampMs)
+      .map((r) => r.event);
+    if (crossed.length > 0) {
+      this.motion.enqueueEvents(crossed, this.snapshot, theme, locale, customDeskPositions);
+    }
+    const safeDt = Math.max(0, Math.min(0.25, realDtSecs));
+    if (safeDt > 0) {
+      this.motion.step(safeDt, this.snapshot, theme, customDeskPositions);
+    } else {
+      this.motion.syncLayout(this.snapshot, theme, customDeskPositions);
     }
   }
 

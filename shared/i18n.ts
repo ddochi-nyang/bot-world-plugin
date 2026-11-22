@@ -6,6 +6,7 @@ import {
   type ThemeId,
   type UiLocale,
   type WeatherMode,
+  type ZoneColor,
   isValidLanguageSetting,
 } from '../src/types.ts';
 
@@ -347,6 +348,44 @@ export type UiDictionary = {
   followNoMatchNotice: string;
   shortcutCycleWeather: string;
   shortcutToggleSound: string;
+  photoButton: string;
+  photoButtonTitle: string;
+  photoSavedToast: string;
+  photoCardKpiBots: string;
+  photoCardKpiWorking: string;
+  photoCardKpiWorkers: string;
+  photoCardKpiEvents24h: string;
+  photoCardRedactedBadge: string;
+  timelapseButton: string;
+  timelapseButtonTitle: string;
+  reportSectionWeekly: string;
+  reportWeeklyColumns: {
+    date: string;
+    events: string;
+    tasksDone: string;
+    workers: string;
+    collaborations: string;
+  };
+  zonesButton: string;
+  zonesButtonTitle: string;
+  zonesModalTitle: string;
+  zonesModalSubtitle: string;
+  zonesModalPanelSubtitle: string;
+  zonesVisibleOn: string;
+  zonesVisibleOff: string;
+  zonesLoadPreset: string;
+  zonesClearAll: string;
+  zonesAddButton: string;
+  zonesLabelPlaceholder: string;
+  zonesColorAriaLabel: string;
+  zonesEmptyNote: string;
+  zonesLimitNote: (max: number) => string;
+  zonesDeleteTitle: string;
+  zonesClose: string;
+  zoneRedactedLabel: (index: number) => string;
+  zoneColorNames: Record<ZoneColor, string>;
+  shortcutTakePhotoCard: string;
+  shortcutToggleZones: string;
 };
 
 export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
@@ -606,6 +645,50 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     followNoMatchNotice: 'No bots match active filter',
     shortcutCycleWeather: 'Cycle weather effect',
     shortcutToggleSound: 'Cycle sound mode',
+    photoButton: 'Photo',
+    photoButtonTitle: 'Save PNG photo card snapshot [P]',
+    photoSavedToast: 'Photo card saved',
+    photoCardKpiBots: 'Bots',
+    photoCardKpiWorking: 'Working',
+    photoCardKpiWorkers: 'Workers',
+    photoCardKpiEvents24h: '24h Events',
+    photoCardRedactedBadge: '🛡 REDACTED',
+    timelapseButton: 'Timelapse',
+    timelapseButtonTitle: '10-second daily timelapse replay',
+    reportSectionWeekly: '7-Day Weekly Trend',
+    reportWeeklyColumns: {
+      date: 'Date',
+      events: 'Events',
+      tasksDone: 'Tasks Done',
+      workers: 'Workers',
+      collaborations: 'Collaborations',
+    },
+    zonesButton: 'Zones',
+    zonesButtonTitle: 'Manage office team zones [Z]',
+    zonesModalTitle: 'Team Zones',
+    zonesModalSubtitle: 'Saved in .botworld · Press Z to toggle floor overlay',
+    zonesModalPanelSubtitle: 'Session floor overlay · Press Z to toggle',
+    zonesVisibleOn: 'Show Zones: ON',
+    zonesVisibleOff: 'Show Zones: OFF',
+    zonesLoadPreset: 'Load Starter Pods (3)',
+    zonesClearAll: 'Clear All',
+    zonesAddButton: 'Add Zone',
+    zonesLabelPlaceholder: 'Zone name (e.g. Security Pod)',
+    zonesColorAriaLabel: 'Zone color',
+    zonesEmptyNote: 'No team zones yet. Load the 3-pod starter preset or add a custom zone.',
+    zonesLimitNote: (max) => `Maximum of ${max} zones reached.`,
+    zonesDeleteTitle: 'Delete zone',
+    zonesClose: 'Close',
+    zoneRedactedLabel: (index) => `Zone #${index}`,
+    zoneColorNames: {
+      cyan: 'Cyan',
+      amber: 'Amber',
+      violet: 'Violet',
+      emerald: 'Emerald',
+      rose: 'Rose',
+    },
+    shortcutTakePhotoCard: 'Save PNG photo card',
+    shortcutToggleZones: 'Toggle team zones overlay',
   },
   ko: {
     appTitlePanel: '봇 월드',
@@ -860,6 +943,50 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     followNoMatchNotice: '현재 필터와 일치하는 봇이 없습니다',
     shortcutCycleWeather: '날씨 효과 전환',
     shortcutToggleSound: '사운드 모드 전환',
+    photoButton: '포토 카드',
+    photoButtonTitle: 'PNG 포토 카드 저장 [P]',
+    photoSavedToast: '포토 카드 저장됨',
+    photoCardKpiBots: '봇',
+    photoCardKpiWorking: '작업 중',
+    photoCardKpiWorkers: '워커',
+    photoCardKpiEvents24h: '24h 이벤트',
+    photoCardRedactedBadge: '🛡 가림 모드',
+    timelapseButton: '타임랩스',
+    timelapseButtonTitle: '10초 일간 타임랩스 재생',
+    reportSectionWeekly: '7일 주간 활동 추이',
+    reportWeeklyColumns: {
+      date: '날짜',
+      events: '이벤트',
+      tasksDone: '완료 작업',
+      workers: '워커',
+      collaborations: '협업',
+    },
+    zonesButton: '구역',
+    zonesButtonTitle: '사무실 팀 구역 관리 [Z]',
+    zonesModalTitle: '팀 구역 관리',
+    zonesModalSubtitle: '.botworld에 저장됨 · Z 키로 구역 오버레이 전환',
+    zonesModalPanelSubtitle: '세션 내 바닥 구역 · Z 키로 전환',
+    zonesVisibleOn: '구역 표시: ON',
+    zonesVisibleOff: '구역 표시: OFF',
+    zonesLoadPreset: '기본 3구역 불러오기',
+    zonesClearAll: '전체 삭제',
+    zonesAddButton: '구역 추가',
+    zonesLabelPlaceholder: '구역 이름 (예: 보안 · 리뷰)',
+    zonesColorAriaLabel: '구역 색상',
+    zonesEmptyNote: '등록된 구역이 없습니다. 기본 3구역 프리셋을 불러오거나 새 구역을 추가하세요.',
+    zonesLimitNote: (max) => `최대 ${max}개 구역까지 추가할 수 있습니다.`,
+    zonesDeleteTitle: '구역 삭제',
+    zonesClose: '닫기',
+    zoneRedactedLabel: (index) => `구역 #${index}`,
+    zoneColorNames: {
+      cyan: '시안',
+      amber: '앰버',
+      violet: '바이올렛',
+      emerald: '에메랄드',
+      rose: '로즈',
+    },
+    shortcutTakePhotoCard: 'PNG 포토 카드 저장',
+    shortcutToggleZones: '팀 구역 오버레이 전환',
   },
 };
 

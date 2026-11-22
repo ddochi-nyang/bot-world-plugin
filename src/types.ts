@@ -243,6 +243,124 @@ export function isPoolCharacterId(id: unknown): id is CharacterId {
 
 export const MAX_BOTWORLD_DOC_BYTES = 256 * 1024;
 
+export type ZoneColor = 'cyan' | 'amber' | 'violet' | 'emerald' | 'rose';
+
+export const VALID_ZONE_COLORS: readonly ZoneColor[] = [
+  'cyan',
+  'amber',
+  'violet',
+  'emerald',
+  'rose',
+] as const;
+
+export function isValidZoneColor(value: unknown): value is ZoneColor {
+  return typeof value === 'string' && (VALID_ZONE_COLORS as readonly string[]).includes(value);
+}
+
+export type TeamZone = {
+  id: string;
+  label: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  color: ZoneColor;
+};
+
+export const MAX_TEAM_ZONES = 12;
+export const MAX_ZONE_LABEL_LENGTH = 28;
+export const ZONE_MIN_XY = 0.02;
+export const ZONE_MAX_XY = 0.92;
+export const ZONE_MIN_SIZE = 0.08;
+export const ZONE_MAX_SIZE = 0.9;
+
+function round3(n: number): number {
+  return Math.round(n * 1000) / 1000;
+}
+
+export function sanitizeZoneLabel(raw: unknown, fallback = 'Zone'): string {
+  if (typeof raw !== 'string') return fallback;
+  const collapsed = raw
+    .replace(/[\x00-\x1f\x7f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (collapsed.length === 0) return fallback;
+  const chars = Array.from(collapsed);
+  if (chars.length <= MAX_ZONE_LABEL_LENGTH) return collapsed;
+  return chars.slice(0, MAX_ZONE_LABEL_LENGTH).join('').trim() || fallback;
+}
+
+export function sanitizeTeamZones(raw: unknown): TeamZone[] {
+  if (!Array.isArray(raw)) return [];
+  const out: TeamZone[] = [];
+  const seenIds = new Set<string>();
+  for (let i = 0; i < raw.length && out.length < MAX_TEAM_ZONES; i++) {
+    const item = raw[i];
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const rec = item as Record<string, unknown>;
+    if (
+      typeof rec.x !== 'number' ||
+      !Number.isFinite(rec.x) ||
+      typeof rec.y !== 'number' ||
+      !Number.isFinite(rec.y) ||
+      typeof rec.w !== 'number' ||
+      !Number.isFinite(rec.w) ||
+      typeof rec.h !== 'number' ||
+      !Number.isFinite(rec.h)
+    ) {
+      continue;
+    }
+
+    const x = round3(Math.max(ZONE_MIN_XY, Math.min(ZONE_MAX_XY, rec.x)));
+    const y = round3(Math.max(ZONE_MIN_XY, Math.min(ZONE_MAX_XY, rec.y)));
+    const rawW = round3(Math.max(ZONE_MIN_SIZE, Math.min(ZONE_MAX_SIZE, rec.w)));
+    const rawH = round3(Math.max(ZONE_MIN_SIZE, Math.min(ZONE_MAX_SIZE, rec.h)));
+    const w = round3(Math.min(rawW, Math.max(ZONE_MIN_SIZE, 1 - x)));
+    const h = round3(Math.min(rawH, Math.max(ZONE_MIN_SIZE, 1 - y)));
+
+    let id =
+      typeof rec.id === 'string' &&
+      isSafeKey(rec.id) &&
+      rec.id.length <= 64 &&
+      !CONTROL_CHAR_RE.test(rec.id)
+        ? rec.id.trim()
+        : '';
+    if (!id || seenIds.has(id)) {
+      let suffix = out.length + 1;
+      while (seenIds.has(`zone-${suffix}`)) suffix += 1;
+      id = `zone-${suffix}`;
+    }
+    seenIds.add(id);
+
+    const label = sanitizeZoneLabel(rec.label, `Zone ${out.length + 1}`);
+    const color: ZoneColor = isValidZoneColor(rec.color) ? rec.color : 'cyan';
+    out.push({ id, label, x, y, w, h, color });
+  }
+  return out;
+}
+
+export function teamZonesEqual(a: readonly TeamZone[] | undefined, b: readonly TeamZone[] | undefined): boolean {
+  const listA = a ?? [];
+  const listB = b ?? [];
+  if (listA.length !== listB.length) return false;
+  for (let i = 0; i < listA.length; i++) {
+    const za = listA[i];
+    const zb = listB[i];
+    if (
+      za.id !== zb.id ||
+      za.label !== zb.label ||
+      za.x !== zb.x ||
+      za.y !== zb.y ||
+      za.w !== zb.w ||
+      za.h !== zb.h ||
+      za.color !== zb.color
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export type BotWorldDocumentData = {
   version: 1;
   themeId: ThemeId;
@@ -252,6 +370,8 @@ export type BotWorldDocumentData = {
   selectedBotId: string | null;
   botAppearances: Record<string, CharacterId>;
   customDeskPositions?: Record<string, DeskCoordinate>;
+  zones?: TeamZone[];
+  showZones?: boolean;
 };
 
 export const DEFAULT_BOTWORLD_DOCUMENT: BotWorldDocumentData = {
@@ -263,6 +383,8 @@ export const DEFAULT_BOTWORLD_DOCUMENT: BotWorldDocumentData = {
   selectedBotId: null,
   botAppearances: {},
   customDeskPositions: {},
+  zones: [],
+  showZones: true,
 };
 
 export function validateBotWorldDocument(
@@ -276,6 +398,8 @@ export function validateBotWorldDocument(
     ? fallback.weatherMode
     : 'auto';
   const fallbackPositions = sanitizeCustomDeskPositions(fallback.customDeskPositions);
+  const fallbackZones = sanitizeTeamZones(fallback.zones);
+  const fallbackShowZones = typeof fallback.showZones === 'boolean' ? fallback.showZones : true;
   if (typeof rawText !== 'string' || rawText.trim().length === 0) {
     return {
       data: {
@@ -284,6 +408,8 @@ export function validateBotWorldDocument(
         weatherMode: fallbackWeather,
         botAppearances: { ...fallback.botAppearances },
         customDeskPositions: fallbackPositions,
+        zones: fallbackZones,
+        showZones: fallbackShowZones,
       },
       valid: false,
     };
@@ -296,6 +422,8 @@ export function validateBotWorldDocument(
         weatherMode: fallbackWeather,
         botAppearances: { ...fallback.botAppearances },
         customDeskPositions: fallbackPositions,
+        zones: fallbackZones,
+        showZones: fallbackShowZones,
       },
       valid: false,
     };
@@ -310,6 +438,8 @@ export function validateBotWorldDocument(
           weatherMode: fallbackWeather,
           botAppearances: { ...fallback.botAppearances },
           customDeskPositions: fallbackPositions,
+          zones: fallbackZones,
+          showZones: fallbackShowZones,
         },
         valid: false,
       };
@@ -347,6 +477,8 @@ export function validateBotWorldDocument(
     }
 
     const customDeskPositions = sanitizeCustomDeskPositions(rec.customDeskPositions);
+    const zones = rec.zones !== undefined ? sanitizeTeamZones(rec.zones) : fallbackZones;
+    const showZones = typeof rec.showZones === 'boolean' ? rec.showZones : fallbackShowZones;
 
     return {
       data: {
@@ -358,6 +490,8 @@ export function validateBotWorldDocument(
         selectedBotId,
         botAppearances: toPlainSafeRecord(appearancesMap),
         customDeskPositions,
+        zones,
+        showZones,
       },
       valid: true,
     };
@@ -369,6 +503,8 @@ export function validateBotWorldDocument(
         weatherMode: fallbackWeather,
         botAppearances: { ...fallback.botAppearances },
         customDeskPositions: fallbackPositions,
+        zones: fallbackZones,
+        showZones: fallbackShowZones,
       },
       valid: false,
     };
@@ -691,6 +827,14 @@ export type Keyframe = {
   snapshot: WorldSnapshot;
 };
 
+export type DailyTrendPoint = {
+  date: string;
+  events: number;
+  tasksDone: number;
+  workerRuns: number;
+  collaborations: number;
+};
+
 export type BotWorldStatePayload = {
   snapshot: WorldSnapshot;
   events: WorldEventRecord[];
@@ -704,4 +848,5 @@ export type BotWorldStatePayload = {
   pollIntervalSec: number;
   locale: UiLocale;
   languageSetting: LanguageSetting;
+  weeklyTrend?: DailyTrendPoint[];
 };

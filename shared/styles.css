@@ -1112,6 +1112,105 @@ body {
   word-break: break-word;
 }
 
+/* 7-Day Weekly Trend Chart */
+.bw-report-weekly-chart {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+  padding: 8px 8px 6px;
+  border-radius: 7px;
+  background: var(--bw-card);
+  border: 1px solid var(--bw-border);
+}
+
+.bw-report-weekly-val {
+  font-size: 9.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--bw-fg);
+}
+
+.bw-report-col-bar-weekly {
+  background: linear-gradient(180deg, #38bdf8, #0284c7);
+}
+
+/* Non-blocking Stage Toast */
+.bw-stage-toast {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 12;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(15, 23, 42, 0.92);
+  color: #e0f2fe;
+  border: 1px solid rgba(56, 189, 248, 0.55);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+
+/* Team Zones Manager Modal */
+.bw-zones-dialog {
+  width: min(440px, 100%);
+}
+
+.bw-zones-add-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bw-zone-input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+.bw-zones-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.bw-zone-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  background: var(--bw-card);
+  border: 1px solid var(--bw-border);
+}
+
+.bw-zone-row-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--bw-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bw-zone-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.bw-zone-dot-cyan { background: #38bdf8; }
+.bw-zone-dot-amber { background: #fbbf24; }
+.bw-zone-dot-violet { background: #a78bfa; }
+.bw-zone-dot-emerald { background: #34d399; }
+.bw-zone-dot-rose { background: #fb7185; }
+
 [hidden] {
   display: none !important;
 }

@@ -8,11 +8,13 @@ import {
   type CharacterId,
   type LanguageSetting,
   type SoundMode,
+  type TeamZone,
   type ThemeId,
   type UiLocale,
   VALID_THEME_IDS,
   type WeatherMode,
   type WorldSnapshot,
+  type ZoneColor,
   createEmptySnapshot,
   isSafeKey,
   isValidThemeId,
@@ -46,6 +48,7 @@ import {
   formatReportMarkdown,
   renderOfficeReportModal,
 } from '../shared/office-report.ts';
+import { capturePhotoCard } from '../shared/photo-card.ts';
 import {
   atmosphereIcon,
   mapKeyToShortcutAction,
@@ -60,7 +63,14 @@ import {
 } from '../shared/shortcuts.ts';
 import { SoundscapeEngine } from '../shared/soundscape.ts';
 import { StageRenderer, resolveAtmospherePhase } from '../shared/stage-renderer.ts';
+import { TimelapseController } from '../shared/timelapse.ts';
 import { resolveWeatherKind } from '../shared/weather.ts';
+import {
+  cloneStarterTeamZones,
+  createNextZonePlacement,
+  renderZonesModal,
+  zonesModalRenderKey,
+} from '../shared/zones.ts';
 
 type PanelTab = 'detail' | 'timeline';
 
@@ -79,11 +89,14 @@ const state: {
   activeTab: PanelTab;
   shortcutsOpen: boolean;
   reportOpen: boolean;
+  zonesOpen: boolean;
   reportCopied: boolean;
   selectionCleared: boolean;
   filterPreset: StatusFilterPreset;
   searchQuery: string;
   showCollabNetwork: boolean;
+  zones: TeamZone[];
+  showZones: boolean;
 } = {
   payload: {
     snapshot: createEmptySnapshot(),
@@ -98,21 +111,26 @@ const state: {
     pollIntervalSec: 5,
     locale: initialLocale,
     languageSetting: 'auto',
+    weeklyTrend: [],
   },
   selectedBotId: null,
   hoveredBotId: null,
   activeTab: 'detail',
   shortcutsOpen: false,
   reportOpen: false,
+  zonesOpen: false,
   reportCopied: false,
   selectionCleared: false,
   filterPreset: 'all',
   searchQuery: '',
   showCollabNetwork: false,
+  zones: [],
+  showZones: true,
 };
 
 const liveMotion = new MotionDirector();
 const replay = new ReplayController();
+const timelapse = new TimelapseController();
 const soundscape = new SoundscapeEngine();
 const liveMilestones = new MilestoneTracker();
 const demoMilestones = new MilestoneTracker();
@@ -121,6 +139,9 @@ let livePayload: BotWorldStatePayload = state.payload;
 let reportCopiedTimer: number | null = null;
 let followNoticeTimer: number | null = null;
 let followNoticeActive = false;
+let stageToastTimer: number | null = null;
+let timelapseTimerId: number | null = null;
+let lastTimelapseTickMs = 0;
 
 let demoSession: DemoOfficeSession | null = null;
 let demoTimerId: number | null = null;
@@ -131,6 +152,8 @@ let demoSoundMode: SoundMode = 'off';
 let demoRedactMode = false;
 let demoLanguageSetting: LanguageSetting = 'auto';
 let demoAppearances: Record<string, CharacterId> = {};
+let demoZones: TeamZone[] = [];
+let demoShowZones = true;
 
 function isDemoMode(): boolean {
   return demoSession !== null;
@@ -275,6 +298,30 @@ const reportBtn = el(
   initialStrings.reportButton
 );
 
+const zonesBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-btn',
+    title: initialStrings.zonesButtonTitle,
+    ariaLabel: initialStrings.zonesButtonTitle,
+    onClick: () => toggleZonesModal(),
+  },
+  '🗺'
+);
+
+const photoBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-btn',
+    title: initialStrings.photoButtonTitle,
+    ariaLabel: initialStrings.photoButtonTitle,
+    onClick: () => void triggerPhotoCardSnapshot().catch(() => {}),
+  },
+  '📸'
+);
+
 const helpBtn = el(
   'button',
   {
@@ -286,7 +333,9 @@ const helpBtn = el(
       state.shortcutsOpen = !state.shortcutsOpen;
       if (state.shortcutsOpen) {
         state.reportOpen = false;
+        state.zonesOpen = false;
         renderReportModal();
+        renderZonesManager();
       }
       renderShortcutsHelp();
       syncChromeLocale(currentLocale());
@@ -320,6 +369,8 @@ const toolbar = el(
     soundBtn,
     focusBtn,
     collabBtn,
+    zonesBtn,
+    photoBtn,
     redactBtn,
     langBtn,
     demoBtn,
@@ -334,6 +385,7 @@ const boardHint = el('div', { className: 'bw-hint-banner' }, boardHintText);
 
 const canvasEl = el('canvas', { className: 'bw-stage-canvas' }) as HTMLCanvasElement;
 const stageOverlayNote = el('div', { className: 'bw-stage-overlay-note' }, initialStrings.live);
+const stageToast = el('div', { className: 'bw-stage-toast bw-hidden' });
 const zoomOutBtn = el(
   'button',
   {
@@ -390,6 +442,7 @@ const stageWrap = el(
   { className: 'bw-stage-wrap-panel' },
   canvasEl,
   stageOverlayNote,
+  stageToast,
   cameraHud
 );
 
@@ -473,19 +526,32 @@ const tabTimelineBtn = el(
   },
   initialStrings.tabTimeline
 );
+const timelapseBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-btn',
+    title: initialStrings.timelapseButtonTitle,
+    ariaLabel: initialStrings.timelapseButtonTitle,
+    onClick: () => toggleTimelapse(),
+  },
+  `⏱ ${initialStrings.timelapseButton}`
+);
 const backToLiveBtn = el(
   'button',
   {
     type: 'button',
     className: 'bw-btn bw-btn-warn bw-hidden',
     onClick: () => {
+      timelapse.stop();
+      syncTimelapseLoop();
       replay.returnToLive();
       renderUi();
     },
   },
   initialStrings.backToLive
 );
-const subTabs = el('div', { className: 'bw-subtabs' }, tabDetailBtn, tabTimelineBtn, backToLiveBtn);
+const subTabs = el('div', { className: 'bw-subtabs' }, tabDetailBtn, tabTimelineBtn, timelapseBtn, backToLiveBtn);
 
 const lowerContent = el('div', { className: 'bw-detail-root' });
 const mainArea = el(
@@ -513,12 +579,21 @@ const reportBackdrop = el('div', {
     syncChromeLocale(currentLocale());
   },
 });
+const zonesBackdrop = el('div', {
+  className: 'bw-modal-backdrop bw-hidden',
+  onClick: () => {
+    state.zonesOpen = false;
+    renderZonesManager();
+    syncChromeLocale(currentLocale());
+  },
+});
 
 root.appendChild(toolbar);
 root.appendChild(boardHint);
 root.appendChild(mainArea);
 root.appendChild(shortcutsBackdrop);
 root.appendChild(reportBackdrop);
+root.appendChild(zonesBackdrop);
 
 const renderer = new StageRenderer(canvasEl, {
   onSelectBot: (botId) => {
@@ -554,6 +629,74 @@ function activeWeatherMode(): WeatherMode {
 function activeSoundMode(): SoundMode {
   if (isDemoMode()) return demoSoundMode;
   return state.payload.soundMode ?? 'off';
+}
+
+function activeZones(): TeamZone[] {
+  if (isDemoMode()) return demoZones;
+  return state.zones;
+}
+
+function activeShowZones(): boolean {
+  if (isDemoMode()) return demoShowZones;
+  return state.showZones;
+}
+
+function setZonesState(nextZones: TeamZone[], nextShow?: boolean): void {
+  if (isDemoMode()) {
+    demoZones = nextZones;
+    if (nextShow !== undefined) demoShowZones = nextShow;
+  } else {
+    state.zones = nextZones;
+    if (nextShow !== undefined) state.showZones = nextShow;
+  }
+  renderUi();
+}
+
+function toggleZonesVisibility(): void {
+  const nextShow = !activeShowZones();
+  if (isDemoMode()) {
+    demoShowZones = nextShow;
+  } else {
+    state.showZones = nextShow;
+  }
+  renderUi();
+}
+
+function showStageToast(message: string): void {
+  stageToast.textContent = message;
+  stageToast.classList.remove('bw-hidden');
+  if (stageToastTimer !== null) {
+    clearTimeout(stageToastTimer);
+  }
+  stageToastTimer = window.setTimeout(() => {
+    stageToast.classList.add('bw-hidden');
+    stageToastTimer = null;
+  }, 2200);
+}
+
+async function triggerPhotoCardSnapshot(): Promise<void> {
+  renderer.renderNow();
+  const locale = currentLocale();
+  const s = tStrings(locale);
+  const snap = currentDisplayedSnapshot();
+  const timestampMs = replay.isReplay
+    ? replay.cursorMs
+    : snap.capturedAt > 0
+      ? snap.capturedAt
+      : Date.now();
+  const res = await capturePhotoCard(canvasEl, {
+    snapshot: snap,
+    events: state.payload.events,
+    themeId: state.payload.activeTheme,
+    atmosphereMode: activeAtmosphereMode(),
+    weatherMode: activeWeatherMode(),
+    redactMode: state.payload.redactMode,
+    locale,
+    timestampMs,
+  });
+  if (res.ok) {
+    showStageToast(s.photoSavedToast);
+  }
 }
 
 function renderShortcutsHelp(): void {
@@ -623,6 +766,7 @@ function renderReportModal(): void {
   const report = buildOfficeReport(state.payload.events, state.payload.snapshot, {
     redactMode,
     locale,
+    weeklyTrend: state.payload.weeklyTrend,
   });
   renderOfficeReportModal(reportBackdrop, {
     open: state.reportOpen,
@@ -646,11 +790,146 @@ function toggleReportModal(): void {
   state.reportOpen = !state.reportOpen;
   if (state.reportOpen) {
     state.shortcutsOpen = false;
+    state.zonesOpen = false;
     state.reportCopied = false;
     renderShortcutsHelp();
+    renderZonesManager();
   }
   renderReportModal();
   syncChromeLocale(currentLocale());
+}
+
+let lastZonesModalKey: string | null = null;
+
+function renderZonesManager(): void {
+  const open = state.zonesOpen;
+  const zones = activeZones();
+  const showZones = activeShowZones();
+  const redactMode = state.payload.redactMode;
+  const locale = currentLocale();
+  const demoMode = isDemoMode();
+  const nextKey = zonesModalRenderKey({
+    open,
+    zones,
+    showZones,
+    redactMode,
+    locale,
+    demoMode,
+    persisted: false,
+  });
+  if (nextKey === lastZonesModalKey) {
+    return;
+  }
+  lastZonesModalKey = nextKey;
+  renderZonesModal(zonesBackdrop, {
+    open,
+    zones,
+    showZones,
+    redactMode,
+    locale,
+    persisted: false,
+    onToggleShowZones: () => toggleZonesVisibility(),
+    onLoadStarterPreset: () => setZonesState(cloneStarterTeamZones(), true),
+    onAddZone: (label: string, color: ZoneColor) => {
+      const current = activeZones();
+      const next = createNextZonePlacement(current, label, color);
+      if (next) {
+        setZonesState([...current, next], true);
+      }
+    },
+    onDeleteZone: (zoneId: string) => {
+      setZonesState(activeZones().filter((z) => z.id !== zoneId));
+    },
+    onClearZones: () => setZonesState([]),
+    onClose: () => {
+      state.zonesOpen = false;
+      renderZonesManager();
+      syncChromeLocale(currentLocale());
+    },
+  });
+}
+
+function toggleZonesModal(): void {
+  state.zonesOpen = !state.zonesOpen;
+  if (state.zonesOpen) {
+    state.shortcutsOpen = false;
+    state.reportOpen = false;
+    renderShortcutsHelp();
+    renderReportModal();
+  }
+  renderZonesManager();
+  syncChromeLocale(currentLocale());
+}
+
+function syncTimelapseLoop(): void {
+  if (timelapse.active) {
+    if (timelapseTimerId === null) {
+      lastTimelapseTickMs = performance.now();
+      const tick = (nowMs: number) => {
+        if (!timelapse.active) {
+          timelapseTimerId = null;
+          return;
+        }
+        const dtMs = Math.max(0, Math.min(250, nowMs - lastTimelapseTickMs));
+        const dtSecs = dtMs / 1000;
+        lastTimelapseTickMs = nowMs;
+        const locale = currentLocale();
+        const theme = getThemeConfig(state.payload.activeTheme, locale);
+        const stepRes = timelapse.advance(dtMs);
+        replay.advanceToTimestamp(
+          stepRes.cursorMs,
+          dtSecs,
+          state.payload.keyframes,
+          state.payload.events,
+          state.payload.snapshot,
+          theme,
+          locale
+        );
+        const displayTs = replay.isReplay
+          ? replay.cursorMs
+          : state.payload.snapshot.capturedAt || Date.now();
+        const phase = resolveAtmospherePhase(activeAtmosphereMode(), displayTs);
+        const wKind = resolveWeatherKind(activeWeatherMode(), phase, state.payload.activeTheme);
+        renderer.weather.step(dtSecs, wKind, theme.designSize);
+        renderUi();
+        if (timelapse.active) {
+          timelapseTimerId = requestAnimationFrame(tick);
+        } else {
+          timelapseTimerId = null;
+        }
+      };
+      timelapseTimerId = requestAnimationFrame(tick);
+    }
+  } else if (timelapseTimerId !== null) {
+    cancelAnimationFrame(timelapseTimerId);
+    timelapseTimerId = null;
+  }
+}
+
+function toggleTimelapse(): void {
+  if (timelapse.active) {
+    timelapse.stop();
+    syncTimelapseLoop();
+    renderUi();
+    return;
+  }
+  const locale = currentLocale();
+  const theme = getThemeConfig(state.payload.activeTheme, locale);
+  const bounds = replay.timeBounds(state.payload.keyframes, state.payload.events);
+  const fallbackMs =
+    state.payload.snapshot.capturedAt > 0 ? state.payload.snapshot.capturedAt : Date.now();
+  const start = timelapse.start(bounds, fallbackMs);
+  replay.isPlaying = false;
+  replay.seekTo(
+    start.cursorMs,
+    state.payload.keyframes,
+    state.payload.events,
+    state.payload.snapshot,
+    theme,
+    locale
+  );
+  syncTimelapseLoop();
+  renderUi();
 }
 
 function currentDisplayedSnapshot(): WorldSnapshot {
@@ -798,6 +1077,20 @@ function syncChromeLocale(locale: UiLocale): void {
   collabBtn.title = s.collabButtonTitle;
   collabBtn.setAttribute('aria-label', s.collabButtonTitle);
   collabBtn.className = state.showCollabNetwork ? 'bw-btn bw-btn-active' : 'bw-btn';
+  zonesBtn.title = s.zonesButtonTitle;
+  zonesBtn.setAttribute('aria-label', s.zonesButtonTitle);
+  zonesBtn.className =
+    state.zonesOpen || (activeShowZones() && activeZones().length > 0)
+      ? 'bw-btn bw-btn-active'
+      : 'bw-btn';
+  photoBtn.title = s.photoButtonTitle;
+  photoBtn.setAttribute('aria-label', s.photoButtonTitle);
+  timelapseBtn.textContent = timelapse.active
+    ? `⏱ ${timelapse.formatProgress()}`
+    : `⏱ ${s.timelapseButton}`;
+  timelapseBtn.title = s.timelapseButtonTitle;
+  timelapseBtn.setAttribute('aria-label', s.timelapseButtonTitle);
+  timelapseBtn.className = timelapse.active ? 'bw-btn bw-btn-active' : 'bw-btn';
   redactBtn.title = s.redactToggleTitle;
   langBtn.textContent = s.langToggleText;
   langBtn.title = `${s.langToggleTitle} [L]`;
@@ -875,7 +1168,11 @@ function enterDemoMode(): void {
   demoRedactMode = state.payload.redactMode;
   demoLanguageSetting = state.payload.languageSetting;
   demoAppearances = {};
+  demoZones = state.zones.map((z) => ({ ...z }));
+  demoShowZones = state.showZones;
   demoSession = createDemoOfficeSession();
+  timelapse.stop();
+  syncTimelapseLoop();
   replay.returnToLive();
   liveMotion.clearTransients();
   const initialDemo = buildDemoPayload();
@@ -903,10 +1200,15 @@ function exitDemoMode(): void {
   }
   state.selectionCleared = false;
   demoSession = null;
+  demoZones = [];
+  demoShowZones = true;
   demoMilestones.reset();
+  timelapse.stop();
+  syncTimelapseLoop();
   replay.returnToLive();
   liveMotion.clearTransients();
   state.payload = livePayload;
+  soundscape.setMode(livePayload.soundMode ?? 'off', { fromUserGesture: false });
   liveMilestones.seedBaseline(
     livePayload.events,
     livePayload.snapshot.capturedAt || Date.now()
@@ -1019,6 +1321,9 @@ function renderUi(): void {
     showCollabNetwork: state.showCollabNetwork,
     collabEdges,
     mvpBotId: badgeSummary.mvpBotId,
+    zones: activeZones(),
+    showZones: activeShowZones(),
+    timelapseActive: timelapse.active,
   });
 
   botStrip.hidden = botCount === 0;
@@ -1061,6 +1366,8 @@ function renderUi(): void {
       limit: 60,
       locale,
       onJumpToTime: (ts) => {
+        timelapse.stop();
+        syncTimelapseLoop();
         const curLocale = currentLocale();
         const theme = getThemeConfig(state.payload.activeTheme, curLocale);
         replay.seekTo(
@@ -1078,6 +1385,7 @@ function renderUi(): void {
   }
   renderShortcutsHelp();
   renderReportModal();
+  renderZonesManager();
 }
 
 function applyIncomingPayload(nextPayload: BotWorldStatePayload): void {
@@ -1313,7 +1621,7 @@ const handleGestureUnlock = (): void => {
 
 const handleKeyDown = (ev: KeyboardEvent): void => {
   handleGestureUnlock();
-  const modalOpen = state.shortcutsOpen || state.reportOpen;
+  const modalOpen = state.shortcutsOpen || state.reportOpen || state.zonesOpen;
   if (shouldIgnoreShortcutEvent(ev, { modalOpen })) return;
   const action = mapKeyToShortcutAction(ev.key, { isEditor: false, modalOpen });
   if (!action) return;
@@ -1344,6 +1652,12 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
     case 'toggleReport':
       toggleReportModal();
       break;
+    case 'takePhotoCard':
+      void triggerPhotoCardSnapshot().catch(() => {});
+      break;
+    case 'toggleZones':
+      toggleZonesVisibility();
+      break;
     case 'focusUrgent':
       cycleFocusSpotlight();
       break;
@@ -1366,7 +1680,9 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
       state.shortcutsOpen = !state.shortcutsOpen;
       if (state.shortcutsOpen) {
         state.reportOpen = false;
+        state.zonesOpen = false;
         renderReportModal();
+        renderZonesManager();
       }
       renderShortcutsHelp();
       syncChromeLocale(currentLocale());
@@ -1377,6 +1693,10 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
         searchInput.value = '';
         searchInput.blur();
         renderUi();
+      } else if (state.zonesOpen) {
+        state.zonesOpen = false;
+        renderZonesManager();
+        syncChromeLocale(currentLocale());
       } else if (state.reportOpen) {
         state.reportOpen = false;
         renderReportModal();
@@ -1385,6 +1705,10 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
         state.shortcutsOpen = false;
         renderShortcutsHelp();
         syncChromeLocale(currentLocale());
+      } else if (timelapse.active) {
+        timelapse.stop();
+        syncTimelapseLoop();
+        renderUi();
       } else if (renderer.camera.followBotId !== null) {
         renderer.camera.releaseFollow();
         updateCameraHud(currentLocale());
@@ -1422,6 +1746,15 @@ function cleanup(): void {
     clearTimeout(followNoticeTimer);
     followNoticeTimer = null;
   }
+  if (stageToastTimer !== null) {
+    clearTimeout(stageToastTimer);
+    stageToastTimer = null;
+  }
+  if (timelapseTimerId !== null) {
+    cancelAnimationFrame(timelapseTimerId);
+    timelapseTimerId = null;
+  }
+  timelapse.stop();
   window.removeEventListener('keydown', handleKeyDown);
   window.removeEventListener('pointerdown', handleGestureUnlock);
   soundscape.dispose();

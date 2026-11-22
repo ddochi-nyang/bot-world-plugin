@@ -12,6 +12,7 @@ import {
   type BotState,
   type BotWorldStatePayload,
   type CharacterId,
+  type DailyTrendPoint,
   type InboxMessage,
   type Keyframe,
   type LanguageSetting,
@@ -27,6 +28,11 @@ import {
   createEmptySnapshot,
   isSafeKey,
 } from '../src/types.ts';
+import {
+  formatLocalDateKey,
+  getLastSevenDaysTrend,
+  mergeEventsIntoWeeklyTrend,
+} from '../src/weekly-trend.ts';
 import { tStrings } from './i18n.ts';
 
 const MAX_DEMO_EVENTS = 120;
@@ -673,9 +679,53 @@ function buildInitialDemoHistory(
   currentSnap: WorldSnapshot,
   nowMs: number
 ): { events: WorldEventRecord[]; keyframes: Keyframe[] } {
+  const HOUR_MS = 60 * 60_000;
+  // Span 18 hours so Timelapse visibly sweeps across Day -> Sunset -> Night
+  const tMinus18h = nowMs - 18 * HOUR_MS;
+  const tMinus14h = nowMs - 14 * HOUR_MS;
+  const tMinus10h = nowMs - 10 * HOUR_MS;
+  const tMinus6h = nowMs - 6 * HOUR_MS;
   const tMinus120m = nowMs - 120 * 60_000;
   const tMinus80m = nowMs - 80 * 60_000;
   const tMinus40m = nowMs - 40 * 60_000;
+
+  const snapStart = clonePlain(currentSnap);
+  snapStart.capturedAt = tMinus18h;
+  snapStart.bots['demo-security'].status = { kind: 'Idle' };
+  snapStart.bots['demo-security'].needsYouCount = 0;
+  snapStart.bots['demo-security'].currentTaskTitle = null;
+  snapStart.bots['demo-cloud-ops'].status = { kind: 'Idle' };
+  snapStart.bots['demo-cloud-ops'].currentTaskTitle = null;
+  snapStart.bots['demo-cost-guard'].status = { kind: 'Working', tool: 'search_web' };
+  snapStart.bots['demo-cost-guard'].currentTaskTitle = 'Daily cloud spend variance check';
+  snapStart.bots['demo-cost-guard'].currentTool = 'search_web';
+  snapStart.items['demo-item-14'].status = 'planned';
+
+  const snapMidMorning = clonePlain(currentSnap);
+  snapMidMorning.capturedAt = tMinus14h;
+  snapMidMorning.bots['demo-ops-lead'].status = { kind: 'Working', tool: 'read_file' };
+  snapMidMorning.bots['demo-security'].status = { kind: 'Working', tool: 'read_file' };
+  snapMidMorning.bots['demo-security'].needsYouCount = 0;
+  snapMidMorning.bots['demo-security'].currentTaskTitle = 'Audit staging OAuth token TTL';
+  snapMidMorning.bots['demo-doc-review'].status = { kind: 'Working', tool: 'write_file' };
+  snapMidMorning.bots['demo-doc-review'].currentTaskTitle = 'Draft release notes summary';
+  snapMidMorning.items['demo-item-14'].status = 'in_progress';
+
+  const snapAfternoon = clonePlain(currentSnap);
+  snapAfternoon.capturedAt = tMinus10h;
+  snapAfternoon.bots['demo-infra-ops'].status = { kind: 'Working', tool: 'run_command' };
+  snapAfternoon.bots['demo-cloud-ops'].status = { kind: 'Working', tool: 'run_command' };
+  snapAfternoon.bots['demo-cloud-ops'].currentTaskTitle = 'Verify canary latency SLOs';
+  snapAfternoon.bots['demo-cost-guard'].status = { kind: 'Idle' };
+  snapAfternoon.bots['demo-cost-guard'].currentTaskTitle = null;
+
+  const snapEvening = clonePlain(currentSnap);
+  snapEvening.capturedAt = tMinus6h;
+  snapEvening.bots['demo-dev-tools'].status = { kind: 'Working', tool: 'edit_file' };
+  snapEvening.bots['demo-security'].status = { kind: 'Working', tool: 'edit_file' };
+  snapEvening.bots['demo-security'].needsYouCount = 0;
+  snapEvening.bots['demo-doc-review'].status = { kind: 'Idle' };
+  snapEvening.bots['demo-doc-review'].currentTaskTitle = null;
 
   const snap1 = clonePlain(currentSnap);
   snap1.capturedAt = tMinus120m;
@@ -710,6 +760,42 @@ function buildInitialDemoHistory(
   snap4.capturedAt = nowMs;
 
   const rawEvents: Array<{ ts: number; ev: WorldEvent; seq?: number }> = [
+    {
+      ts: tMinus18h + 60_000,
+      ev: { kind: 'BotWorking', botId: 'demo-cost-guard', botName: 'Cost Guard', tool: 'search_web' },
+    },
+    {
+      ts: tMinus14h + 120_000,
+      ev: {
+        kind: 'Handoff',
+        messageId: 'demo-msg-early-1',
+        from: { kind: 'Bot', botId: 'demo-ops-lead', botName: 'Ops Lead' },
+        to: { kind: 'Bot', botId: 'demo-security', botName: 'Security' },
+        subject: 'Audit staging OAuth token TTL',
+      },
+    },
+    {
+      ts: tMinus10h + 180_000,
+      ev: {
+        kind: 'WorkerStart',
+        dispatchId: 'demo-w-early-1',
+        parentBotId: 'demo-infra-ops',
+        parentBotName: 'Infra Ops',
+        provider: 'codex',
+        taskTitle: 'Validate Terraform plan',
+      },
+      seq: 1,
+    },
+    {
+      ts: tMinus6h + 90_000,
+      ev: {
+        kind: 'WorkerDone',
+        dispatchId: 'demo-w-early-1',
+        parentBotId: 'demo-infra-ops',
+        parentBotName: 'Infra Ops',
+        subject: 'Terraform plan validated (0 destructive changes)',
+      },
+    },
     {
       ts: tMinus120m + 5_000,
       ev: { kind: 'BotWorking', botId: 'demo-cost-guard', botName: 'Cost Guard', tool: 'search_web' },
@@ -836,6 +922,10 @@ function buildInitialDemoHistory(
 
   const events = rawEvents.map((item) => createEventRecord(item.ev, item.ts, item.seq ?? 1, 'en'));
   const keyframes: Keyframe[] = [
+    { timestampMs: tMinus18h, snapshot: snapStart },
+    { timestampMs: tMinus14h, snapshot: snapMidMorning },
+    { timestampMs: tMinus10h, snapshot: snapAfternoon },
+    { timestampMs: tMinus6h, snapshot: snapEvening },
     { timestampMs: tMinus120m, snapshot: snap1 },
     { timestampMs: tMinus80m, snapshot: snap2 },
     { timestampMs: tMinus40m, snapshot: snap3 },
@@ -843,6 +933,35 @@ function buildInitialDemoHistory(
   ];
 
   return { events, keyframes };
+}
+
+function buildDemoWeeklyTrend(
+  events: readonly WorldEventRecord[],
+  nowMs: number
+): DailyTrendPoint[] {
+  const samplePattern: ReadonlyArray<{ events: number; tasksDone: number; workerRuns: number; collaborations: number }> = [
+    { events: 18, tasksDone: 6, workerRuns: 4, collaborations: 5 },
+    { events: 24, tasksDone: 8, workerRuns: 5, collaborations: 7 },
+    { events: 15, tasksDone: 5, workerRuns: 3, collaborations: 4 },
+    { events: 29, tasksDone: 10, workerRuns: 7, collaborations: 9 },
+    { events: 22, tasksDone: 7, workerRuns: 5, collaborations: 6 },
+    { events: 11, tasksDone: 4, workerRuns: 2, collaborations: 3 },
+  ];
+  const base = new Date(nowMs);
+  const priorDays: DailyTrendPoint[] = [];
+  for (let offset = 6; offset >= 1; offset--) {
+    const d = new Date(base.getFullYear(), base.getMonth(), base.getDate() - offset);
+    const sample = samplePattern[6 - offset];
+    priorDays.push({
+      date: formatLocalDateKey(d.getTime()),
+      events: sample.events,
+      tasksDone: sample.tasksDone,
+      workerRuns: sample.workerRuns,
+      collaborations: sample.collaborations,
+    });
+  }
+  const merged = mergeEventsIntoWeeklyTrend(priorDays, events, nowMs);
+  return getLastSevenDaysTrend(merged, nowMs);
 }
 
 export class DemoOfficeSession {
@@ -1316,6 +1435,7 @@ export class DemoOfficeSession {
       pollIntervalSec: 5,
       locale,
       languageSetting,
+      weeklyTrend: buildDemoWeeklyTrend(events, this.lastTickMs),
     };
   }
 }

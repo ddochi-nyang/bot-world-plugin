@@ -22,6 +22,7 @@ export type DomAttrs = {
   ariaLabel?: string;
   ariaPressed?: string;
   placeholder?: string;
+  maxLength?: number;
   onClick?: (ev: MouseEvent) => void;
   onInput?: (ev: Event) => void;
   onChange?: (ev: Event) => void;
@@ -77,6 +78,9 @@ export function el<K extends keyof HTMLElementTagNameMap>(
     }
     if (attrs.placeholder !== undefined && node instanceof HTMLInputElement) {
       node.placeholder = attrs.placeholder;
+    }
+    if (typeof attrs.maxLength === 'number' && 'maxLength' in node) {
+      (node as HTMLInputElement).maxLength = attrs.maxLength;
     }
     if (attrs.selected !== undefined && typeof HTMLOptionElement !== 'undefined' && node instanceof HTMLOptionElement) {
       node.selected = attrs.selected;

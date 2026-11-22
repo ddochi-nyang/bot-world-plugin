@@ -44,9 +44,16 @@ import {
   stripDangerousKeys,
   toPlainSafeRecord,
 } from './types.ts';
+import {
+  type WeeklyTrendStore,
+  getLastSevenDaysTrend,
+  hydrateWeeklyTrendStore,
+  mergeWeeklyTrendStore,
+} from './weekly-trend.ts';
 
 const STORAGE_PREFS_KEY = 'botWorld.prefs';
 const STORAGE_TIMELINE_KEY = 'botWorld.timeline';
+const STORAGE_WEEKLY_TREND_KEY = 'botWorld.weeklyTrend';
 export const MAX_IPC_PAYLOAD_BYTES = 220 * 1024;
 const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
 const LOCALE_TAG_RE = /^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{1,8}){0,6}$/;
@@ -493,6 +500,7 @@ export class BotWorldWorkerController {
   private readonly cli: OrcaClient;
   private readonly session = new PollerSession();
   private timeline = new TimelineBuffer();
+  private weeklyTrendStore: WeeklyTrendStore = { days: [], seenIds: [] };
   private prefs: StoredPrefs = {
     activeTheme: 'startup_office',
     atmosphereMode: 'auto',
@@ -582,7 +590,21 @@ export class BotWorldWorkerController {
     });
 
     const storedTimeline = await this.orca.storage.get(STORAGE_TIMELINE_KEY);
-    this.timeline = TimelineBuffer.hydrate(storedTimeline, Date.now());
+    const initNowMs = Date.now();
+    this.timeline = TimelineBuffer.hydrate(storedTimeline, initNowMs);
+    const storedWeeklyTrend = await this.orca.storage.get(STORAGE_WEEKLY_TREND_KEY);
+    this.weeklyTrendStore = hydrateWeeklyTrendStore(storedWeeklyTrend, initNowMs);
+    if (this.timeline.eventLog.length > 0) {
+      const mergedInit = mergeWeeklyTrendStore(
+        this.weeklyTrendStore,
+        this.timeline.eventLog,
+        initNowMs
+      );
+      this.weeklyTrendStore = mergedInit.store;
+      if (mergedInit.changed) {
+        await this.persistWeeklyTrend();
+      }
+    }
     for (const rec of this.timeline.eventLog) {
       if (rec.event.kind === 'WorkerStart') {
         const seq = extractWorkerSeq(rec);
@@ -666,6 +688,7 @@ export class BotWorldWorkerController {
     const locale = this.currentLocale();
     const s = tStrings(locale);
     const safeSnapshot = prepareSnapshotForUi(this.session.snapshot, redact, locale);
+    const trendNowMs = this.session.snapshot.capturedAt > 0 ? this.session.snapshot.capturedAt : Date.now();
     const payload: BotWorldStatePayload = {
       snapshot: safeSnapshot,
       events: [],
@@ -679,6 +702,7 @@ export class BotWorldWorkerController {
       pollIntervalSec: this.pollIntervalSec,
       locale,
       languageSetting: this.prefs.languageSetting,
+      weeklyTrend: getLastSevenDaysTrend(this.weeklyTrendStore.days, trendNowMs),
     };
 
     const baseBytes = utf8ByteLength(payload);
@@ -849,6 +873,13 @@ export class BotWorldWorkerController {
     await this.orca.storage.set(STORAGE_TIMELINE_KEY, data as unknown as JsonValue);
   }
 
+  private async persistWeeklyTrend(): Promise<void> {
+    await this.orca.storage.set(
+      STORAGE_WEEKLY_TREND_KEY,
+      this.weeklyTrendStore as unknown as JsonValue
+    );
+  }
+
   private async updateStatusBar(): Promise<void> {
     if (!this.orca.host.has('statusBar.update')) return;
     try {
@@ -914,6 +945,17 @@ export class BotWorldWorkerController {
 
       if (newEvents.length > 0 || keyframeRecorded) {
         await this.persistTimeline();
+      }
+      if (newEvents.length > 0) {
+        const mergedTrend = mergeWeeklyTrendStore(
+          this.weeklyTrendStore,
+          this.timeline.eventLog,
+          nowMs
+        );
+        this.weeklyTrendStore = mergedTrend.store;
+        if (mergedTrend.changed) {
+          await this.persistWeeklyTrend();
+        }
       }
       await this.updateStatusBar();
       this.postStateUpdated();

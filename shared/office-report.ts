@@ -1,12 +1,14 @@
 import { eventRelatedBotId } from '../src/events.ts';
 import { scrubAll } from '../src/redact.ts';
 import {
+  type DailyTrendPoint,
   type UiLocale,
   type WorldEvent,
   type WorldEventRecord,
   type WorldSnapshot,
   isSafeKey,
 } from '../src/types.ts';
+import { getLastSevenDaysTrend, mergeEventsIntoWeeklyTrend } from '../src/weekly-trend.ts';
 import { clearChildren, el } from './dom.ts';
 import { getBotRedactedAlias } from './filter.ts';
 import { formatTimeHms, tStrings } from './i18n.ts';
@@ -52,6 +54,7 @@ export type OfficeReport = {
   totalBotsCount: number;
   topBots: OfficeReportTopBot[];
   hourlyBuckets: OfficeReportHourlyBucket[];
+  weeklyTrend?: DailyTrendPoint[];
   badges: OfficeReportBadgeEntry[];
 };
 
@@ -112,7 +115,12 @@ function stepClass(prefix: string, ratio: number): string {
 export function buildOfficeReport(
   events: readonly WorldEventRecord[],
   snapshot: WorldSnapshot,
-  opts: { nowMs?: number; redactMode: boolean; locale: UiLocale }
+  opts: {
+    nowMs?: number;
+    redactMode: boolean;
+    locale: UiLocale;
+    weeklyTrend?: readonly DailyTrendPoint[];
+  }
 ): OfficeReport {
   const s = tStrings(opts.locale);
   const nowMs =
@@ -265,6 +273,9 @@ export function buildOfficeReport(
     }
   }
 
+  const mergedWeekly = mergeEventsIntoWeeklyTrend(opts.weeklyTrend ?? [], windowEvents, nowMs);
+  const weeklyTrend = getLastSevenDaysTrend(mergedWeekly, nowMs);
+
   return {
     redacted: opts.redactMode,
     windowHours: REPORT_WINDOW_HOURS,
@@ -280,6 +291,7 @@ export function buildOfficeReport(
     totalBotsCount,
     topBots,
     hourlyBuckets,
+    weeklyTrend,
     badges,
   };
 }
@@ -342,6 +354,17 @@ export function formatReportMarkdown(
   lines.push(`## ${s.reportSectionHourly}`);
   const hourlyLine = report.hourlyBuckets.map((b) => `${b.hourLabel}: ${b.count}`).join(' | ');
   lines.push(hourlyLine);
+
+  const weekly = getLastSevenDaysTrend(report.weeklyTrend ?? [], report.generatedAtMs);
+  lines.push('');
+  lines.push(`## ${s.reportSectionWeekly}`);
+  lines.push(
+    `| ${s.reportWeeklyColumns.date} | ${s.reportWeeklyColumns.events} | ${s.reportWeeklyColumns.tasksDone} | ${s.reportWeeklyColumns.workers} | ${s.reportWeeklyColumns.collaborations} |`
+  );
+  lines.push('| --- | --- | --- | --- | --- |');
+  for (const pt of weekly) {
+    lines.push(`| ${pt.date} | ${pt.events} | ${pt.tasksDone} | ${pt.workerRuns} | ${pt.collaborations} |`);
+  }
 
   return lines.join('\n');
 }
@@ -474,6 +497,36 @@ export function renderOfficeReportModal(
     )
   );
 
+  const weeklyData = getLastSevenDaysTrend(report.weeklyTrend ?? [], report.generatedAtMs);
+  const maxWeeklyCount = Math.max(1, ...weeklyData.map((d) => d.events));
+  const weeklyChart = el(
+    'div',
+    { className: 'bw-section' },
+    el('div', { className: 'bw-section-title' }, s.reportSectionWeekly),
+    el(
+      'div',
+      { className: 'bw-report-weekly-chart' },
+      ...weeklyData.map((pt) =>
+        el(
+          'div',
+          {
+            className: 'bw-report-col',
+            title: `${pt.date} — ${s.reportWeeklyColumns.events}: ${pt.events}, ${s.reportWeeklyColumns.tasksDone}: ${pt.tasksDone}, ${s.reportWeeklyColumns.workers}: ${pt.workerRuns}, ${s.reportWeeklyColumns.collaborations}: ${pt.collaborations}`,
+          },
+          el('div', { className: 'bw-report-weekly-val' }, String(pt.events)),
+          el(
+            'div',
+            { className: 'bw-report-col-track' },
+            el('div', {
+              className: `bw-report-col-bar bw-report-col-bar-weekly ${stepClass('bw-bar-step', pt.events > 0 ? Math.max(0.08, pt.events / maxWeeklyCount) : 0)}`,
+            })
+          ),
+          el('div', { className: 'bw-report-col-label' }, pt.date.slice(5).replace('-', '/'))
+        )
+      )
+    )
+  );
+
   const badgesSection = el(
     'div',
     { className: 'bw-section' },
@@ -560,7 +613,8 @@ export function renderOfficeReportModal(
     ),
     badgesSection,
     topBotsSection,
-    hourlyChart
+    hourlyChart,
+    weeklyChart
   );
 
   backdrop.appendChild(dialog);

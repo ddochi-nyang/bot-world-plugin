@@ -22,6 +22,8 @@ export type ShortcutAction =
   | 'toggleDemo'
   | 'toggleReplayPlay'
   | 'toggleReport'
+  | 'takePhotoCard'
+  | 'toggleZones'
   | 'focusUrgent'
   | 'toggleFollowCam'
   | 'resetCamera'
@@ -102,6 +104,10 @@ export function mapKeyToShortcutAction(
       return 'toggleDemo';
     case 'i':
       return 'toggleReport';
+    case 'p':
+      return 'takePhotoCard';
+    case 'z':
+      return 'toggleZones';
     case 'n':
       return 'focusUrgent';
     case 'f':
@@ -208,6 +214,8 @@ export function renderShortcutsModal(
     { keyLabel: 'M', description: s.shortcutToggleSound },
     { keyLabel: 'D', description: s.shortcutToggleDemo },
     { keyLabel: 'I', description: s.shortcutToggleReport },
+    { keyLabel: 'P', description: s.shortcutTakePhotoCard },
+    { keyLabel: 'Z', description: s.shortcutToggleZones },
   ];
   if (options.isEditor) {
     rows.push({ keyLabel: 'Space', description: s.shortcutTogglePlay });
