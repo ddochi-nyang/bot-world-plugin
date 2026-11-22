@@ -26,6 +26,7 @@ import {
 } from './assets-catalog.ts';
 import { type DomChild, clearChildren, el } from './dom.ts';
 import { localizeBotErrorMessage, tStrings } from './i18n.ts';
+import { type OfficeBadgeId, badgeDisplayMeta } from './office-badges.ts';
 
 function truncateChars(text: string, maxChars: number): string {
   const chars = Array.from(text);
@@ -95,6 +96,7 @@ export function renderBotDetail(
     locale?: UiLocale;
     botCount?: number;
     onStartDemo?: () => void;
+    badges?: readonly OfficeBadgeId[];
   }
 ): void {
   clearChildren(container);
@@ -108,6 +110,7 @@ export function renderBotDetail(
     locale = 'en',
     botCount,
     onStartDemo,
+    badges,
   } = options;
   const s = tStrings(locale);
 
@@ -190,6 +193,33 @@ export function renderBotDetail(
   container.appendChild(el('div', { className: 'bw-detail-header' }, ...headerChildren));
 
   const body = el('div', { className: 'bw-detail-body' });
+
+  // Badges (if earned in 24h)
+  if (badges && badges.length > 0) {
+    const badgeRow = el(
+      'div',
+      { className: 'bw-badge-strip' },
+      ...badges.map((bid) => {
+        const meta = badgeDisplayMeta(bid, locale);
+        return el(
+          'span',
+          {
+            className: bid === 'mvp' ? 'bw-award-pill bw-award-mvp' : 'bw-award-pill',
+            title: meta.subtitle,
+          },
+          `${meta.emoji} ${meta.label}`
+        );
+      })
+    );
+    body.appendChild(
+      el(
+        'section',
+        { className: 'bw-section' },
+        el('div', { className: 'bw-section-title' }, s.sectionBadges),
+        badgeRow
+      )
+    );
+  }
 
   // Section 1: Active task
   const taskLine = redactMode

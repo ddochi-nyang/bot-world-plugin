@@ -21,10 +21,23 @@ import {
   renderBotQuickPills,
   renderEventTimelineList,
 } from '../shared/bot-detail-view.ts';
+import {
+  CAMERA_ZOOM_STEP,
+  pickNextFocusBotId,
+} from '../shared/camera.ts';
+import { buildCollabNetwork } from '../shared/collab-network.ts';
 import { type DemoOfficeSession, createDemoOfficeSession } from '../shared/demo-office.ts';
 import { clearChildren, el } from '../shared/dom.ts';
+import {
+  STATUS_FILTER_PRESETS,
+  type StatusFilterPreset,
+  countFilterPresets,
+  filterBotIds,
+  isFilterActive,
+} from '../shared/filter.ts';
 import { effectiveLocale, getHostLocale, resolveUiLocale, tStrings } from '../shared/i18n.ts';
 import { MotionDirector, ReplayController } from '../shared/motion.ts';
+import { computeOfficeBadges } from '../shared/office-badges.ts';
 import {
   buildOfficeReport,
   formatReportMarkdown,
@@ -59,6 +72,9 @@ const state: {
   reportOpen: boolean;
   reportCopied: boolean;
   selectionCleared: boolean;
+  filterPreset: StatusFilterPreset;
+  searchQuery: string;
+  showCollabNetwork: boolean;
 } = {
   payload: {
     snapshot: createEmptySnapshot(),
@@ -79,6 +95,9 @@ const state: {
   reportOpen: false,
   reportCopied: false,
   selectionCleared: false,
+  filterPreset: 'all',
+  searchQuery: '',
+  showCollabNetwork: false,
 };
 
 const liveMotion = new MotionDirector();
@@ -137,6 +156,33 @@ const atmoBtn = el(
     onClick: () => void cycleAtmosphere().catch(() => {}),
   },
   `${atmosphereIcon('auto')} ${initialStrings.atmosphereModes.auto}`
+);
+
+const focusBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-btn',
+    title: initialStrings.focusButtonTitle,
+    ariaLabel: initialStrings.focusButtonTitle,
+    onClick: () => cycleFocusSpotlight(),
+  },
+  '🎯'
+);
+
+const collabBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-btn',
+    title: initialStrings.collabButtonTitle,
+    ariaLabel: initialStrings.collabButtonTitle,
+    onClick: () => {
+      state.showCollabNetwork = !state.showCollabNetwork;
+      renderUi();
+    },
+  },
+  '🕸'
 );
 
 const redactBtn = el(
@@ -230,6 +276,8 @@ const toolbar = el(
     { className: 'bw-toolbar-group' },
     themeSelect,
     atmoBtn,
+    focusBtn,
+    collabBtn,
     redactBtn,
     langBtn,
     demoBtn,
@@ -244,7 +292,118 @@ const boardHint = el('div', { className: 'bw-hint-banner' }, boardHintText);
 
 const canvasEl = el('canvas', { className: 'bw-stage-canvas' }) as HTMLCanvasElement;
 const stageOverlayNote = el('div', { className: 'bw-stage-overlay-note' }, initialStrings.live);
-const stageWrap = el('div', { className: 'bw-stage-wrap-panel' }, canvasEl, stageOverlayNote);
+const zoomOutBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-hud-btn',
+    title: initialStrings.zoomOutTitle,
+    ariaLabel: initialStrings.zoomOutTitle,
+    onClick: () => renderer.zoomBy(-CAMERA_ZOOM_STEP),
+  },
+  '−'
+);
+const zoomResetBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-hud-btn',
+    title: initialStrings.zoomResetTitle(100),
+    onClick: () => renderer.resetCamera(),
+  },
+  '100%'
+);
+const zoomInBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-hud-btn',
+    title: initialStrings.zoomInTitle,
+    ariaLabel: initialStrings.zoomInTitle,
+    onClick: () => renderer.zoomBy(CAMERA_ZOOM_STEP),
+  },
+  '+'
+);
+const followHudBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-hud-btn',
+    title: initialStrings.followButtonTitle,
+    ariaLabel: initialStrings.followButtonTitle,
+    onClick: () => toggleFollowCam(),
+  },
+  '📌'
+);
+const cameraHud = el(
+  'div',
+  { className: 'bw-camera-hud bw-camera-hud-compact' },
+  zoomOutBtn,
+  zoomResetBtn,
+  zoomInBtn,
+  followHudBtn
+);
+const stageWrap = el(
+  'div',
+  { className: 'bw-stage-wrap-panel' },
+  canvasEl,
+  stageOverlayNote,
+  cameraHud
+);
+
+const filterChipButtons = new Map<StatusFilterPreset, HTMLButtonElement>();
+const filterChipsWrap = el('div', { className: 'bw-filter-chips' });
+for (const preset of STATUS_FILTER_PRESETS) {
+  const btn = el(
+    'button',
+    {
+      type: 'button',
+      className: preset === 'all' ? 'bw-filter-chip bw-filter-chip-active' : 'bw-filter-chip',
+      onClick: () => {
+        state.filterPreset = preset;
+        renderUi();
+      },
+    },
+    `${initialStrings.filterPresetLabels[preset]} (0)`
+  ) as HTMLButtonElement;
+  filterChipButtons.set(preset, btn);
+  filterChipsWrap.appendChild(btn);
+}
+
+const searchInput = el('input', {
+  type: 'text',
+  className: 'bw-search-input',
+  placeholder: initialStrings.searchPlaceholder,
+  ariaLabel: initialStrings.searchPlaceholder,
+  onInput: () => {
+    state.searchQuery = searchInput.value;
+    renderUi();
+  },
+}) as HTMLInputElement;
+
+const searchClearBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-btn bw-btn-ghost bw-hidden',
+    title: initialStrings.searchClearTitle,
+    ariaLabel: initialStrings.searchClearTitle,
+    onClick: () => {
+      state.searchQuery = '';
+      searchInput.value = '';
+      renderUi();
+    },
+  },
+  '✕'
+) as HTMLButtonElement;
+
+const filterMatchPill = el('span', { className: 'bw-filter-match-pill bw-hidden' }, '0/0');
+const filterBar = el(
+  'div',
+  { className: 'bw-filter-bar bw-filter-bar-compact' },
+  filterChipsWrap,
+  el('div', { className: 'bw-filter-search-wrap' }, filterMatchPill, searchInput, searchClearBtn)
+);
 
 const botStrip = el('div', { className: 'bw-bot-strip' });
 
@@ -287,7 +446,15 @@ const backToLiveBtn = el(
 const subTabs = el('div', { className: 'bw-subtabs' }, tabDetailBtn, tabTimelineBtn, backToLiveBtn);
 
 const lowerContent = el('div', { className: 'bw-detail-root' });
-const mainArea = el('div', { className: 'bw-panel-main' }, stageWrap, botStrip, subTabs, lowerContent);
+const mainArea = el(
+  'div',
+  { className: 'bw-panel-main' },
+  stageWrap,
+  filterBar,
+  botStrip,
+  subTabs,
+  lowerContent
+);
 const shortcutsBackdrop = el('div', {
   className: 'bw-modal-backdrop bw-hidden',
   onClick: () => {
@@ -316,6 +483,9 @@ const renderer = new StageRenderer(canvasEl, {
     state.selectionCleared = false;
     state.selectedBotId = botId;
     state.activeTab = 'detail';
+    if (renderer.camera.followBotId && renderer.camera.followBotId !== botId) {
+      renderer.camera.setFollowBot(botId);
+    }
     renderUi();
   },
   onHoverBot: (botId) => {
@@ -323,6 +493,9 @@ const renderer = new StageRenderer(canvasEl, {
       state.hoveredBotId = botId;
       updateStageOverlayLabel();
     }
+  },
+  onCameraChange: () => {
+    updateCameraHud(currentLocale());
   },
 });
 
@@ -355,16 +528,20 @@ async function copyReportMarkdown(text: string): Promise<void> {
     ok = false;
   }
   if (!ok && typeof document !== 'undefined' && typeof document.execCommand === 'function') {
+    let ta: HTMLTextAreaElement | null = null;
     try {
-      const ta = document.createElement('textarea');
+      ta = document.createElement('textarea');
       ta.value = text;
       ta.className = 'bw-sr-only';
       document.body.appendChild(ta);
       ta.select();
       ok = document.execCommand('copy');
-      document.body.removeChild(ta);
     } catch {
       ok = false;
+    } finally {
+      if (ta && ta.parentNode) {
+        document.body.removeChild(ta);
+      }
     }
   }
   if (ok) {
@@ -444,6 +621,57 @@ function updateStageOverlayLabel(): void {
   stageOverlayNote.textContent = snap.runtime.connected ? s.stageOverlayLive : s.stageOverlayOffline;
 }
 
+function updateCameraHud(locale: UiLocale): void {
+  const s = tStrings(locale);
+  const pct = renderer.camera.zoomPercent();
+  zoomResetBtn.textContent = `${pct}%`;
+  zoomResetBtn.title = s.zoomResetTitle(pct);
+  zoomResetBtn.className = renderer.camera.isZoomed() ? 'bw-hud-btn bw-hud-btn-active' : 'bw-hud-btn';
+  zoomOutBtn.title = s.zoomOutTitle;
+  zoomOutBtn.setAttribute('aria-label', s.zoomOutTitle);
+  zoomInBtn.title = s.zoomInTitle;
+  zoomInBtn.setAttribute('aria-label', s.zoomInTitle);
+  const following = renderer.camera.followBotId !== null;
+  followHudBtn.title = s.followButtonTitle;
+  followHudBtn.setAttribute('aria-label', s.followButtonTitle);
+  followHudBtn.className = following ? 'bw-hud-btn bw-hud-btn-active' : 'bw-hud-btn';
+}
+
+function cycleFocusSpotlight(): void {
+  const snap = currentDisplayedSnapshot();
+  const locale = currentLocale();
+  const activeFilter = isFilterActive(state.filterPreset, state.searchQuery)
+    ? filterBotIds(snap, {
+        preset: state.filterPreset,
+        query: state.searchQuery,
+        redactMode: state.payload.redactMode,
+        locale,
+      })
+    : undefined;
+  const currentId = renderer.camera.spotlightBotId ?? state.selectedBotId;
+  const nextId = pickNextFocusBotId(snap, currentId, activeFilter);
+  if (!nextId) return;
+  state.selectionCleared = false;
+  state.selectedBotId = nextId;
+  state.activeTab = 'detail';
+  renderUi();
+  renderer.focusBot(nextId);
+}
+
+function toggleFollowCam(): void {
+  const snap = currentDisplayedSnapshot();
+  let targetId = state.selectedBotId;
+  if ((!targetId || !Object.hasOwn(snap.bots, targetId)) && renderer.camera.followBotId === null) {
+    targetId = pickNextFocusBotId(snap, null);
+    if (targetId) {
+      state.selectionCleared = false;
+      state.selectedBotId = targetId;
+    }
+  }
+  renderer.toggleFollow(targetId);
+  renderUi();
+}
+
 function syncChromeLocale(locale: UiLocale): void {
   const s = tStrings(locale);
   const atmoMode = activeAtmosphereMode();
@@ -459,6 +687,11 @@ function syncChromeLocale(locale: UiLocale): void {
   atmoBtn.textContent = `${atmosphereIcon(atmoMode)} ${atmoLabel}`;
   atmoBtn.title = s.atmosphereToggleTitle(atmoLabel);
   atmoBtn.className = atmoMode !== 'auto' ? 'bw-btn bw-btn-active' : 'bw-btn';
+  focusBtn.title = s.focusButtonTitle;
+  focusBtn.setAttribute('aria-label', s.focusButtonTitle);
+  collabBtn.title = s.collabButtonTitle;
+  collabBtn.setAttribute('aria-label', s.collabButtonTitle);
+  collabBtn.className = state.showCollabNetwork ? 'bw-btn bw-btn-active' : 'bw-btn';
   redactBtn.title = s.redactToggleTitle;
   langBtn.textContent = s.langToggleText;
   langBtn.title = `${s.langToggleTitle} [L]`;
@@ -473,6 +706,11 @@ function syncChromeLocale(locale: UiLocale): void {
   helpBtn.title = s.shortcutsButtonTitle;
   helpBtn.setAttribute('aria-label', s.shortcutsButtonTitle);
   helpBtn.className = state.shortcutsOpen ? 'bw-btn bw-btn-active' : 'bw-btn';
+  searchInput.placeholder = s.searchPlaceholder;
+  searchInput.setAttribute('aria-label', s.searchPlaceholder);
+  searchClearBtn.title = s.searchClearTitle;
+  searchClearBtn.setAttribute('aria-label', s.searchClearTitle);
+  updateCameraHud(locale);
   refreshBtn.textContent = s.refresh;
   boardHintText.textContent = isDemoMode() ? s.demoModeHint : s.boardHint;
   tabDetailBtn.textContent = s.tabDetail;
@@ -596,6 +834,39 @@ function renderUi(): void {
       ? snap.capturedAt
       : Date.now();
 
+  const counts = countFilterPresets(snap);
+  for (const preset of STATUS_FILTER_PRESETS) {
+    const btn = filterChipButtons.get(preset);
+    if (!btn) continue;
+    btn.textContent = `${s.filterPresetLabels[preset]} (${counts[preset]})`;
+    btn.className =
+      state.filterPreset === preset ? 'bw-filter-chip bw-filter-chip-active' : 'bw-filter-chip';
+  }
+  searchClearBtn.classList.toggle('bw-hidden', state.searchQuery.length === 0);
+  let filterMatchedBotIds: ReadonlySet<string> | null = null;
+  if (isFilterActive(state.filterPreset, state.searchQuery)) {
+    const matched = filterBotIds(snap, {
+      preset: state.filterPreset,
+      query: state.searchQuery,
+      redactMode,
+      locale,
+    });
+    filterMatchedBotIds = matched;
+    filterMatchPill.textContent = s.filterMatchCount(matched.size, counts.all);
+    filterMatchPill.classList.remove('bw-hidden');
+  } else {
+    filterMatchPill.classList.add('bw-hidden');
+  }
+
+  const collabEdges = state.showCollabNetwork
+    ? buildCollabNetwork(events, snap, { nowMs: displayTimestampMs })
+    : [];
+  const badgeSummary = computeOfficeBadges(events, snap, {
+    nowMs: displayTimestampMs,
+    redactMode,
+    locale,
+  });
+
   renderer.update({
     snapshot: snap,
     themeId: activeTheme,
@@ -607,6 +878,10 @@ function renderUi(): void {
     motion: replay.isReplay ? replay.motion : liveMotion,
     replay,
     locale,
+    filterMatchedBotIds,
+    showCollabNetwork: state.showCollabNetwork,
+    collabEdges,
+    mvpBotId: badgeSummary.mvpBotId,
   });
 
   botStrip.hidden = botCount === 0;
@@ -617,6 +892,9 @@ function renderUi(): void {
       state.selectionCleared = false;
       state.selectedBotId = botId;
       state.activeTab = 'detail';
+      if (renderer.camera.followBotId && renderer.camera.followBotId !== botId) {
+        renderer.camera.setFollowBot(botId);
+      }
       renderUi();
     },
   });
@@ -626,13 +904,14 @@ function renderUi(): void {
       state.selectedBotId && isSafeKey(state.selectedBotId) && Object.hasOwn(snap.bots, state.selectedBotId)
         ? snap.bots[state.selectedBotId]
         : null;
-      renderBotDetail(lowerContent, {
+    renderBotDetail(lowerContent, {
       snapshot: snap,
       bot: selectedBot,
       redactMode,
       botAppearances,
       locale,
       botCount,
+      badges: selectedBot ? (badgeSummary.badgesByBot[selectedBot.id] ?? []) : [],
       onStartDemo: isDemoMode() ? undefined : enterDemoMode,
       onSelectCharacter: (botId, charId) => void setBotAppearance(botId, charId).catch(() => {}),
     });
@@ -850,6 +1129,24 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
     case 'toggleReport':
       toggleReportModal();
       break;
+    case 'focusUrgent':
+      cycleFocusSpotlight();
+      break;
+    case 'toggleFollowCam':
+      toggleFollowCam();
+      break;
+    case 'resetCamera':
+      renderer.resetCamera();
+      break;
+    case 'focusSearch':
+      ev.preventDefault();
+      searchInput.focus();
+      searchInput.select();
+      break;
+    case 'toggleCollabNetwork':
+      state.showCollabNetwork = !state.showCollabNetwork;
+      renderUi();
+      break;
     case 'toggleHelp':
       state.shortcutsOpen = !state.shortcutsOpen;
       if (state.shortcutsOpen) {
@@ -860,7 +1157,12 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
       syncChromeLocale(currentLocale());
       break;
     case 'closeOrClearSelection':
-      if (state.reportOpen) {
+      if (typeof document !== 'undefined' && document.activeElement === searchInput) {
+        state.searchQuery = '';
+        searchInput.value = '';
+        searchInput.blur();
+        renderUi();
+      } else if (state.reportOpen) {
         state.reportOpen = false;
         renderReportModal();
         syncChromeLocale(currentLocale());
@@ -868,6 +1170,15 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
         state.shortcutsOpen = false;
         renderShortcutsHelp();
         syncChromeLocale(currentLocale());
+      } else if (renderer.camera.followBotId !== null) {
+        renderer.camera.releaseFollow();
+        updateCameraHud(currentLocale());
+        renderer.renderNow();
+      } else if (isFilterActive(state.filterPreset, state.searchQuery)) {
+        state.filterPreset = 'all';
+        state.searchQuery = '';
+        searchInput.value = '';
+        renderUi();
       } else {
         state.selectionCleared = true;
         state.selectedBotId = null;

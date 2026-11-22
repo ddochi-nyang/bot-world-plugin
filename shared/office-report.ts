@@ -8,7 +8,13 @@ import {
   isSafeKey,
 } from '../src/types.ts';
 import { clearChildren, el } from './dom.ts';
+import { getBotRedactedAlias } from './filter.ts';
 import { formatTimeHms, tStrings } from './i18n.ts';
+import {
+  type OfficeBadgeId,
+  badgeDisplayMeta,
+  computeOfficeBadges,
+} from './office-badges.ts';
 
 export type OfficeReportTopBot = {
   botId: string;
@@ -23,7 +29,16 @@ export type OfficeReportHourlyBucket = {
   count: number;
 };
 
+export type OfficeReportBadgeEntry = {
+  badgeId: OfficeBadgeId;
+  emoji: string;
+  label: string;
+  subtitle: string;
+  winners: string[];
+};
+
 export type OfficeReport = {
+  redacted?: boolean;
   windowHours: number;
   generatedAtMs: number;
   totalEvents: number;
@@ -37,6 +52,7 @@ export type OfficeReport = {
   totalBotsCount: number;
   topBots: OfficeReportTopBot[];
   hourlyBuckets: OfficeReportHourlyBucket[];
+  badges: OfficeReportBadgeEntry[];
 };
 
 const HOUR_MS = 3600_000;
@@ -127,9 +143,11 @@ export function buildOfficeReport(
   const botCounts = new Map<string, number>();
   const botNames = new Map<string, string>();
 
-  for (const [id, bot] of Object.entries(snapshot.bots)) {
-    if (isSafeKey(id) && bot && typeof bot.name === 'string') {
-      botNames.set(id, scrubAll(bot.name));
+  if (!opts.redactMode) {
+    for (const [id, bot] of Object.entries(snapshot.bots)) {
+      if (isSafeKey(id) && bot && typeof bot.name === 'string') {
+        botNames.set(id, scrubAll(bot.name));
+      }
     }
   }
 
@@ -163,7 +181,7 @@ export function buildOfficeReport(
     const botId = eventRelatedBotId(ev);
     if (botId && isSafeKey(botId)) {
       botCounts.set(botId, (botCounts.get(botId) ?? 0) + 1);
-      if (!botNames.has(botId)) {
+      if (!opts.redactMode && !botNames.has(botId)) {
         const rawName = extractEventBotName(ev);
         botNames.set(botId, rawName && rawName.trim().length > 0 ? scrubAll(rawName) : s.botGeneric);
       }
@@ -192,7 +210,9 @@ export function buildOfficeReport(
   const topBots: OfficeReportTopBot[] = Array.from(botCounts.entries())
     .map(([botId, eventCount]) => ({
       botId,
-      botName: botNames.get(botId) ?? s.botGeneric,
+      botName: opts.redactMode
+        ? getBotRedactedAlias(botId, snapshot, opts.locale)
+        : (botNames.get(botId) ?? s.botGeneric),
       eventCount,
       sharePct: totalEvents > 0 ? Math.round((eventCount / totalEvents) * 100) : 0,
     }))
@@ -222,7 +242,31 @@ export function buildOfficeReport(
     });
   }
 
+  const badgeSummary = computeOfficeBadges(windowEvents, snapshot, {
+    nowMs,
+    redactMode: opts.redactMode,
+    locale: opts.locale,
+  });
+  const badgeOrder: readonly OfficeBadgeId[] = ['mvp', 'delegator', 'night_owl', 'steady'];
+  const badges: OfficeReportBadgeEntry[] = [];
+  for (const bid of badgeOrder) {
+    const winners = badgeSummary.awards
+      .filter((a) => a.badgeId === bid)
+      .map((a) => scrubAll(a.botName));
+    if (winners.length > 0) {
+      const meta = badgeDisplayMeta(bid, opts.locale);
+      badges.push({
+        badgeId: bid,
+        emoji: meta.emoji,
+        label: meta.label,
+        subtitle: meta.subtitle,
+        winners,
+      });
+    }
+  }
+
   return {
+    redacted: opts.redactMode,
     windowHours: REPORT_WINDOW_HOURS,
     generatedAtMs: nowMs,
     totalEvents,
@@ -236,6 +280,7 @@ export function buildOfficeReport(
     totalBotsCount,
     topBots,
     hourlyBuckets,
+    badges,
   };
 }
 
@@ -269,15 +314,29 @@ export function formatReportMarkdown(
     `| ${opts.locale === 'ko' ? '활성 봇 / 결정 요청' : 'Active Bots / Needs You'} | ${report.activeBotsCount}/${report.totalBotsCount} · ${report.needsOwnerCount} |`
   );
   lines.push('');
+  const needsFallbackMask = opts.redactMode && report.redacted === false;
   lines.push(`## ${s.reportSectionTopBots}`);
   if (report.topBots.length === 0) {
     lines.push(`- ${s.reportNoBotActivity}`);
   } else {
     report.topBots.forEach((b, idx) => {
+      const displayName = needsFallbackMask ? s.botGeneric : scrubAll(b.botName);
       lines.push(
-        `${idx + 1}. **${scrubAll(b.botName)}** — ${s.reportBotEventCount(b.eventCount, b.sharePct)}`
+        `${idx + 1}. **${displayName}** — ${s.reportBotEventCount(b.eventCount, b.sharePct)}`
       );
     });
+  }
+  lines.push('');
+  lines.push(`## ${s.reportSectionBadges}`);
+  if (!report.badges || report.badges.length === 0) {
+    lines.push(`- ${s.reportNoBadges}`);
+  } else {
+    for (const b of report.badges) {
+      const winnersText = needsFallbackMask
+        ? b.winners.map(() => s.botGeneric).join(', ')
+        : b.winners.map((w) => scrubAll(w)).join(', ');
+      lines.push(`- ${b.emoji} **${b.label}**: ${winnersText}`);
+    }
   }
   lines.push('');
   lines.push(`## ${s.reportSectionHourly}`);
@@ -307,6 +366,7 @@ export function renderOfficeReportModal(
 
   const s = tStrings(opts.locale);
   const { report, redactMode, copied } = opts;
+  const needsFallbackMask = redactMode && report.redacted === false;
   const generatedHms = formatTimeHms(report.generatedAtMs, opts.locale);
 
   const autoRateLabel =
@@ -363,7 +423,11 @@ export function renderOfficeReportModal(
               el(
                 'div',
                 { className: 'bw-report-bot-meta' },
-                el('span', { className: 'bw-report-bot-name' }, `${idx + 1}. ${scrubAll(bot.botName)}`),
+                el(
+                  'span',
+                  { className: 'bw-report-bot-name' },
+                  `${idx + 1}. ${needsFallbackMask ? s.botGeneric : scrubAll(bot.botName)}`
+                ),
                 el(
                   'span',
                   { className: 'bw-meta-time' },
@@ -408,6 +472,35 @@ export function renderOfficeReportModal(
         )
       )
     )
+  );
+
+  const badgesSection = el(
+    'div',
+    { className: 'bw-section' },
+    el('div', { className: 'bw-section-title' }, s.reportSectionBadges),
+    !report.badges || report.badges.length === 0
+      ? el('div', { className: 'bw-muted-note' }, s.reportNoBadges)
+      : el(
+          'div',
+          { className: 'bw-report-badges-grid' },
+          ...report.badges.map((b) =>
+            el(
+              'div',
+              {
+                className: b.badgeId === 'mvp' ? 'bw-report-badge-card bw-report-badge-mvp' : 'bw-report-badge-card',
+                title: b.subtitle,
+              },
+              el('div', { className: 'bw-report-badge-label' }, `${b.emoji} ${b.label}`),
+              el(
+                'div',
+                { className: 'bw-report-badge-winner' },
+                needsFallbackMask
+                  ? b.winners.map(() => s.botGeneric).join(', ')
+                  : b.winners.map((w) => scrubAll(w)).join(', ')
+              )
+            )
+          )
+        )
   );
 
   const titleRowChildren = [
@@ -465,6 +558,7 @@ export function renderOfficeReportModal(
       { className: 'bw-report-meta-line' },
       s.reportActiveBotsMeta(report.activeBotsCount, report.totalBotsCount, report.needsOwnerCount)
     ),
+    badgesSection,
     topBotsSection,
     hourlyChart
   );

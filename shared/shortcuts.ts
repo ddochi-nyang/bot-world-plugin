@@ -16,6 +16,11 @@ export type ShortcutAction =
   | 'toggleDemo'
   | 'toggleReplayPlay'
   | 'toggleReport'
+  | 'focusUrgent'
+  | 'toggleFollowCam'
+  | 'resetCamera'
+  | 'focusSearch'
+  | 'toggleCollabNetwork'
   | 'toggleHelp'
   | 'closeOrClearSelection';
 
@@ -30,6 +35,9 @@ export type ShortcutEventLike = {
 export function shouldIgnoreShortcutEvent(ev: ShortcutEventLike): boolean {
   if (ev.ctrlKey || ev.metaKey || ev.altKey) {
     return true;
+  }
+  if (typeof ev.key === 'string' && ev.key.toLowerCase() === 'escape') {
+    return false;
   }
   const target = ev.target as { tagName?: unknown; isContentEditable?: unknown } | null | undefined;
   if (target && typeof target === 'object') {
@@ -52,6 +60,8 @@ export function mapKeyToShortcutAction(
 ): ShortcutAction | null {
   if (typeof key !== 'string' || key.length === 0) return null;
   if (key === '?') return 'toggleHelp';
+  if (key === '/') return 'focusSearch';
+  if (key === '0') return 'resetCamera';
   if (key === ' ' || key === 'Spacebar') {
     return options?.isEditor ? 'toggleReplayPlay' : null;
   }
@@ -68,6 +78,12 @@ export function mapKeyToShortcutAction(
       return 'toggleDemo';
     case 'i':
       return 'toggleReport';
+    case 'n':
+      return 'focusUrgent';
+    case 'f':
+      return 'toggleFollowCam';
+    case 'c':
+      return 'toggleCollabNetwork';
     case 'escape':
       return 'closeOrClearSelection';
     default:
@@ -117,6 +133,11 @@ export function renderShortcutsModal(
   const s = tStrings(options.locale);
 
   const rows: Array<{ keyLabel: string; description: string }> = [
+    { keyLabel: 'N', description: s.shortcutFocusUrgent },
+    { keyLabel: 'F', description: s.shortcutToggleFollow },
+    { keyLabel: '0', description: s.shortcutResetCamera },
+    { keyLabel: '/', description: s.shortcutFocusSearch },
+    { keyLabel: 'C', description: s.shortcutToggleCollab },
     { keyLabel: 'T', description: s.shortcutToggleTheme },
     { keyLabel: 'R', description: s.shortcutToggleRedact },
     { keyLabel: 'L', description: s.shortcutSwitchLanguage },

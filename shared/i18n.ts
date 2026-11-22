@@ -209,6 +209,7 @@ export type UiDictionary = {
   workerNumbered: (seq: number) => string;
   workerWithProvider: (provider: string) => string;
   botGeneric: string;
+  botNumbered: (seq: number) => string;
   ownerActor: string;
   unknownActor: string;
   automationGeneric: string;
@@ -304,6 +305,36 @@ export type UiDictionary = {
   reportNoBotActivity: string;
   reportBotEventCount: (count: number, pct: number) => string;
   reportSectionHourly: string;
+  reportSectionBadges: string;
+  reportNoBadges: string;
+  focusButton: string;
+  focusButtonTitle: string;
+  followButton: string;
+  followButtonActive: string;
+  followButtonTitle: string;
+  zoomInTitle: string;
+  zoomOutTitle: string;
+  zoomResetTitle: (pct: number) => string;
+  collabButton: string;
+  collabButtonTitle: string;
+  filterPresetLabels: Record<'all' | 'working' | 'needs_you' | 'error' | 'workers', string>;
+  searchPlaceholder: string;
+  searchClearTitle: string;
+  filterMatchCount: (matched: number, total: number) => string;
+  sectionBadges: string;
+  badgeMvpLabel: string;
+  badgeMvpDesc: string;
+  badgeDelegatorLabel: string;
+  badgeDelegatorDesc: string;
+  badgeNightOwlLabel: string;
+  badgeNightOwlDesc: string;
+  badgeSteadyLabel: string;
+  badgeSteadyDesc: string;
+  shortcutFocusUrgent: string;
+  shortcutToggleFollow: string;
+  shortcutResetCamera: string;
+  shortcutFocusSearch: string;
+  shortcutToggleCollab: string;
 };
 
 export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
@@ -372,6 +403,7 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     workerNumbered: (seq) => `Worker #${seq}`,
     workerWithProvider: (provider) => `Worker(${provider})`,
     botGeneric: 'Bot',
+    botNumbered: (seq) => `Bot #${seq}`,
     ownerActor: 'Owner',
     unknownActor: 'Unknown',
     automationGeneric: 'Automation',
@@ -489,7 +521,8 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     reportTitle: '24h Office Digest',
     reportSubtitle: (windowHours, generatedHms) => `Last ${windowHours}h · Updated ${generatedHms}`,
     reportRedactedBadge: 'Redacted',
-    reportRedactedNotice: 'Aggregate counts & bot names only (task titles, tools, and messages hidden).',
+    reportRedactedNotice:
+      'Aggregate counts & bot aliases only (bot names, task titles, tools, and sensitive summaries masked).',
     reportCopyMarkdown: 'Copy Markdown',
     reportCopied: 'Copied!',
     reportClose: 'Close',
@@ -505,6 +538,42 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     reportNoBotActivity: 'No bot activity recorded in the last 24h.',
     reportBotEventCount: (count, pct) => `${count} (${pct}%)`,
     reportSectionHourly: '12-Hour Activity Trend',
+    reportSectionBadges: 'Daily MVP & Office Badges',
+    reportNoBadges: 'No office badges earned yet in the last 24h.',
+    focusButton: 'Focus',
+    focusButtonTitle: 'Focus urgent or active bot [N]',
+    followButton: 'Follow',
+    followButtonActive: 'Following',
+    followButtonTitle: 'Toggle follow cam on selected bot [F]',
+    zoomInTitle: 'Zoom in',
+    zoomOutTitle: 'Zoom out',
+    zoomResetTitle: (pct) => `Zoom ${pct}% · Click to reset [0]`,
+    collabButton: 'Collab',
+    collabButtonTitle: 'Toggle collaboration network overlay [C]',
+    filterPresetLabels: {
+      all: 'All',
+      working: 'Working',
+      needs_you: 'Needs You',
+      error: 'Error',
+      workers: 'Workers',
+    },
+    searchPlaceholder: 'Search bots… [/]',
+    searchClearTitle: 'Clear search [Esc]',
+    filterMatchCount: (matched, total) => `${matched}/${total}`,
+    sectionBadges: 'Office Badges (24h)',
+    badgeMvpLabel: 'Daily MVP',
+    badgeMvpDesc: 'Highest 24h activity score',
+    badgeDelegatorLabel: 'Top Delegator',
+    badgeDelegatorDesc: 'Most sub-worker delegations',
+    badgeNightOwlLabel: 'Night Owl',
+    badgeNightOwlDesc: 'Active during night hours (21:00–04:59)',
+    badgeSteadyLabel: 'Error-Free Streak',
+    badgeSteadyDesc: 'Active with zero error events in 24h',
+    shortcutFocusUrgent: 'Focus urgent / active bot',
+    shortcutToggleFollow: 'Toggle follow cam',
+    shortcutResetCamera: 'Reset camera zoom & pan',
+    shortcutFocusSearch: 'Search bots',
+    shortcutToggleCollab: 'Toggle collaboration network',
   },
   ko: {
     appTitlePanel: '봇 월드',
@@ -570,6 +639,7 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     workerNumbered: (seq) => `도우미 #${seq}`,
     workerWithProvider: (provider) => `도우미(${provider})`,
     botGeneric: '봇',
+    botNumbered: (seq) => `봇 #${seq}`,
     ownerActor: '사장님',
     unknownActor: '알 수 없음',
     automationGeneric: '정기 자동화',
@@ -685,7 +755,8 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     reportTitle: '24시간 사무실 리포트',
     reportSubtitle: (windowHours, generatedHms) => `최근 ${windowHours}시간 · 기준 ${generatedHms}`,
     reportRedactedBadge: '가림 모드',
-    reportRedactedNotice: '집계 수치와 봇 이름만 표시됩니다 (작업 제목·도구·메시지 제외).',
+    reportRedactedNotice:
+      '집계 수치와 봇 별칭만 표시됩니다 (봇 이름·작업 제목·도구·민감 요약 가림).',
     reportCopyMarkdown: '마크다운 복사',
     reportCopied: '복사됨!',
     reportClose: '닫기',
@@ -701,6 +772,42 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     reportNoBotActivity: '최근 24시간 동안 기록된 봇 활동이 없습니다.',
     reportBotEventCount: (count, pct) => `${count}건 (${pct}%)`,
     reportSectionHourly: '최근 12시간 활동 추이',
+    reportSectionBadges: '오늘의 MVP & 오피스 배지',
+    reportNoBadges: '최근 24시간 동안 획득한 오피스 배지가 없습니다.',
+    focusButton: '포커스',
+    focusButtonTitle: '긴급·작업 봇 집중 포커스 [N]',
+    followButton: '추적',
+    followButtonActive: '추적 중',
+    followButtonTitle: '선택한 봇 카메라 추적 전환 [F]',
+    zoomInTitle: '확대',
+    zoomOutTitle: '축소',
+    zoomResetTitle: (pct) => `배율 ${pct}% · 클릭해 초기화 [0]`,
+    collabButton: '협업망',
+    collabButtonTitle: '협업 네트워크 오버레이 전환 [C]',
+    filterPresetLabels: {
+      all: '전체',
+      working: '작업 중',
+      needs_you: '결정 대기',
+      error: '오류',
+      workers: '워커 보유',
+    },
+    searchPlaceholder: '봇 검색… [/]',
+    searchClearTitle: '검색 지우기 [Esc]',
+    filterMatchCount: (matched, total) => `${matched}/${total}`,
+    sectionBadges: '오피스 배지 (24h)',
+    badgeMvpLabel: '오늘의 MVP',
+    badgeMvpDesc: '최근 24시간 최고 활동 점수',
+    badgeDelegatorLabel: '위임왕',
+    badgeDelegatorDesc: '가장 많은 서브워커 위임',
+    badgeNightOwlLabel: '야근 요정',
+    badgeNightOwlDesc: '야간 시간대(21:00–04:59) 최다 활동',
+    badgeSteadyLabel: '무오류',
+    badgeSteadyDesc: '최근 24시간 오류 없이 안정 작동',
+    shortcutFocusUrgent: '긴급·작업 봇 포커스',
+    shortcutToggleFollow: '선택 봇 카메라 추적',
+    shortcutResetCamera: '카메라 배율·위치 초기화',
+    shortcutFocusSearch: '봇 검색창 포커스',
+    shortcutToggleCollab: '협업 네트워크 오버레이',
   },
 };
 

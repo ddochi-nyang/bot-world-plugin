@@ -23,6 +23,16 @@ import {
   resolveCharacterSpritePath,
   resolveThemeAssetPath,
 } from './assets-catalog.ts';
+import {
+  CAMERA_ZOOM_STEP,
+  CameraController,
+  FOCUS_SPOTLIGHT_ZOOM,
+  type StageViewport,
+  type ViewportTransform,
+  composeViewportTransform,
+  createStageViewport,
+} from './camera.ts';
+import type { CollabEdge } from './collab-network.ts';
 import { tStrings } from './i18n.ts';
 import {
   type BubbleKind,
@@ -43,33 +53,6 @@ const BOT_SPRITE_DESIGN_PX = 90;
 const WORKER_SPRITE_DESIGN_PX = 74;
 export const CANVAS_FONT_FAMILY =
   '"Pretendard", "Apple SD Gothic Neo", "Inter", system-ui, sans-serif';
-
-type ViewportTransform = {
-  originX: number;
-  originY: number;
-  scale: number;
-  designW: number;
-  designH: number;
-};
-
-function createViewportTransform(
-  availW: number,
-  availH: number,
-  designSize: [number, number]
-): ViewportTransform {
-  const designW = Math.max(1, designSize[0]);
-  const designH = Math.max(1, designSize[1]);
-  const w = Math.max(1, availW);
-  const h = Math.max(1, availH);
-  const scale = Math.min(w / designW, h / designH);
-  return {
-    originX: (w - designW * scale) * 0.5,
-    originY: (h - designH * scale) * 0.5,
-    scale,
-    designW,
-    designH,
-  };
-}
 
 function designToScreen(vt: ViewportTransform, dx: number, dy: number): [number, number] {
   return [vt.originX + dx * vt.scale, vt.originY + dy * vt.scale];
@@ -335,6 +318,10 @@ export type StageRenderInput = {
   motion: MotionDirector;
   replay?: ReplayController | null;
   locale?: UiLocale;
+  filterMatchedBotIds?: ReadonlySet<string> | null;
+  showCollabNetwork?: boolean;
+  collabEdges?: readonly CollabEdge[];
+  mvpBotId?: string | null;
 };
 
 type HitBox = {
@@ -353,6 +340,13 @@ type DragCandidate = {
   currentPos: DeskCoordinate;
 };
 
+type PanDragState = {
+  pointerId: number;
+  lastClientX: number;
+  lastClientY: number;
+  moved: boolean;
+};
+
 export class StageRenderer {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
@@ -360,10 +354,14 @@ export class StageRenderer {
   private readonly onSelectBot: (botId: string) => void;
   private readonly onHoverBot?: (botId: string | null) => void;
   private readonly onMoveBot?: (botId: string, pos: DeskCoordinate) => void;
+  private readonly onCameraChange?: () => void;
+  readonly camera: CameraController;
   private lastInput: StageRenderInput | null = null;
   private lastViewport: ViewportTransform | null = null;
+  private lastStageViewport: StageViewport | null = null;
   private hitBoxes: HitBox[] = [];
   private dragCandidate: DragCandidate | null = null;
+  private panDrag: PanDragState | null = null;
   private suppressNextClick = false;
   private rafId: number | null = null;
   private lastFrameMs = 0;
@@ -379,6 +377,8 @@ export class StageRenderer {
       onSelectBot: (botId: string) => void;
       onHoverBot?: (botId: string | null) => void;
       onMoveBot?: (botId: string, pos: DeskCoordinate) => void;
+      onCameraChange?: () => void;
+      camera?: CameraController;
     }
   ) {
     this.canvas = canvas;
@@ -390,6 +390,8 @@ export class StageRenderer {
     this.onSelectBot = options.onSelectBot;
     this.onHoverBot = options.onHoverBot;
     this.onMoveBot = options.onMoveBot;
+    this.onCameraChange = options.onCameraChange;
+    this.camera = options.camera ?? new CameraController();
 
     this.canvas.addEventListener('click', this.handleClick);
     this.canvas.addEventListener('pointerdown', this.handlePointerDown);
@@ -397,6 +399,7 @@ export class StageRenderer {
     this.canvas.addEventListener('pointerup', this.handlePointerUp);
     this.canvas.addEventListener('pointercancel', this.handlePointerCancel);
     this.canvas.addEventListener('pointerleave', this.handlePointerLeave);
+    this.canvas.addEventListener('wheel', this.handleWheel, { passive: false });
 
     if (typeof ResizeObserver !== 'undefined') {
       this.resizeObserver = new ResizeObserver(() => {
@@ -441,6 +444,78 @@ export class StageRenderer {
     const theme = getThemeConfig(input.themeId, locale);
     input.motion.setLocale(locale);
     input.motion.syncLayout(input.snapshot, theme, input.customDeskPositions);
+    if (this.camera.followBotId) {
+      this.syncFollowTarget(input, theme.designSize, false);
+    }
+    this.renderNow();
+    this.ensureAnimationLoopIfNeeded();
+  }
+
+  refreshCameraLoop(): void {
+    if (!this.lastInput) return;
+    this.renderNow();
+    this.ensureAnimationLoopIfNeeded();
+  }
+
+  private syncFollowTarget(
+    input: StageRenderInput,
+    designSize: readonly [number, number],
+    immediate: boolean
+  ): void {
+    const fid = this.camera.followBotId;
+    if (!fid) return;
+    const desk = input.motion.layout.botDesks.get(fid);
+    if (!desk) return;
+    const pose = input.motion.actorPose(`bot:${fid}`, [desk.x, desk.y]);
+    this.camera.updateFollowTarget(pose.footX, pose.footY - 22, designSize, immediate);
+  }
+
+  focusBot(botId: string): boolean {
+    if (!this.lastInput) return false;
+    const desk = this.lastInput.motion.layout.botDesks.get(botId);
+    if (!desk) return false;
+    const theme = getThemeConfig(this.lastInput.themeId, this.lastInput.locale ?? 'en');
+    const pose = this.lastInput.motion.actorPose(`bot:${botId}`, [desk.x, desk.y]);
+    this.camera.focusWorldPoint(pose.footX, pose.footY - 22, FOCUS_SPOTLIGHT_ZOOM, theme.designSize, {
+      botId,
+    });
+    if (this.camera.followBotId && this.camera.followBotId !== botId) {
+      this.camera.setFollowBot(botId);
+    }
+    this.onCameraChange?.();
+    this.renderNow();
+    this.ensureAnimationLoopIfNeeded();
+    return true;
+  }
+
+  toggleFollow(botId: string | null): boolean {
+    if (this.camera.followBotId !== null && (botId === null || this.camera.followBotId === botId)) {
+      this.camera.releaseFollow();
+    } else if (botId) {
+      this.camera.setFollowBot(botId);
+      if (this.lastInput) {
+        const theme = getThemeConfig(this.lastInput.themeId, this.lastInput.locale ?? 'en');
+        this.syncFollowTarget(this.lastInput, theme.designSize, false);
+      }
+    }
+    this.onCameraChange?.();
+    this.renderNow();
+    this.ensureAnimationLoopIfNeeded();
+    return this.camera.followBotId !== null;
+  }
+
+  zoomBy(delta: number): void {
+    if (!this.lastInput) return;
+    const theme = getThemeConfig(this.lastInput.themeId, this.lastInput.locale ?? 'en');
+    this.camera.setZoom(this.camera.targetZoom + delta, theme.designSize, false);
+    this.onCameraChange?.();
+    this.renderNow();
+    this.ensureAnimationLoopIfNeeded();
+  }
+
+  resetCamera(): void {
+    this.camera.reset(false);
+    this.onCameraChange?.();
     this.renderNow();
     this.ensureAnimationLoopIfNeeded();
   }
@@ -482,6 +557,8 @@ export class StageRenderer {
   }
 
   private shouldAnimate(input: StageRenderInput): boolean {
+    if (this.camera.isAnimating()) return true;
+    if (input.showCollabNetwork && input.collabEdges && input.collabEdges.length > 0) return true;
     if (input.motion.hasActiveAnimations()) return true;
     if (input.replay?.isReplay) {
       return input.replay.isPlaying;
@@ -525,9 +602,17 @@ export class StageRenderer {
     if (!isPlayingReplay) {
       input.motion.step(dtSecs, input.snapshot, theme, input.customDeskPositions);
     }
+    if (this.camera.followBotId) {
+      this.syncFollowTarget(input, theme.designSize, false);
+    }
+    const camStillAnimating = this.camera.step(dtSecs, theme.designSize);
 
     const isIdleOnlyAmbient =
-      !isPlayingReplay && !this.hasActiveOrWorkingAnimation(input) && this.hasAmbientIdleAnimation(input);
+      !camStillAnimating &&
+      !(input.showCollabNetwork && input.collabEdges && input.collabEdges.length > 0) &&
+      !isPlayingReplay &&
+      !this.hasActiveOrWorkingAnimation(input) &&
+      this.hasAmbientIdleAnimation(input);
     if (!isIdleOnlyAmbient || nowMs - this.lastIdleAnimRenderMs >= 80) {
       this.lastIdleAnimRenderMs = nowMs;
       this.renderNow();
@@ -561,25 +646,43 @@ export class StageRenderer {
   };
 
   private readonly handlePointerDown = (ev: PointerEvent): void => {
-    if (!this.onMoveBot || ev.button !== 0 || !this.lastInput) return;
+    if (ev.button !== 0 || !this.lastInput) return;
     const botId = this.findHitBotId(ev.clientX, ev.clientY);
-    if (!botId) return;
-    const desk = this.lastInput.motion.layout.botDesks.get(botId);
-    if (!desk) return;
-    this.dragCandidate = {
-      botId,
-      pointerId: ev.pointerId,
-      startClientX: ev.clientX,
-      startClientY: ev.clientY,
-      startDesignX: desk.x,
-      startDesignY: desk.y,
-      isDragging: false,
-      currentPos: { x: desk.x, y: desk.y },
-    };
-    try {
-      this.canvas.setPointerCapture?.(ev.pointerId);
-    } catch {
-      // Ignore capture errors in non-DOM/synthetic environments
+    if (botId && this.onMoveBot) {
+      const desk = this.lastInput.motion.layout.botDesks.get(botId);
+      if (!desk) return;
+      this.dragCandidate = {
+        botId,
+        pointerId: ev.pointerId,
+        startClientX: ev.clientX,
+        startClientY: ev.clientY,
+        startDesignX: desk.x,
+        startDesignY: desk.y,
+        isDragging: false,
+        currentPos: { x: desk.x, y: desk.y },
+      };
+      try {
+        this.canvas.setPointerCapture?.(ev.pointerId);
+      } catch {
+        // Ignore capture errors in non-DOM/synthetic environments
+      }
+      return;
+    }
+
+    // Background drag-to-pan when zoomed > 1.0 and NOT starting on a bot
+    if (!botId && this.camera.isZoomed()) {
+      this.panDrag = {
+        pointerId: ev.pointerId,
+        lastClientX: ev.clientX,
+        lastClientY: ev.clientY,
+        moved: false,
+      };
+      this.canvas.style.cursor = 'grabbing';
+      try {
+        this.canvas.setPointerCapture?.(ev.pointerId);
+      } catch {
+        // Ignore capture errors
+      }
     }
   };
 
@@ -605,12 +708,53 @@ export class StageRenderer {
       return;
     }
 
+    if (this.panDrag && ev.pointerId === this.panDrag.pointerId) {
+      const dx = ev.clientX - this.panDrag.lastClientX;
+      const dy = ev.clientY - this.panDrag.lastClientY;
+      this.panDrag.lastClientX = ev.clientX;
+      this.panDrag.lastClientY = ev.clientY;
+      if (Math.hypot(dx, dy) >= 1) {
+        this.panDrag.moved = true;
+      }
+      if (this.lastStageViewport) {
+        this.camera.panByScreenDelta(dx, dy, this.lastStageViewport, true);
+        this.onCameraChange?.();
+        this.renderNow();
+        this.ensureAnimationLoopIfNeeded();
+      }
+      return;
+    }
+
     const hovered = this.findHitBotId(ev.clientX, ev.clientY);
-    this.canvas.style.cursor = hovered ? (this.onMoveBot ? 'grab' : 'pointer') : 'default';
+    this.canvas.style.cursor = hovered
+      ? this.onMoveBot
+        ? 'grab'
+        : 'pointer'
+      : this.camera.isZoomed()
+        ? 'grab'
+        : 'default';
     this.onHoverBot?.(hovered);
   };
 
   private readonly handlePointerUp = (ev: PointerEvent): void => {
+    if (this.panDrag && ev.pointerId === this.panDrag.pointerId) {
+      try {
+        this.canvas.releasePointerCapture?.(ev.pointerId);
+      } catch {
+        // Ignore release errors
+      }
+      const moved = this.panDrag.moved;
+      this.panDrag = null;
+      if (moved) {
+        this.suppressNextClick = true;
+        setTimeout(() => {
+          this.suppressNextClick = false;
+        }, 0);
+      }
+      this.canvas.style.cursor = this.camera.isZoomed() ? 'grab' : 'default';
+      return;
+    }
+
     if (!this.dragCandidate || ev.pointerId !== this.dragCandidate.pointerId) return;
     try {
       this.canvas.releasePointerCapture?.(ev.pointerId);
@@ -633,6 +777,16 @@ export class StageRenderer {
   };
 
   private readonly handlePointerCancel = (ev: PointerEvent): void => {
+    if (this.panDrag && ev.pointerId === this.panDrag.pointerId) {
+      try {
+        this.canvas.releasePointerCapture?.(ev.pointerId);
+      } catch {
+        // Ignore release errors
+      }
+      this.panDrag = null;
+      this.canvas.style.cursor = 'default';
+      return;
+    }
     if (!this.dragCandidate || ev.pointerId !== this.dragCandidate.pointerId) return;
     try {
       this.canvas.releasePointerCapture?.(ev.pointerId);
@@ -645,6 +799,11 @@ export class StageRenderer {
   };
 
   private readonly handlePointerLeave = (ev: PointerEvent): void => {
+    if (this.panDrag) {
+      const hasCap = this.canvas.hasPointerCapture?.(ev.pointerId) ?? false;
+      if (hasCap) return;
+      this.panDrag = null;
+    }
     if (this.dragCandidate) {
       const hasCap = this.canvas.hasPointerCapture?.(ev.pointerId) ?? false;
       if (hasCap) return;
@@ -653,6 +812,21 @@ export class StageRenderer {
     }
     this.canvas.style.cursor = 'default';
     this.onHoverBot?.(null);
+  };
+
+  private readonly handleWheel = (ev: WheelEvent): void => {
+    if (!this.lastInput || !this.lastStageViewport) return;
+    if (Math.abs(ev.deltaY) < 0.01) return;
+    ev.preventDefault();
+    const rect = this.canvas.getBoundingClientRect();
+    const sx = ev.clientX - rect.left;
+    const sy = ev.clientY - rect.top;
+    const step = ev.deltaY < 0 ? CAMERA_ZOOM_STEP * 0.6 : -CAMERA_ZOOM_STEP * 0.6;
+    const nextZoom = this.camera.targetZoom + step;
+    this.camera.zoomAtScreenPoint(nextZoom, sx, sy, this.lastStageViewport, false);
+    this.onCameraChange?.();
+    this.renderNow();
+    this.ensureAnimationLoopIfNeeded();
   };
 
   renderNow(): void {
@@ -675,7 +849,13 @@ export class StageRenderer {
     const locale = input.locale ?? 'en';
     const s = tStrings(locale);
     const theme: ThemeConfig = getThemeConfig(input.themeId, locale);
-    const vt = createViewportTransform(cssW, cssH, theme.designSize);
+    const stageVp = createStageViewport(cssW, cssH, theme.designSize);
+    this.lastStageViewport = stageVp;
+    const vt = composeViewportTransform(stageVp, {
+      zoom: this.camera.zoom,
+      panX: this.camera.panX,
+      panY: this.camera.panY,
+    });
     this.lastViewport = vt;
     const bgW = vt.designW * vt.scale;
     const bgH = vt.designH * vt.scale;
@@ -695,7 +875,10 @@ export class StageRenderer {
     const atmospherePhase = resolveAtmospherePhase(atmosphereMode, displayTimestampMs);
     const pulseHigh = this.animTick % 2 === 0;
     const runtimeDimmed = !snapshot.runtime.connected && Object.keys(snapshot.bots).length > 0;
-    const uiScale = Math.max(0.76, Math.min(1.05, vt.scale));
+    const uiScale = Math.max(0.76, Math.min(1.18, vt.scale));
+    const filterSet = input.filterMatchedBotIds ?? null;
+    const filterActive = filterSet !== null;
+    const mvpBotId = input.mvpBotId ?? null;
 
     const orderedBots: BotState[] =
       snapshot.botOrder.length > 0
@@ -705,6 +888,7 @@ export class StageRenderer {
         : Object.values(snapshot.bots);
 
     type ActorRenderItem = {
+      botId: string | null;
       footX: number;
       footY: number;
       zBias: number;
@@ -716,6 +900,9 @@ export class StageRenderer {
       facing: Facing;
       carryProp: CarryProp | null;
       grayscale: boolean;
+      dimmed: boolean;
+      filterHighlighted: boolean;
+      spotlighted: boolean;
       selected: boolean;
       needsOwner: boolean;
       isWorker: boolean;
@@ -733,6 +920,8 @@ export class StageRenderer {
       spriteRect: Rect;
       selected: boolean;
       activeWorkerCount: number;
+      dimmed: boolean;
+      isMvp: boolean;
     };
 
     type WorkerOverlay = {
@@ -742,6 +931,7 @@ export class StageRenderer {
       screenX: number;
       screenY: number;
       spriteRect: Rect;
+      dimmed: boolean;
     };
 
     type DeskMiniProp = {
@@ -795,8 +985,14 @@ export class StageRenderer {
       const selected = selectedBotId === bot.id;
       const needsOwner = bot.status.kind === 'NeedsOwner';
       const grayscale = bot.status.kind === 'Paused';
+      const isMatched = !filterActive || filterSet.has(bot.id);
+      const dimmed = filterActive && !isMatched;
+      const filterHighlighted = filterActive && isMatched;
+      const spotlighted =
+        this.camera.spotlightBotId === bot.id && this.camera.spotlightRemainingSecs > 0;
 
       actors.push({
+        botId: bot.id,
         footX: pose.footX + xShakePx,
         footY: pose.footY,
         zBias: isDraggingBot ? 10 : 0,
@@ -808,6 +1004,9 @@ export class StageRenderer {
         facing: pose.facing,
         carryProp: pose.carryProp,
         grayscale,
+        dimmed,
+        filterHighlighted,
+        spotlighted,
         selected,
         needsOwner,
         isWorker: false,
@@ -842,6 +1041,8 @@ export class StageRenderer {
         spriteRect: sb,
         selected,
         activeWorkerCount: bot.activeWorkerCount,
+        dimmed,
+        isMvp: mvpBotId === bot.id,
       });
 
       const hasVisibleWorker =
@@ -880,7 +1081,9 @@ export class StageRenderer {
           ? -1.2
           : 0;
 
+      const workerDimmed = filterActive && !filterSet.has(seat.parentBotId);
       actors.push({
+        botId: null,
         footX: pose.footX,
         footY: pose.footY,
         zBias: 1,
@@ -892,6 +1095,9 @@ export class StageRenderer {
         facing: pose.facing,
         carryProp: pose.carryProp,
         grayscale: worker.liveness === 'Exited',
+        dimmed: workerDimmed,
+        filterHighlighted: false,
+        spotlighted: false,
         selected: false,
         needsOwner: false,
         isWorker: true,
@@ -917,12 +1123,16 @@ export class StageRenderer {
         screenX: wx,
         screenY: wy,
         spriteRect: wb,
+        dimmed: workerDimmed,
       });
     }
 
     for (const { meta, pose } of motion.activeWorkerMotions()) {
       if (renderedWorkerIds.has(meta.dispatchId)) continue;
+      const motionDimmed =
+        filterActive && (!meta.parentBotId || !filterSet.has(meta.parentBotId));
       actors.push({
+        botId: null,
         footX: pose.footX,
         footY: pose.footY,
         zBias: 1,
@@ -934,6 +1144,9 @@ export class StageRenderer {
         facing: pose.facing,
         carryProp: pose.carryProp,
         grayscale: meta.kind === 'Leaving' && meta.liveness === 'Exited',
+        dimmed: motionDimmed,
+        filterHighlighted: false,
+        spotlighted: false,
         selected: false,
         needsOwner: false,
         isWorker: true,
@@ -958,12 +1171,27 @@ export class StageRenderer {
         screenX: wx,
         screenY: wy,
         spriteRect: wb,
+        dimmed: motionDimmed,
       });
     }
 
     // Y-sort strictly by (footY, zBias)
     actors.sort((a, b) => a.footY - b.footY || a.zBias - b.zBias);
     botOverlays.sort((a, b) => a.screenY - b.screenY || a.botId.localeCompare(b.botId));
+
+    // Collaboration Network Overlay (drawn beneath actors & nameplates)
+    if (input.showCollabNetwork && input.collabEdges && input.collabEdges.length > 0) {
+      this.paintCollabNetworkOverlay(
+        ctx,
+        vt,
+        input.collabEdges,
+        layout,
+        motion,
+        elapsedSecs,
+        uiScale,
+        filterSet
+      );
+    }
 
     // Paint actors
     for (const actor of actors) {
@@ -972,6 +1200,33 @@ export class StageRenderer {
       const shadowH = (actor.isWorker ? 12 : 16) * vt.scale;
       const sx = fx - shadowW * 0.5;
       const sy = fy - shadowH * 0.45;
+
+      ctx.save();
+      if (actor.dimmed) {
+        ctx.globalAlpha = 0.24;
+      }
+
+      if (actor.spotlighted) {
+        const pulse = 0.5 + 0.5 * Math.sin(this.camera.spotlightElapsedSecs * 7.5);
+        const rx = shadowW * (0.76 + pulse * 0.14);
+        const ry = shadowH * (0.95 + pulse * 0.2);
+        ctx.save();
+        ctx.beginPath();
+        ctx.ellipse(fx, fy - 2 * vt.scale, rx, ry, 0, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(250, 204, 21, ${0.14 + pulse * 0.14})`;
+        ctx.fill();
+        ctx.lineWidth = 2.4 * Math.max(0.8, uiScale);
+        ctx.strokeStyle = `rgba(250, 204, 21, ${0.65 + pulse * 0.35})`;
+        ctx.stroke();
+        ctx.restore();
+      } else if (actor.filterHighlighted && !actor.selected) {
+        drawRoundedRect(ctx, sx - 6, sy - 4, shadowW + 12, shadowH + 8, 14);
+        ctx.fillStyle = 'rgba(56, 189, 248, 0.14)';
+        ctx.fill();
+        ctx.lineWidth = 1.6;
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.72)';
+        ctx.stroke();
+      }
 
       if (actor.isDragging) {
         ctx.save();
@@ -1031,6 +1286,7 @@ export class StageRenderer {
         const [cx, cy] = designToScreen(vt, actor.footX + dir * 24, actor.footY - 30);
         this.paintCarryProp(ctx, actor.carryProp, cx, cy + actor.yBobPx, vt.scale);
       }
+      ctx.restore();
     }
 
     // Flying props, curved couriers & particles
@@ -1115,6 +1371,8 @@ export class StageRenderer {
         : w.activity === 'blocked'
           ? 'rgba(234, 88, 12, 0.94)'
           : 'rgba(15, 118, 110, 0.94)';
+      ctx.save();
+      if (w.dimmed) ctx.globalAlpha = 0.24;
       ctx.font = `600 ${Math.round(9 * uiScale)}px ${CANVAS_FONT_FAMILY}`;
       const estW = Math.max(32 * uiScale, ctx.measureText(label).width + 12 * uiScale);
       const estH = 18 * uiScale;
@@ -1130,6 +1388,7 @@ export class StageRenderer {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(label, left + estW * 0.5, top + estH * 0.5);
+      ctx.restore();
       obstacles.push([left, top, estW, estH]);
     }
 
@@ -1150,6 +1409,30 @@ export class StageRenderer {
       const estHeight = spacerH + pillH + calloutH;
       const desiredTop = overlay.spriteTopY - (hasCallout ? 20 * npScale : 0);
       const top = Math.max(bgTop + 4, Math.min(bgBottom - estHeight - 4, desiredTop));
+
+      ctx.save();
+      if (overlay.dimmed) ctx.globalAlpha = 0.24;
+
+      if (overlay.isMvp) {
+        const crownW = 20 * npScale;
+        const crownH = 16 * npScale;
+        const crownX = hasCallout
+          ? Math.min(bgRight - crownW - 4, overlay.spriteRect[0] + overlay.spriteRect[2] - 4 * npScale)
+          : overlay.screenX - crownW * 0.5;
+        const crownY = Math.max(bgTop + 3, overlay.spriteTopY - crownH - (hasCallout ? 2 : 3) * npScale);
+        drawRoundedRect(ctx, crownX, crownY, crownW, crownH, 6 * npScale);
+        ctx.fillStyle = 'rgba(250, 204, 21, 0.96)';
+        ctx.fill();
+        ctx.strokeStyle = '#92400e';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.font = `700 ${Math.round(10 * npScale)}px ${CANVAS_FONT_FAMILY}`;
+        ctx.fillStyle = '#451a03';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('👑', crownX + crownW * 0.5, crownY + crownH * 0.52);
+        obstacles.push([crownX, crownY, crownW, crownH]);
+      }
 
       if (overlay.status.kind === 'NeedsOwner') {
         const notice = s.calloutNeedsOwner(overlay.status.count);
@@ -1234,6 +1517,7 @@ export class StageRenderer {
           pillTop + 27 * npScale
         );
       }
+      ctx.restore();
 
       // Click hitbox covers both sprite and nameplate
       const hbLeft = Math.min(overlay.spriteRect[0], left);
@@ -1911,6 +2195,129 @@ export class StageRenderer {
     ctx.restore();
   }
 
+  private paintCollabNetworkOverlay(
+    ctx: CanvasRenderingContext2D,
+    vt: ViewportTransform,
+    edges: readonly CollabEdge[],
+    layout: MotionDirector['layout'],
+    motion: MotionDirector,
+    elapsedSecs: number,
+    uiScale: number,
+    filterSet: ReadonlySet<string> | null
+  ): void {
+    const resolveNodeDesignPos = (node: CollabEdge['from']): [number, number] | null => {
+      if (node.kind === 'bot') {
+        const d = layout.botDesks.get(node.botId);
+        if (!d) return null;
+        const p = motion.actorPose(`bot:${node.botId}`, [d.x, d.y]);
+        return [p.footX, p.footY - 22];
+      }
+      if (node.kind === 'worker') {
+        const w = layout.workerSeats.get(node.dispatchId);
+        if (!w) return null;
+        const p = motion.actorPose(`worker:${node.dispatchId}`, [w.x, w.y]);
+        return [p.footX, p.footY - 16];
+      }
+      return [layout.automationBoard[0], layout.automationBoard[1] - 12];
+    };
+
+    const nodeMatchesFilter = (node: CollabEdge['from']): boolean => {
+      if (!filterSet) return true;
+      if (node.kind === 'bot') return filterSet.has(node.botId);
+      if (node.kind === 'worker') {
+        const w = layout.workerSeats.get(node.dispatchId);
+        return w ? filterSet.has(w.parentBotId) : false;
+      }
+      return false;
+    };
+
+    const topPillLimit = 5;
+    let renderedCount = 0;
+
+    edges.forEach((edge, idx) => {
+      const fromD = resolveNodeDesignPos(edge.from);
+      const toD = resolveNodeDesignPos(edge.to);
+      if (!fromD || !toD) return;
+      const [fx, fy] = designToScreen(vt, fromD[0], fromD[1]);
+      const [tx, ty] = designToScreen(vt, toD[0], toD[1]);
+      const dist = Math.hypot(tx - fx, ty - fy);
+      if (dist < 4) return;
+
+      const midX = (fx + tx) * 0.5;
+      const midY = (fy + ty) * 0.5;
+      const nx = -(ty - fy) / dist;
+      const ny = (tx - fx) / dist;
+      const bendSign = idx % 2 === 0 ? 1 : -1;
+      const bend = Math.min(48 * vt.scale, Math.max(14 * vt.scale, dist * 0.18)) * bendSign;
+      const cx = midX + nx * bend;
+      const cy = midY + ny * bend;
+
+      const edgeMatched = !filterSet || nodeMatchesFilter(edge.from) || nodeMatchesFilter(edge.to);
+      const alphaScale = edgeMatched ? 1 : 0.22;
+
+      const strokeCol =
+        edge.kind === 'bot_bot'
+          ? `rgba(56, 189, 248, ${0.65 * alphaScale})`
+          : edge.kind === 'bot_worker'
+            ? `rgba(45, 212, 191, ${0.68 * alphaScale})`
+            : `rgba(192, 132, 252, ${0.62 * alphaScale})`;
+      const dotCol =
+        edge.kind === 'bot_bot'
+          ? '#e0f2fe'
+          : edge.kind === 'bot_worker'
+            ? '#ccfbf1'
+            : '#f3e8ff';
+      const lineW = Math.min(4.8, 1.35 + Math.log2(edge.weight + 1) * 0.95) * Math.max(0.75, uiScale);
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(fx, fy);
+      ctx.quadraticCurveTo(cx, cy, tx, ty);
+      ctx.lineWidth = lineW;
+      ctx.strokeStyle = strokeCol;
+      ctx.shadowColor = strokeCol;
+      ctx.shadowBlur = 7 * uiScale;
+      ctx.stroke();
+
+      // Animated flow dot along active edge
+      if (edge.active) {
+        const t = (elapsedSecs * 0.45 + idx * 0.23) % 1;
+        const omt = 1 - t;
+        const dx = omt * omt * fx + 2 * omt * t * cx + t * t * tx;
+        const dy = omt * omt * fy + 2 * omt * t * cy + t * t * ty;
+        ctx.beginPath();
+        ctx.arc(dx, dy, Math.max(2.2, lineW * 1.15), 0, Math.PI * 2);
+        ctx.fillStyle = dotCol;
+        ctx.globalAlpha = alphaScale;
+        ctx.fill();
+      }
+
+      // Unobtrusive anonymized count pill on top-N strongest edges
+      if (renderedCount < topPillLimit && edgeMatched) {
+        renderedCount += 1;
+        const px = 0.25 * fx + 0.5 * cx + 0.25 * tx;
+        const py = 0.25 * fy + 0.5 * cy + 0.25 * ty;
+        const pillText = `×${edge.weight}`;
+        ctx.shadowBlur = 0;
+        ctx.font = `700 ${Math.round(8.5 * uiScale)}px ${CANVAS_FONT_FAMILY}`;
+        const pw = Math.max(20 * uiScale, ctx.measureText(pillText).width + 8 * uiScale);
+        const ph = 14 * uiScale;
+        drawRoundedRect(ctx, px - pw * 0.5, py - ph * 0.5, pw, ph, 5 * uiScale);
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+        ctx.fill();
+        ctx.strokeStyle = strokeCol;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = '#f8fafc';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(pillText, px, py);
+      }
+
+      ctx.restore();
+    });
+  }
+
   dispose(): void {
     this.destroyed = true;
     if (this.rafId !== null) {
@@ -1924,5 +2331,6 @@ export class StageRenderer {
     this.canvas.removeEventListener('pointerup', this.handlePointerUp);
     this.canvas.removeEventListener('pointercancel', this.handlePointerCancel);
     this.canvas.removeEventListener('pointerleave', this.handlePointerLeave);
+    this.canvas.removeEventListener('wheel', this.handleWheel);
   }
 }

@@ -3,11 +3,11 @@
   <h1>Bot World</h1>
   <p><strong>Read-only virtual office visualizer (HTML5 Canvas) for Orca bots and live sub-workers.</strong></p>
   <p>
-    <code>Read-Only</code> · <code>4 Office Themes</code> · <code>Drag &amp; Drop Seating</code> · <code>24h Office Digest</code> · <code>Bilingual EN / 한국어</code> · <code>Redact Mode</code> · <code>24h Replay</code>
+    <code>Read-Only</code> · <code>4 Office Themes</code> · <code>Smart Camera</code> · <code>Filters &amp; Search</code> · <code>Collab Network</code> · <code>Daily MVP &amp; Badges</code> · <code>24h Office Digest</code> · <code>Bilingual EN / 한국어</code> · <code>Redact Mode</code> · <code>24h Replay</code>
   </p>
   <br />
-  <img src="assets/showcase/preview.gif" alt="Bot World animated preview showing 4 office themes (Startup, Corporate, Cozy Cafe, Cyber Ops), Day/Sunset/Night atmosphere, drag-and-drop custom seating, 24h Office Digest Report, Redact Mode with 24h Replay, and EN/KO toggle" />
-  <p><em>Interactive preview: 4 office themes (Startup, Corporate, Cozy Cafe, Cyber Ops), Day / Sunset / Night atmosphere, drag-and-drop custom seating, 24h Office Digest Report, Redact Mode + 24h Replay, and instant EN / 한국어 toggle.</em></p>
+  <img src="assets/showcase/preview.gif" alt="Bot World v0.4.0 animated preview showing 4 office themes, Living Office atmosphere, Smart Camera zoom/pan and Focus Spotlight, status filters and search, collaboration network overlay, Daily MVP and Office Badges in the 24h Office Digest Report, Redact Mode with 24h Replay, and EN/KO toggle" />
+  <p><em>Interactive preview (v0.4.0 Command &amp; Focus): 4 isometric office themes (Startup, Corporate, Cozy Cafe, Cyber Ops), Day / Sunset / Night atmosphere, Smart Camera zoom/pan &amp; Focus Spotlight, status filters &amp; search, 24h collaboration network overlay, Daily MVP &amp; Office Badges in the 24h Office Digest Report, Redact Mode + 24h Replay, and instant EN / 한국어 toggle.</em></p>
 </div>
 
 ---
@@ -28,13 +28,22 @@ Open a `.botworld` file (**New File → New Bot World Board**) for the full two-
 | <img src="assets/showcase/cozy-cafe.jpg" alt="Bot World Cozy Cafe theme at sunset with 8 live bots spread across wooden desks and round cafe tables" /> | <img src="assets/showcase/cyber-ops.jpg" alt="Bot World Cyber Ops midnight neon control room theme with live bots, glowing monitors, and sub-workers" /> |
 | *Warm botanical cafe studio at sunset with wooden desks, round cafe tables, and flying handoff couriers.* | *Midnight neon operations center with dual monitors, live desk lamps, and idle `Zzz` bubbles.* |
 
-### 24h Daily Office Digest Report
+### Command & Focus (`Smart Camera` · `Filters & Search` · `Collab Network`)
 
-Press `I` or click **Report** in the toolbar to review a 24-hour activity summary — KPIs (events, worker runs, collaborations, automation success rate, and pending owner inputs), the **Top 3** active bots, and a **12-bucket hourly activity bar chart** — with 1-click **Copy Markdown** and full **Redact Mode** compliance.
+Quickly isolate bottlenecks across busy workspaces: press `N` for **Focus Spotlight** on `Needs You` or `Error` bots, toggle **Follow Cam** (`F`) or zoom/pan smoothly (`0` to reset), filter by status chips or press `/` to search, and press `C` to overlay 24-hour weighted collaboration arcs between bots, sub-workers, and the Automation Board.
 
 <div align="center">
-  <img src="assets/showcase/office-report.jpg" alt="24h Daily Office Digest Report modal showing KPIs, Top 3 active bots, 12h activity bar chart, and Copy Markdown button" />
-  <p><em>24h Daily Office Digest Report modal: KPIs, Top 3 active bots, 12-hour activity bar chart, and 1-click Copy Markdown (Redact-safe).</em></p>
+  <img src="assets/showcase/command-collab.jpg" alt="Bot World Cyber Ops Night mode with 24-hour collaboration network overlay arcs, status filter bar, live search input, and camera zoom HUD" />
+  <p><em>Command &amp; Focus in Cyber Ops Night mode: 24h collaboration network arcs (<code>C</code>), status filter chips &amp; live search (<code>/</code>), and Smart Camera zoom/follow HUD.</em></p>
+</div>
+
+### 24h Daily Office Digest Report (`Daily MVP & Office Badges`)
+
+Press `I` or click **Report** in the toolbar to review a 24-hour activity summary — KPIs (events, sub-worker runs, collaborations, automation rate, and pending owner inputs), **Daily MVP & Office Badges** (`👑 Daily MVP`, `🧭 Top Delegator`, `🦉 Night Owl`, `🛡️ Error-Free Streak`), the **Top 3** active bots, and a **12 hourly buckets** activity bar chart — with 1-click **Copy Markdown** and full **Redact Mode** compliance.
+
+<div align="center">
+  <img src="assets/showcase/office-report.jpg" alt="24h Daily Office Digest Report modal showing KPIs, Daily MVP and Office Badges, Top 3 active bots, 12 hourly buckets activity bar chart, and Copy Markdown button" />
+  <p><em>24h Daily Office Digest Report modal: KPIs, Daily MVP &amp; Office Badges, Top 3 active bots, 12 hourly buckets activity bar chart, and 1-click Copy Markdown (Redact-safe).</em></p>
 </div>
 
 ### Living Office Atmosphere (`Day` · `Sunset` · `Night`)
@@ -83,12 +92,20 @@ Keep a live office overview docked beside your code and terminals without leavin
   - **Sidebar Panel (`Bot World`)**: Compact docked canvas, bot roster pills, detail inspector, 24h Report button, and recent event timeline.
   - **Wide `.botworld` Office Board**: Create via **New File → New Bot World Board (`.botworld`)** for a full-screen 2-column stage with a **24-hour timeline scrubber** and replay controls. `.botworld` files store view preferences only (`themeId`, `atmosphereMode`, `redactMode`, `selectedBotId`, `botAppearances`, `customDeskPositions`) and never persist sensitive task text.
   - **Status Bar Summary (`bot-world-status`)**: Live counts of active bots, running sub-workers, and bots awaiting owner input (anonymized in Redact Mode).
+- **Smart Camera (`N`, `F`, `0`, Wheel Zoom & Drag Pan — v0.4.0)**:
+  - Zoom smoothly (`100%`–`260%`) with the mouse wheel or the bottom-right Zoom HUD (`-`, `100%`, `+`), pan by dragging empty office background, press `N` (or click **Focus**) to jump Focus Spotlight onto `Needs You` / `Error` bots (cycling active bots when none are urgent), press `F` (or click **Follow**) to track the selected bot across seat moves, and press `0` to reset camera zoom and pan.
+- **Status Filter & Live Search (`/` — v0.4.0)**:
+  - Narrow crowded offices with live count chips (`All`, `Working`, `Needs You`, `Error`, `Workers`) and instant `/` search. Non-matching desks smoothly dim on the canvas, and **Redact Mode** enforces strict search privacy (matching only anonymous aliases such as `Bot #1` and localized status labels, never real names, specialties, task titles, tools, or worker titles).
+- **Collaboration Network Overlay (`C` — v0.4.0)**:
+  - Press `C` or click **Collab** to render 24-hour weighted collaboration arcs connecting collaborating bots, sub-workers, and the **Automation Board** — strictly Redact-safe without exposing task titles or tool names.
+- **Bot Office Badges & Daily MVP (v0.4.0)**:
+  - Computes local 24-hour awards (`👑 Daily MVP` with an animated crown on the canvas, `🧭 Top Delegator`, `🦉 Night Owl` for 21:00–04:59 activity, and `🛡️ Error-Free Streak`) and surfaces them in both the bot detail inspector and the 24h Office Digest Report.
 - **4 Office Themes (v0.3.0)**:
   - Cycle between `Startup Office` (`startup_office`), `Corporate Office` (`corporate_office`), `Cozy Cafe` (`cozy_cafe`), and `Cyber Ops` (`cyber_ops`) via the toolbar or `T`. Each theme maps 14 custom desk coordinates, landmarks, and an overflow grid for larger fleets.
 - **Drag-and-Drop Custom Seat Layout (v0.3.0)**:
   - Drag any bot on the `.botworld` stage to reposition its desk (live sub-workers and courier flight endpoints follow automatically). Custom coordinates are bounded, sanitized, and saved in `.botworld` under `customDeskPositions` (up to 128 bots), with a **Reset Seats** button to restore theme defaults anytime.
-- **24h Daily Office Digest Report (v0.3.0)**:
-  - Open from the toolbar **Report** button or by pressing `I` in either surface. Summarizes the past 24 hours with 4 KPI cards (total events, sub-worker runs, collaborations, automation success rate), **Top 3** active bots, and a **12-bucket hourly activity bar chart** (2-hour windows), plus 1-click **Copy Markdown**. Automatically redacts sensitive titles and errors when **Redact Mode** is enabled.
+- **24h Daily Office Digest Report (v0.3.0, enhanced in v0.4.0)**:
+  - Open from the toolbar **Report** button or by pressing `I` in either surface. Summarizes the past 24 hours with 4 KPI cards (total events, sub-worker runs, collaborations, automation rate), **Daily MVP & Office Badges**, **Top 3** active bots, and an activity bar chart with **12 hourly buckets**, plus 1-click **Copy Markdown**. Automatically redacts sensitive titles and errors when **Redact Mode** is enabled.
 - **Living Office Atmosphere & Motion**:
   - **Time-of-Day Atmosphere (`Auto`, `Day`, `Sunset`, `Night`)**: Automatically shifts between `Day` (07:00–16:59), `Sunset` (17:00–19:59), and `Night` (20:00–06:59) in `Auto` mode — synced to either the live clock or the scrubbed **24h Replay** timestamp — or locks to any phase via toolbar (`A`) or Settings. Night mode adds warm desk lamp spotlights over working bots, steaming coffee icons, and idle `Zzz` bubbles.
   - **Curved Courier Flights & Sub-Worker Commutes**: Handoff events launch curved flying paper-plane couriers (`paper_plane`) and message/reply events launch envelope couriers (`envelope`) between participants. Sub-workers animate entering from and departing through the **Entrance** door landmark as they start and finish.
@@ -97,6 +114,11 @@ Keep a live office overview docked beside your code and terminals without leavin
 
   | Key | Action | Scope |
   | --- | --- | --- |
+  | `N` | Focus urgent (`Needs You` / `Error`) or active bot (Focus Spotlight) | Panel & `.botworld` |
+  | `F` | Toggle Follow Cam on selected bot | Panel & `.botworld` |
+  | `0` | Reset camera zoom & pan | Panel & `.botworld` |
+  | `/` | Focus bot search input | Panel & `.botworld` |
+  | `C` | Toggle 24h collaboration network overlay | Panel & `.botworld` |
   | `T` | Cycle office theme (`Startup` → `Corporate` → `Cozy Cafe` → `Cyber Ops`) | Panel & `.botworld` |
   | `R` | Toggle Redact Mode (`ON` / `OFF`) | Panel & `.botworld` |
   | `L` | Switch language (`EN` / `한국어`) | Panel & `.botworld` |
@@ -104,7 +126,7 @@ Keep a live office overview docked beside your code and terminals without leavin
   | `D` | Toggle Demo Office (`ON` / `OFF`) | Panel & `.botworld` |
   | `I` | Open / close 24h Office Digest Report | Panel & `.botworld` |
   | `Space` | Play / Pause 24h Replay | `.botworld` Editor |
-  | `Esc` | Close modal or clear selected bot | Panel & `.botworld` |
+  | `Esc` | Close modal, release Follow Cam, clear search/filter, or clear selection | Panel & `.botworld` |
   | `?` | Show / hide Keyboard Shortcuts modal | Panel & `.botworld` |
 
 - **Works with Any Orca Workspace**:
@@ -180,14 +202,19 @@ orca plugin test . --json
 - **이중 화면 구성**:
   - **우측 사이드바 패널 (`봇 월드`)**: 4가지 사무실 테마 순환, 24시간 리포트(`I`), 시간대 분위기 전환(`자동`·`낮`·`노을`·`야간`), 가림 모드(`가림 ON/OFF`), 언어 전환(`EN` / `한`), 봇별 진행 작업·요청/답변·세부 항목·하위 워커·정기 자동화 조회, 10종 동물 캐릭터 즉시 교체.
   - **넓은 `.botworld` 오피스 보드**: **새 파일 → 새 봇 월드 보드 (`.botworld`)** 로 생성하면 2단 전체 오피스 뷰와 **24시간 타임라인 스크러버(`1x / 2x / 5x / 10x` 재생)**, 드래그 앤 드롭 좌석 배치를 사용할 수 있습니다. `.botworld` 파일은 화면 설정(`themeId`, `atmosphereMode`, `redactMode`, `selectedBotId`, `botAppearances`, `customDeskPositions`)만 저장하며 민감한 작업 내용은 저장하지 않습니다.
+- **v0.4.0 (Command & Focus) 주요 기능**:
+  - **스마트 카메라 (`N`, `F`, `0`, 마우스 휠 확대/축소 & 배경 드래그 이동)**: `N` 키(**포커스**)로 `결정 대기`/`오류` 상태의 봇(없으면 활성 봇)에 포커스 스포트라이트를 맞추고, `F` 키(**추적**)로 선택한 봇을 따라가며, 휠·줌 HUD(`-` / `100%` / `+`)로 100%–260% 배율을 조절하고 `0` 키로 초기화합니다.
+  - **상태 필터 & 실시간 검색 (`/`)**: `전체`, `작업 중`, `결정 대기`, `오류`, `워커 보유` 필터 칩과 `/` 검색으로 일치하지 않는 책상을 부드럽게 어둡게 처리해 원하는 봇만 빠르게 찾습니다. 가림 모드에서는 익명 별칭(`봇 #1` 등)과 상태명만 검색해 실제 이름·작업·도구가 노출되지 않습니다.
+  - **협업 네트워크 오버레이 (`C`)**: 최근 24시간 동안 봇, 서브워커, 자동화 보드 사이에 오간 협업 비중을 연결선으로 시각화합니다(가림 모드에서도 민감 정보를 노출하지 않음).
+  - **오늘의 MVP & 오피스 배지**: 최근 24시간 활동을 바탕으로 `👑 오늘의 MVP`(캔버스 왕관 표시), `🧭 위임왕`, `🦉 야근 요정`(21:00–04:59), `🛡️ 무오류` 배지를 계산해 봇 상세 패널과 24시간 리포트에 표시합니다.
 - **v0.3.0 주요 기능**:
   - **4가지 오피스 테마**: `스타트업 오피스`, `대기업 오피스`, `코지 카페(Cozy Cafe)`, `사이버 관제실(Cyber Ops)` 테마를 `T` 키 또는 상단 메뉴에서 순환합니다.
-  - **드래그 앤 드롭 좌석 배치**: `.botworld` 캔버스에서 봇을 드래그해 원하는 책상 위치로 옮기면 하위 워커와 전달 애니메이션 좌표가 함께 이동하며 `.botworld` 파일에 저장됩니다. **좌석 초기화** 버튼으로 기본 배치로 되돌릴 수 있습니다.
-  - **24시간 사무실 다이제스트 리포트 (`I`)**: 최근 24시간 핵심 지표(사건, 워커 실행, 협업, 자동화 성공률), **상위 3개 활성 봇**, **12개 시간대별 활동 막대 그래프**를 요약해 보여주며, 클릭 한 번으로 Markdown 복사를 지원합니다(가림 모드 자동 준수).
+  - **드래그 앤 드롭 좌석 배치**: `.botworld` 캔버스에서 봇을 드래그해 원하는 책상 위치로 옮기면 하위 워커와 전달 애니메이션 좌표가 함께 이동하며 `.botworld` 파일에 저장됩니다. **자리 초기화** 버튼으로 기본 배치로 되돌릴 수 있습니다.
+  - **24시간 사무실 다이제스트 리포트 (`I`)**: 최근 24시간 핵심 지표(총 이벤트, 서브워커 실행, 협업 메시지, 자동화 성공률), **오늘의 MVP & 오피스 배지**, **가장 활발한 봇 Top 3**, **1시간 단위 12개 버킷 활동 막대 그래프**를 요약해 보여주며, 클릭 한 번으로 Markdown 복사를 지원합니다(가림 모드 자동 준수).
 - **살아 움직이는 사무실 분위기와 단축키**:
   - **시간대 조명 (`자동` · `낮` · `노을` · `야간`)**: `자동` 모드에서는 현재 시각과 24시간 리플레이 타임스탬프에 맞춰 조명이 전환되며, 야간에는 작업 중인 봇 책상의 조명 스포트라이트·김이 오르는 커피·대기 `Zzz` 말풍선을 표시합니다.
   - **곡선 전달 애니메이션 & 도우미 출입**: 인계 사건은 종이비행기, 질문/답변 사건은 편지봉투 곡선 비행으로 표현하고, 하위 도우미는 출입구를 통해 사무실로 들어가고 나가는 이동 애니메이션을 보여 줍니다.
-  - **키보드 단축키**: `T`(4종 테마 순환), `R`(가림 모드), `L`(언어), `A`(시간대 분위기), `D`(데모 오피스), `I`(24시간 리포트), `Space`(리플레이 재생/일시정지), `Esc`(창 닫기/선택 해제), `?`(단축키 안내)를 지원합니다.
+  - **키보드 단축키**: `N`(긴급·작업 봇 포커스), `F`(카메라 추적), `0`(카메라 배율·위치 초기화), `/`(봇 검색창 포커스), `C`(협업 네트워크 오버레이), `T`(4종 테마 순환), `R`(가림 모드), `L`(언어), `A`(시간대 분위기), `D`(데모 오피스), `I`(24시간 리포트), `Space`(리플레이 재생/일시정지, `.botworld` 전용), `Esc`(모달 닫기/추적·필터·선택 해제), `?`(단축키 안내)를 지원합니다.
 - **모든 Orca 워크스페이스 자동 대응 및 1클릭 데모 체험**:
   - **데모 오피스 체험(읽기 전용 시뮬레이션)**: 실행 중인 봇이 없을 때 표시되는 초기 안내 카드의 **데모 오피스 체험** 버튼이나 상단 도구 모음의 **데모** 버튼으로 가상 봇·하위 워커 협업, 테마 전환, 가림 모드, 24시간 타임라인 재생을 바로 체험할 수 있습니다. **데모 종료**를 누르면 `.botworld` 설정을 변경하지 않고 실시간 Orca 상태로 돌아갑니다.
   - **0개부터 15개 이상 봇까지 자동 배치**: 봇이 없는 초기 안내 상태부터 14개 전용 책상, 15개 이상 봇을 위한 확장 좌석 그리드와 축약 이름표까지 자동으로 배치합니다. 영문·한글 역할 키워드(`security`, `infra`, `cloud`, `cost`, `docs`, `cve`, `보안`, `인프라` 등)에 맞춰 부엉이·고슴도치·문어·여우·개구리·너구리·펭귄·탐정 곰·알파카·고양이 봇 캐릭터를 자동 배정하며 클릭 한 번으로 바꿀 수 있습니다.

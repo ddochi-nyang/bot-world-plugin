@@ -725,6 +725,19 @@ function buildInitialDemoHistory(
       },
     },
     {
+      ts: tMinus120m + 420_000,
+      ev: {
+        kind: 'AutomationRun',
+        automationId: 'demo-auto-1',
+        automationName: 'Hourly Dependency Advisory Check',
+        botId: 'demo-security',
+        botName: 'Security',
+        success: true,
+        noReply: true,
+        error: null,
+      },
+    },
+    {
       ts: tMinus80m + 15_000,
       ev: {
         kind: 'WorkerStart',
@@ -737,8 +750,28 @@ function buildInitialDemoHistory(
       seq: 1,
     },
     {
+      ts: tMinus80m + 45_000,
+      ev: {
+        kind: 'StatusReport',
+        messageId: 'demo-msg-init-1',
+        from: { kind: 'Bot', botId: 'demo-dev-tools', botName: 'Dev Tools' },
+        to: { kind: 'Bot', botId: 'demo-ops-lead', botName: 'Ops Lead' },
+        subject: 'Refine plugin CLI validation rules',
+      },
+    },
+    {
       ts: tMinus80m + 90_000,
       ev: { kind: 'ToolChanged', botId: 'demo-dev-tools', botName: 'Dev Tools', tool: 'edit_file' },
+    },
+    {
+      ts: tMinus80m + 240_000,
+      ev: {
+        kind: 'Handoff',
+        messageId: 'demo-msg-init-2',
+        from: { kind: 'Bot', botId: 'demo-infra-ops', botName: 'Infra Ops' },
+        to: { kind: 'Bot', botId: 'demo-cloud-ops', botName: 'Cloud Ops' },
+        subject: 'Deploy preview manifest ready',
+      },
     },
     {
       ts: tMinus40m + 20_000,
@@ -751,6 +784,16 @@ function buildInitialDemoHistory(
       },
     },
     {
+      ts: tMinus40m + 120_000,
+      ev: {
+        kind: 'Question',
+        messageId: 'demo-msg-init-3',
+        from: { kind: 'Bot', botId: 'demo-cloud-ops', botName: 'Cloud Ops' },
+        to: { kind: 'Bot', botId: 'demo-security', botName: 'Security' },
+        subject: 'Verify rollout readiness with Security',
+      },
+    },
+    {
       ts: tMinus40m + 180_000,
       ev: {
         kind: 'Reply',
@@ -758,6 +801,16 @@ function buildInitialDemoHistory(
         from: { kind: 'Bot', botId: 'demo-security', botName: 'Security' },
         to: { kind: 'Bot', botId: 'demo-ops-lead', botName: 'Ops Lead' },
         subject: 'Re: Review staging IAM role diff',
+      },
+    },
+    {
+      ts: nowMs - 180_000,
+      ev: {
+        kind: 'Handoff',
+        messageId: 'demo-msg-init-4',
+        from: { kind: 'Bot', botId: 'demo-ops-lead', botName: 'Ops Lead' },
+        to: { kind: 'Bot', botId: 'demo-doc-review', botName: 'Doc Review' },
+        subject: 'Draft release notes summary',
       },
     },
     {

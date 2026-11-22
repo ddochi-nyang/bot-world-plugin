@@ -21,9 +21,11 @@ export type DomAttrs = {
   role?: string;
   ariaLabel?: string;
   ariaPressed?: string;
+  placeholder?: string;
   onClick?: (ev: MouseEvent) => void;
   onInput?: (ev: Event) => void;
   onChange?: (ev: Event) => void;
+  onKeyDown?: (ev: KeyboardEvent) => void;
 };
 
 function isSafeLocalAssetSrc(src: string): boolean {
@@ -73,6 +75,9 @@ export function el<K extends keyof HTMLElementTagNameMap>(
     if (attrs.value !== undefined && 'value' in node) {
       (node as HTMLInputElement).value = attrs.value;
     }
+    if (attrs.placeholder !== undefined && node instanceof HTMLInputElement) {
+      node.placeholder = attrs.placeholder;
+    }
     if (attrs.selected !== undefined && typeof HTMLOptionElement !== 'undefined' && node instanceof HTMLOptionElement) {
       node.selected = attrs.selected;
     }
@@ -94,6 +99,9 @@ export function el<K extends keyof HTMLElementTagNameMap>(
     }
     if (attrs.onChange) {
       node.addEventListener('change', attrs.onChange);
+    }
+    if (attrs.onKeyDown) {
+      node.addEventListener('keydown', (ev) => attrs.onKeyDown!(ev as KeyboardEvent));
     }
   }
   for (const child of children) {

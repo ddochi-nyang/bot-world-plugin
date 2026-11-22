@@ -138,7 +138,7 @@ describe('Bot World v0.3.0 — Power User Edition features', () => {
       version: string;
       contributes: { settings: Array<{ key: string; enum?: string[]; enumLabels?: string[] }> };
     };
-    assert.equal(manifest.version, '0.3.0');
+    assert.equal(manifest.version, '0.4.0');
     const themeSetting = manifest.contributes.settings.find((s) => s.key === 'defaultTheme');
     assert.deepEqual(themeSetting?.enum, ['startup_office', 'corporate_office', 'cozy_cafe', 'cyber_ops']);
     assert.deepEqual(themeSetting?.enumLabels, [
@@ -478,16 +478,55 @@ describe('Bot World v0.3.0 — Power User Edition features', () => {
     const bucketSum = reportEn.hourlyBuckets.reduce((acc, b) => acc + b.count, 0);
     assert.equal(bucketSum, 8);
 
-    const mdRedactedEn = formatReportMarkdown(reportEn, { redactMode: true, locale: 'en' });
+    const mdPlainEn = formatReportMarkdown(reportEn, { redactMode: false, locale: 'en' });
+    assert.ok(mdPlainEn.includes('Ops Lead'));
+
+    const reportRedactedEn = buildOfficeReport(events, snap, { nowMs, redactMode: true, locale: 'en' });
+    assert.deepEqual(
+      reportRedactedEn.topBots.map((b) => [b.botId, b.botName, b.eventCount]),
+      [
+        ['b1', 'Bot #1', 4],
+        ['b2', 'Bot #2', 3],
+        ['b3', 'Bot #3', 1],
+      ]
+    );
+
+    const mdRedactedEn = formatReportMarkdown(reportRedactedEn, { redactMode: true, locale: 'en' });
     assert.ok(mdRedactedEn.includes('[Redacted]'));
-    assert.ok(mdRedactedEn.includes('Ops Lead'));
+    assert.ok(mdRedactedEn.includes('Bot #1'));
+    assert.ok(mdRedactedEn.includes('Bot #2'));
+    assert.ok(mdRedactedEn.includes('Bot #3'));
     assert.ok(mdRedactedEn.includes('50%'));
+    assert.equal(mdRedactedEn.includes('Ops Lead'), false);
+    assert.equal(mdRedactedEn.includes('Security'), false);
+    assert.equal(mdRedactedEn.includes('Cost Guard'), false);
+    assert.equal(mdRedactedEn.includes('Doc Review'), false);
     assert.equal(mdRedactedEn.includes('TOP_SECRET'), false);
     assert.equal(mdRedactedEn.includes('read_file'), false);
 
-    const mdRedactedKo = formatReportMarkdown(reportEn, { redactMode: true, locale: 'ko' });
+    // Defense-in-depth: passing a non-redacted report with redactMode: true never leaks real bot names
+    const mdDefenseEn = formatReportMarkdown(reportEn, { redactMode: true, locale: 'en' });
+    assert.equal(mdDefenseEn.includes('Ops Lead'), false);
+    assert.equal(mdDefenseEn.includes('Security'), false);
+    assert.equal(mdDefenseEn.includes('Cost Guard'), false);
+
+    const reportRedactedKo = buildOfficeReport(events, snap, { nowMs, redactMode: true, locale: 'ko' });
+    assert.deepEqual(
+      reportRedactedKo.topBots.map((b) => [b.botId, b.botName, b.eventCount]),
+      [
+        ['b1', '봇 #1', 4],
+        ['b2', '봇 #2', 3],
+        ['b3', '봇 #3', 1],
+      ]
+    );
+
+    const mdRedactedKo = formatReportMarkdown(reportRedactedKo, { redactMode: true, locale: 'ko' });
     assert.ok(mdRedactedKo.includes('[가림 모드]'));
     assert.ok(mdRedactedKo.includes('24시간 사무실 리포트'));
+    assert.ok(mdRedactedKo.includes('봇 #1'));
+    assert.equal(mdRedactedKo.includes('Ops Lead'), false);
+    assert.equal(mdRedactedKo.includes('Security'), false);
+    assert.equal(mdRedactedKo.includes('Cost Guard'), false);
     assert.equal(mdRedactedKo.includes('TOP_SECRET'), false);
 
     // Empty report -> automationSuccessRate is null
@@ -577,7 +616,7 @@ describe('Bot World v0.3.0 — Power User Edition features', () => {
       let closedCount = 0;
       renderOfficeReportModal(backdrop as unknown as HTMLElement, {
         open: true,
-        report: reportEn,
+        report: reportRedactedEn,
         redactMode: true,
         locale: 'en',
         copied: false,
@@ -592,7 +631,13 @@ describe('Bot World v0.3.0 — Power User Edition features', () => {
       const modalText = backdrop.collectText();
       assert.ok(modalText.includes('24h Office Digest'));
       assert.ok(modalText.includes('Redacted'));
-      assert.ok(modalText.includes('Ops Lead'));
+      assert.ok(modalText.includes('Bot #1'));
+      assert.ok(modalText.includes('Bot #2'));
+      assert.ok(modalText.includes('Bot #3'));
+      assert.equal(modalText.includes('Ops Lead'), false);
+      assert.equal(modalText.includes('Security'), false);
+      assert.equal(modalText.includes('Cost Guard'), false);
+      assert.equal(modalText.includes('Doc Review'), false);
       assert.equal(modalText.includes('TOP_SECRET'), false);
 
       const copyBtn = backdrop.findByText('Copy Markdown');

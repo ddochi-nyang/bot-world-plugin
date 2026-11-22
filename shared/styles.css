@@ -900,6 +900,218 @@ body {
   opacity: 0;
 }
 
+/* Filter & Search Bar */
+.bw-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 5px 10px;
+  background: var(--bw-surface);
+  border-bottom: 1px solid var(--bw-border);
+  flex-shrink: 0;
+}
+
+.bw-filter-bar-compact {
+  padding: 5px 8px;
+  gap: 5px;
+}
+
+.bw-filter-chips {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.bw-filter-bar-compact .bw-filter-chips {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.bw-filter-chip {
+  appearance: none;
+  flex-shrink: 0;
+  border: 1px solid var(--bw-border);
+  background: var(--bw-card);
+  color: var(--bw-muted);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.bw-filter-chip:hover {
+  border-color: var(--bw-accent);
+  color: var(--bw-fg);
+}
+
+.bw-filter-chip-active {
+  border-color: var(--bw-accent);
+  background: var(--bw-accent-bg);
+  color: var(--bw-accent);
+}
+
+.bw-filter-search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.bw-filter-bar-compact .bw-filter-search-wrap {
+  width: 100%;
+}
+
+.bw-search-input {
+  width: 170px;
+  max-width: 100%;
+  border: 1px solid var(--bw-border);
+  background: var(--bw-card);
+  color: var(--bw-fg);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-family: inherit;
+}
+
+.bw-filter-bar-compact .bw-search-input {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+}
+
+.bw-search-input:focus {
+  outline: none;
+  border-color: var(--bw-accent);
+}
+
+.bw-filter-match-pill {
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--bw-accent);
+  background: var(--bw-accent-bg);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  border-radius: 999px;
+  padding: 1px 7px;
+  flex-shrink: 0;
+}
+
+/* Camera Zoom / Follow HUD */
+.bw-camera-hud {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px;
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.86);
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  backdrop-filter: blur(4px);
+}
+
+.bw-camera-hud-compact {
+  right: 6px;
+  bottom: 6px;
+  padding: 2px 3px;
+}
+
+.bw-hud-btn {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #e2e8f0;
+  border-radius: 5px;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.bw-hud-btn:hover {
+  background: rgba(148, 163, 184, 0.2);
+}
+
+.bw-hud-btn-active {
+  background: rgba(56, 189, 248, 0.22);
+  border-color: rgba(56, 189, 248, 0.7);
+  color: #38bdf8;
+}
+
+/* Office Badges (Detail & Report) */
+.bw-badge-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.bw-award-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  background: var(--bw-card);
+  border: 1px solid var(--bw-border);
+  color: var(--bw-fg);
+}
+
+.bw-award-mvp {
+  background: var(--bw-warn-bg);
+  border-color: rgba(250, 204, 21, 0.55);
+  color: var(--bw-warn);
+}
+
+.bw-report-badges-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+@media (max-width: 440px) {
+  .bw-report-badges-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.bw-report-badge-card {
+  padding: 6px 8px;
+  border-radius: 7px;
+  background: var(--bw-card);
+  border: 1px solid var(--bw-border);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bw-report-badge-mvp {
+  border-color: rgba(250, 204, 21, 0.55);
+  background: var(--bw-warn-bg);
+}
+
+.bw-report-badge-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--bw-fg);
+}
+
+.bw-report-badge-winner {
+  font-size: 11px;
+  color: var(--bw-muted);
+  word-break: break-word;
+}
+
 [hidden] {
   display: none !important;
 }
