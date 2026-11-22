@@ -3,11 +3,14 @@ import {
   type BotWorldDocumentData,
   type CharacterId,
   DEFAULT_BOTWORLD_DOCUMENT,
+  type DeskCoordinate,
   MAX_BOT_APPEARANCES,
+  MAX_CUSTOM_DESK_POSITIONS,
   isPoolCharacterId,
   isSafeKey,
   isValidAtmosphereMode,
   isValidThemeId,
+  sanitizeCustomDeskPositions,
   toPlainSafeRecord,
   validateBotWorldDocument,
 } from '../src/types.ts';
@@ -39,6 +42,12 @@ function normalizeAppearances(raw: unknown): Record<string, CharacterId> {
     }
   }
   return toPlainSafeRecord(map);
+}
+
+function deskCoordEquals(a: DeskCoordinate | undefined, b: DeskCoordinate | undefined): boolean {
+  if (a === undefined && b === undefined) return true;
+  if (a === undefined || b === undefined) return false;
+  return a.x === b.x && a.y === b.y;
 }
 
 export function mergeBotWorldDocuments(
@@ -97,6 +106,30 @@ export function mergeBotWorldDocuments(
     }
   }
 
+  const basePos = sanitizeCustomDeskPositions(base?.customDeskPositions);
+  const outPos = sanitizeCustomDeskPositions(outside?.customDeskPositions);
+  const minePos = sanitizeCustomDeskPositions(mine?.customDeskPositions);
+
+  const mergedPositions = new Map<string, DeskCoordinate>();
+  const allPosBotIds = new Set<string>([
+    ...Object.keys(basePos),
+    ...Object.keys(outPos),
+    ...Object.keys(minePos),
+  ]);
+
+  for (const botId of allPosBotIds) {
+    if (mergedPositions.size >= MAX_CUSTOM_DESK_POSITIONS) break;
+    if (!isSafeKey(botId)) continue;
+    const baseVal = Object.hasOwn(basePos, botId) ? basePos[botId] : undefined;
+    const outVal = Object.hasOwn(outPos, botId) ? outPos[botId] : undefined;
+    const mineVal = Object.hasOwn(minePos, botId) ? minePos[botId] : undefined;
+
+    const chosen = !deskCoordEquals(mineVal, baseVal) ? mineVal : outVal;
+    if (chosen !== undefined) {
+      mergedPositions.set(botId, chosen);
+    }
+  }
+
   return {
     version: 1,
     themeId,
@@ -104,6 +137,7 @@ export function mergeBotWorldDocuments(
     redactMode,
     selectedBotId,
     botAppearances: toPlainSafeRecord(mergedAppearances),
+    customDeskPositions: toPlainSafeRecord(mergedPositions),
   };
 }
 
@@ -112,6 +146,7 @@ export function decodeBotWorldContent(content: { kind: 'text'; text: string } | 
     return {
       ...DEFAULT_BOTWORLD_DOCUMENT,
       botAppearances: {},
+      customDeskPositions: {},
     };
   }
   return validateBotWorldDocument(content.text).data;
@@ -125,6 +160,7 @@ export function encodeBotWorldContent(data: BotWorldDocumentData): { kind: 'text
     redactMode: typeof data.redactMode === 'boolean' ? data.redactMode : false,
     selectedBotId: sanitizeSelectedBotId(data.selectedBotId),
     botAppearances: normalizeAppearances(data.botAppearances),
+    customDeskPositions: sanitizeCustomDeskPositions(data.customDeskPositions),
   };
   return {
     kind: 'text',

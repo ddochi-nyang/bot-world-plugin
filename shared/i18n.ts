@@ -279,8 +279,31 @@ export type UiDictionary = {
   shortcutCycleAtmosphere: string;
   shortcutToggleDemo: string;
   shortcutTogglePlay: string;
+  shortcutToggleReport: string;
   shortcutClearOrClose: string;
   shortcutShowHelp: string;
+  resetSeats: string;
+  resetSeatsTitle: string;
+  reportButton: string;
+  reportButtonTitle: string;
+  reportTitle: string;
+  reportSubtitle: (windowHours: number, generatedHms: string) => string;
+  reportRedactedBadge: string;
+  reportRedactedNotice: string;
+  reportCopyMarkdown: string;
+  reportCopied: string;
+  reportClose: string;
+  reportKpiTotalEvents: string;
+  reportKpiWorkerRuns: string;
+  reportKpiCollaborations: string;
+  reportKpiAutoSuccess: string;
+  reportAutoCountSub: (succeeded: number, total: number) => string;
+  reportAutoNone: string;
+  reportActiveBotsMeta: (active: number, total: number, needsOwner: number) => string;
+  reportSectionTopBots: string;
+  reportNoBotActivity: string;
+  reportBotEventCount: (count: number, pct: number) => string;
+  reportSectionHourly: string;
 };
 
 export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
@@ -291,10 +314,14 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     themeShort: {
       startup_office: 'Startup',
       corporate_office: 'Corporate',
+      cozy_cafe: 'Cafe',
+      cyber_ops: 'Cyber Ops',
     },
     themeFull: {
       startup_office: 'Startup Office',
       corporate_office: 'Corporate Office',
+      cozy_cafe: 'Cozy Cafe',
+      cyber_ops: 'Cyber Ops',
     },
     landmarks: {
       bossDesk: 'Owner Desk',
@@ -452,8 +479,32 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     shortcutCycleAtmosphere: 'Cycle atmosphere',
     shortcutToggleDemo: 'Toggle demo office',
     shortcutTogglePlay: 'Play / Pause replay',
+    shortcutToggleReport: '24h Office Report',
     shortcutClearOrClose: 'Clear selection / Close',
     shortcutShowHelp: 'Show shortcuts',
+    resetSeats: 'Reset Seats',
+    resetSeatsTitle: 'Reset custom bot seat positions to theme defaults',
+    reportButton: 'Report',
+    reportButtonTitle: '24h Office Digest Report [I]',
+    reportTitle: '24h Office Digest',
+    reportSubtitle: (windowHours, generatedHms) => `Last ${windowHours}h · Updated ${generatedHms}`,
+    reportRedactedBadge: 'Redacted',
+    reportRedactedNotice: 'Aggregate counts & bot names only (task titles, tools, and messages hidden).',
+    reportCopyMarkdown: 'Copy Markdown',
+    reportCopied: 'Copied!',
+    reportClose: 'Close',
+    reportKpiTotalEvents: 'Total Events',
+    reportKpiWorkerRuns: 'Sub-Worker Runs',
+    reportKpiCollaborations: 'Collaborations',
+    reportKpiAutoSuccess: 'Automation Rate',
+    reportAutoCountSub: (succeeded, total) => `${succeeded}/${total} runs`,
+    reportAutoNone: 'No runs',
+    reportActiveBotsMeta: (active, total, needsOwner) =>
+      `Active bots: ${active}/${total} · Needs you: ${needsOwner}`,
+    reportSectionTopBots: 'Top Active Bots (24h)',
+    reportNoBotActivity: 'No bot activity recorded in the last 24h.',
+    reportBotEventCount: (count, pct) => `${count} (${pct}%)`,
+    reportSectionHourly: '12-Hour Activity Trend',
   },
   ko: {
     appTitlePanel: '봇 월드',
@@ -462,10 +513,14 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     themeShort: {
       startup_office: '스타트업',
       corporate_office: '대기업',
+      cozy_cafe: '코지 카페',
+      cyber_ops: '사이버',
     },
     themeFull: {
       startup_office: '스타트업 사무실',
       corporate_office: '대기업 사무실',
+      cozy_cafe: '코지 카페',
+      cyber_ops: '사이버 관제실',
     },
     landmarks: {
       bossDesk: '사장님 책상',
@@ -620,8 +675,32 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     shortcutCycleAtmosphere: '시간대 분위기 전환',
     shortcutToggleDemo: '데모 오피스 전환',
     shortcutTogglePlay: '리플레이 재생 / 일시정지',
+    shortcutToggleReport: '24시간 사무실 리포트',
     shortcutClearOrClose: '선택 해제 / 닫기',
     shortcutShowHelp: '단축키 도움말',
+    resetSeats: '자리 초기화',
+    resetSeatsTitle: '사용자 지정 봇 자리 배치를 기본값으로 되돌립니다',
+    reportButton: '리포트',
+    reportButtonTitle: '24시간 사무실 리포트 [I]',
+    reportTitle: '24시간 사무실 리포트',
+    reportSubtitle: (windowHours, generatedHms) => `최근 ${windowHours}시간 · 기준 ${generatedHms}`,
+    reportRedactedBadge: '가림 모드',
+    reportRedactedNotice: '집계 수치와 봇 이름만 표시됩니다 (작업 제목·도구·메시지 제외).',
+    reportCopyMarkdown: '마크다운 복사',
+    reportCopied: '복사됨!',
+    reportClose: '닫기',
+    reportKpiTotalEvents: '총 이벤트',
+    reportKpiWorkerRuns: '서브워커 실행',
+    reportKpiCollaborations: '협업 메시지',
+    reportKpiAutoSuccess: '자동화 성공률',
+    reportAutoCountSub: (succeeded, total) => `${succeeded}/${total}회 성공`,
+    reportAutoNone: '실행 없음',
+    reportActiveBotsMeta: (active, total, needsOwner) =>
+      `활성 봇: ${active}/${total} · 결정 요청: ${needsOwner}건`,
+    reportSectionTopBots: '가장 활발한 봇 Top 3 (24h)',
+    reportNoBotActivity: '최근 24시간 동안 기록된 봇 활동이 없습니다.',
+    reportBotEventCount: (count, pct) => `${count}건 (${pct}%)`,
+    reportSectionHourly: '최근 12시간 활동 추이',
   },
 };
 

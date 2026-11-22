@@ -1,0 +1,26 @@
+{
+  "id": "cyber_ops",
+  "name": "Cyber Ops",
+  "background_path": "themes/cyber_ops/bg.jpg",
+  "design_size": [1376, 768],
+  "boss_desk": { "x": 760.0, "y": 185.0, "label": "Owner Desk" },
+  "office_door": { "x": 1030.0, "y": 620.0, "label": "Entrance" },
+  "automation_board": { "x": 315.0, "y": 175.0, "label": "Automation Board" },
+  "bot_desks": [
+    { "slot": 0, "x": 490.0, "y": 265.0, "facing": "right", "worker_offset": [-40.0, 20.0] },
+    { "slot": 1, "x": 645.0, "y": 355.0, "facing": "left", "worker_offset": [40.0, 18.0] },
+    { "slot": 2, "x": 160.0, "y": 395.0, "facing": "right", "worker_offset": [38.0, 18.0] },
+    { "slot": 3, "x": 395.0, "y": 465.0, "facing": "right", "worker_offset": [-40.0, 18.0] },
+    { "slot": 4, "x": 565.0, "y": 415.0, "facing": "left", "worker_offset": [40.0, 18.0] },
+    { "slot": 5, "x": 935.0, "y": 435.0, "facing": "left", "worker_offset": [40.0, 18.0] },
+    { "slot": 6, "x": 1065.0, "y": 505.0, "facing": "left", "worker_offset": [40.0, 14.0] },
+    { "slot": 7, "x": 635.0, "y": 575.0, "facing": "right", "worker_offset": [-40.0, 16.0] },
+    { "slot": 8, "x": 785.0, "y": 655.0, "facing": "right", "worker_offset": [-40.0, 12.0] },
+    { "slot": 9, "x": 490.0, "y": 545.0, "facing": "right", "worker_offset": [-40.0, 18.0] },
+    { "slot": 10, "x": 795.0, "y": 515.0, "facing": "left", "worker_offset": [40.0, 16.0] },
+    { "slot": 11, "x": 1015.0, "y": 385.0, "facing": "left", "worker_offset": [40.0, 18.0] },
+    { "slot": 12, "x": 325.0, "y": 385.0, "facing": "right", "worker_offset": [-40.0, 18.0] },
+    { "slot": 13, "x": 695.0, "y": 470.0, "facing": "left", "worker_offset": [40.0, 18.0] }
+  ],
+  "overflow_grid": { "origin_x": 855.0, "origin_y": 280.0, "step_x": 126.0, "step_y": 86.0, "cols": 3 }
+}

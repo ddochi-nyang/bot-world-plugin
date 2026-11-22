@@ -1,11 +1,13 @@
 import { formatEventSummaries } from '../src/events.ts';
 import {
   type ActorRef,
+  type DeskCoordinate,
   type Keyframe,
   type UiLocale,
   type WorldEvent,
   type WorldEventRecord,
   type WorldSnapshot,
+  clampDeskCoordinate,
   createEmptySnapshot,
   isSafeKey,
   isWorkerVisibleOnStage,
@@ -381,7 +383,11 @@ export class StageLayout {
   workerSeats = new Map<string, { x: number; y: number; parentBotId: string }>();
   botNameToId = new Map<string, string>();
 
-  static fromSnapshot(snapshot: WorldSnapshot, theme: ThemeConfig): StageLayout {
+  static fromSnapshot(
+    snapshot: WorldSnapshot,
+    theme: ThemeConfig,
+    customDeskPositions?: Readonly<Record<string, DeskCoordinate>>
+  ): StageLayout {
     const layout = new StageLayout();
     layout.designSize = [...theme.designSize];
     layout.bossDesk = [theme.bossDesk.x, theme.bossDesk.y];
@@ -396,7 +402,24 @@ export class StageLayout {
     orderedIds.forEach((botId, idx) => {
       const bot = snapshot.bots[botId];
       if (!bot) return;
-      const [dx, dy, wOff] = deskPosition(theme, idx);
+      const [defaultX, defaultY, wOff] = deskPosition(theme, idx);
+      const custom =
+        customDeskPositions && isSafeKey(bot.id) && Object.hasOwn(customDeskPositions, bot.id)
+          ? customDeskPositions[bot.id]
+          : undefined;
+      let dx = defaultX;
+      let dy = defaultY;
+      if (
+        custom &&
+        typeof custom.x === 'number' &&
+        Number.isFinite(custom.x) &&
+        typeof custom.y === 'number' &&
+        Number.isFinite(custom.y)
+      ) {
+        const clamped = clampDeskCoordinate(custom);
+        dx = clamped.x;
+        dy = clamped.y;
+      }
       layout.botDesks.set(bot.id, { x: dx, y: dy, workerOffset: wOff });
       layout.botNameToId.set(bot.name, bot.id);
     });
@@ -495,14 +518,33 @@ export class MotionDirector {
     }
   }
 
-  syncLayout(snapshot: WorldSnapshot, theme: ThemeConfig): void {
+  syncLayout(
+    snapshot: WorldSnapshot,
+    theme: ThemeConfig,
+    customDeskPositions?: Readonly<Record<string, DeskCoordinate>>
+  ): void {
     const workerKeys = Object.values(snapshot.workers)
       .filter((w) => isWorkerVisibleOnStage(w))
       .map((w) => `${w.dispatchId}:${w.parentBotId ?? ''}`)
       .join(',');
-    const fp = `${theme.id}|${theme.designSize.join('x')}|${snapshot.botOrder.join(',')}|${Object.keys(snapshot.bots).length}|${workerKeys}`;
+    const customFp = customDeskPositions
+      ? Object.entries(customDeskPositions)
+          .filter(
+            ([id, p]) =>
+              isSafeKey(id) &&
+              p &&
+              typeof p.x === 'number' &&
+              Number.isFinite(p.x) &&
+              typeof p.y === 'number' &&
+              Number.isFinite(p.y)
+          )
+          .sort((a, b) => a[0].localeCompare(b[0]))
+          .map(([id, p]) => `${id}:${p.x},${p.y}`)
+          .join(';')
+      : '';
+    const fp = `${theme.id}|${theme.designSize.join('x')}|${snapshot.botOrder.join(',')}|${Object.keys(snapshot.bots).length}|${workerKeys}|${customFp}`;
     if (this.layoutFingerprint !== fp) {
-      this.layout = StageLayout.fromSnapshot(snapshot, theme);
+      this.layout = StageLayout.fromSnapshot(snapshot, theme, customDeskPositions);
       this.layoutFingerprint = fp;
     }
   }
@@ -544,25 +586,31 @@ export class MotionDirector {
     events: WorldEvent[],
     snapshot: WorldSnapshot,
     theme: ThemeConfig,
-    locale?: UiLocale
+    locale?: UiLocale,
+    customDeskPositions?: Readonly<Record<string, DeskCoordinate>>
   ): void {
     if (locale) {
       this.setLocale(locale);
     }
     const prevWorkerSeats =
       events.length > 0 ? new Map(this.layout.workerSeats) : new Map<string, { x: number; y: number; parentBotId: string }>();
-    this.syncLayout(snapshot, theme);
+    this.syncLayout(snapshot, theme, customDeskPositions);
     for (const ev of events) {
       this.enqueueSingleEvent(ev, snapshot, prevWorkerSeats);
     }
     this.drainActorQueues();
   }
 
-  step(dtSecs: number, snapshot: WorldSnapshot, theme: ThemeConfig): void {
+  step(
+    dtSecs: number,
+    snapshot: WorldSnapshot,
+    theme: ThemeConfig,
+    customDeskPositions?: Readonly<Record<string, DeskCoordinate>>
+  ): void {
     const dt = Math.max(0, Math.min(0.25, dtSecs));
     if (dt <= 0) return;
     this.elapsedSecs += dt;
-    this.syncLayout(snapshot, theme);
+    this.syncLayout(snapshot, theme, customDeskPositions);
 
     const bursts: Array<{ kind: BurstKind; pos: [number, number] }> = [];
     let i = 0;
@@ -1506,7 +1554,8 @@ export class ReplayController {
     keyframes: readonly Keyframe[],
     liveSnapshot: WorldSnapshot,
     theme: ThemeConfig,
-    locale?: UiLocale
+    locale?: UiLocale,
+    customDeskPositions?: Readonly<Record<string, DeskCoordinate>>
   ): void {
     if (locale) {
       this.motion.setLocale(locale);
@@ -1517,7 +1566,7 @@ export class ReplayController {
         ...liveSnapshot,
         capturedAt: this.cursorMs,
       };
-    this.motion.syncLayout(this.snapshot, theme);
+    this.motion.syncLayout(this.snapshot, theme, customDeskPositions);
   }
 
   seekTo(
@@ -1526,7 +1575,8 @@ export class ReplayController {
     events: readonly WorldEventRecord[],
     liveSnapshot: WorldSnapshot,
     theme: ThemeConfig,
-    locale?: UiLocale
+    locale?: UiLocale,
+    customDeskPositions?: Readonly<Record<string, DeskCoordinate>>
   ): void {
     if (locale) {
       this.motion.setLocale(locale);
@@ -1537,7 +1587,7 @@ export class ReplayController {
       this.cursorMs = liveSnapshot.capturedAt;
       this.snapshot = liveSnapshot;
       this.motion.clearTransients();
-      this.motion.syncLayout(this.snapshot, theme);
+      this.motion.syncLayout(this.snapshot, theme, customDeskPositions);
       return;
     }
 
@@ -1547,7 +1597,7 @@ export class ReplayController {
     this.cursorMs = clamped;
     this.snapshot = this.snapshotAt(keyframes, clamped) ?? { ...liveSnapshot, capturedAt: clamped };
     this.motion.clearTransients();
-    this.motion.syncLayout(this.snapshot, theme);
+    this.motion.syncLayout(this.snapshot, theme, customDeskPositions);
 
     const lookbackFloor = clamped - 3_000;
     const recent = events
@@ -1560,7 +1610,7 @@ export class ReplayController {
         const evTs = Math.max(simMs, Math.min(clamped, recent[idx].timestampMs));
         const dtSecs = Math.min(3, Math.max(0, (evTs - simMs) / 1000));
         if (dtSecs > 0) {
-          this.stepMotionSubsteps(dtSecs, theme);
+          this.stepMotionSubsteps(dtSecs, theme, customDeskPositions);
         }
         simMs = evTs;
         const batch: WorldEvent[] = [];
@@ -1568,11 +1618,11 @@ export class ReplayController {
           batch.push(recent[idx].event);
           idx++;
         }
-        this.motion.enqueueEvents(batch, this.snapshot, theme, locale);
+        this.motion.enqueueEvents(batch, this.snapshot, theme, locale, customDeskPositions);
       }
       const tailSecs = Math.min(3, Math.max(0, (clamped - simMs) / 1000));
       if (tailSecs > 0) {
-        this.stepMotionSubsteps(tailSecs, theme);
+        this.stepMotionSubsteps(tailSecs, theme, customDeskPositions);
       }
     }
   }
@@ -1583,15 +1633,24 @@ export class ReplayController {
     events: readonly WorldEventRecord[],
     liveSnapshot: WorldSnapshot,
     theme: ThemeConfig,
-    locale?: UiLocale
+    locale?: UiLocale,
+    customDeskPositions?: Readonly<Record<string, DeskCoordinate>>
   ): void {
     const t = Math.max(0, Math.min(1, fraction));
     const bounds = this.timeBounds(keyframes, events);
     if (bounds) {
       const target = bounds[0] + Math.round((bounds[1] - bounds[0]) * t);
-      this.seekTo(target, keyframes, events, liveSnapshot, theme, locale);
+      this.seekTo(target, keyframes, events, liveSnapshot, theme, locale, customDeskPositions);
     } else {
-      this.seekTo(liveSnapshot.capturedAt, keyframes, events, liveSnapshot, theme, locale);
+      this.seekTo(
+        liveSnapshot.capturedAt,
+        keyframes,
+        events,
+        liveSnapshot,
+        theme,
+        locale,
+        customDeskPositions
+      );
     }
   }
 
@@ -1600,17 +1659,18 @@ export class ReplayController {
     events: readonly WorldEventRecord[],
     liveSnapshot: WorldSnapshot,
     theme: ThemeConfig,
-    locale?: UiLocale
+    locale?: UiLocale,
+    customDeskPositions?: Readonly<Record<string, DeskCoordinate>>
   ): void {
     const bounds = this.timeBounds(keyframes, events);
     if (!this.isReplay) {
       const startMs = bounds ? bounds[0] : liveSnapshot.capturedAt;
-      this.seekTo(startMs, keyframes, events, liveSnapshot, theme, locale);
+      this.seekTo(startMs, keyframes, events, liveSnapshot, theme, locale, customDeskPositions);
       this.isPlaying = true;
       return;
     }
     if (!this.isPlaying && bounds && this.cursorMs >= bounds[1]) {
-      this.seekTo(bounds[0], keyframes, events, liveSnapshot, theme, locale);
+      this.seekTo(bounds[0], keyframes, events, liveSnapshot, theme, locale, customDeskPositions);
     }
     this.isPlaying = !this.isPlaying;
   }
@@ -1621,14 +1681,15 @@ export class ReplayController {
     events: readonly WorldEventRecord[],
     liveSnapshot: WorldSnapshot,
     theme: ThemeConfig,
-    locale?: UiLocale
+    locale?: UiLocale,
+    customDeskPositions?: Readonly<Record<string, DeskCoordinate>>
   ): void {
     if (locale) {
       this.motion.setLocale(locale);
     }
     if (!this.isReplay) return;
     if (!this.isPlaying) {
-      this.motion.syncLayout(this.snapshot, theme);
+      this.motion.syncLayout(this.snapshot, theme, customDeskPositions);
       return;
     }
     const bounds = this.timeBounds(keyframes, events);
@@ -1651,9 +1712,9 @@ export class ReplayController {
       .sort((a, b) => a.timestampMs - b.timestampMs)
       .map((r) => r.event);
     if (crossed.length > 0) {
-      this.motion.enqueueEvents(crossed, this.snapshot, theme, locale);
+      this.motion.enqueueEvents(crossed, this.snapshot, theme, locale, customDeskPositions);
     }
-    this.stepMotionSubsteps(scaledDt, theme);
+    this.stepMotionSubsteps(scaledDt, theme, customDeskPositions);
 
     if (nextCursor >= maxTs) {
       this.isPlaying = false;
@@ -1675,11 +1736,15 @@ export class ReplayController {
     return Math.max(0, Math.min(1, (this.cursorMs - minTs) / (maxTs - minTs)));
   }
 
-  private stepMotionSubsteps(totalDt: number, theme: ThemeConfig): void {
+  private stepMotionSubsteps(
+    totalDt: number,
+    theme: ThemeConfig,
+    customDeskPositions?: Readonly<Record<string, DeskCoordinate>>
+  ): void {
     let rem = Math.max(0, totalDt);
     while (rem > 0.0001) {
       const chunk = Math.min(0.2, rem);
-      this.motion.step(chunk, this.snapshot, theme);
+      this.motion.step(chunk, this.snapshot, theme, customDeskPositions);
       rem -= chunk;
     }
   }

@@ -1,4 +1,10 @@
-import { type AtmosphereMode, type UiLocale, VALID_ATMOSPHERE_MODES } from '../src/types.ts';
+import {
+  type AtmosphereMode,
+  type ThemeId,
+  type UiLocale,
+  VALID_ATMOSPHERE_MODES,
+  VALID_THEME_IDS,
+} from '../src/types.ts';
 import { clearChildren, el } from './dom.ts';
 import { tStrings } from './i18n.ts';
 
@@ -9,6 +15,7 @@ export type ShortcutAction =
   | 'cycleAtmosphere'
   | 'toggleDemo'
   | 'toggleReplayPlay'
+  | 'toggleReport'
   | 'toggleHelp'
   | 'closeOrClearSelection';
 
@@ -59,11 +66,19 @@ export function mapKeyToShortcutAction(
       return 'cycleAtmosphere';
     case 'd':
       return 'toggleDemo';
+    case 'i':
+      return 'toggleReport';
     case 'escape':
       return 'closeOrClearSelection';
     default:
       return null;
   }
+}
+
+export function nextThemeId(current: ThemeId): ThemeId {
+  const idx = VALID_THEME_IDS.indexOf(current);
+  if (idx < 0) return VALID_THEME_IDS[0];
+  return VALID_THEME_IDS[(idx + 1) % VALID_THEME_IDS.length];
 }
 
 export function nextAtmosphereMode(current: AtmosphereMode): AtmosphereMode {
@@ -107,6 +122,7 @@ export function renderShortcutsModal(
     { keyLabel: 'L', description: s.shortcutSwitchLanguage },
     { keyLabel: 'A', description: s.shortcutCycleAtmosphere },
     { keyLabel: 'D', description: s.shortcutToggleDemo },
+    { keyLabel: 'I', description: s.shortcutToggleReport },
   ];
   if (options.isEditor) {
     rows.push({ keyLabel: 'Space', description: s.shortcutTogglePlay });

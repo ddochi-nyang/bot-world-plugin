@@ -15,6 +15,7 @@ export type DomAttrs = {
   max?: string;
   step?: string;
   value?: string;
+  selected?: boolean;
   src?: string;
   alt?: string;
   role?: string;
@@ -71,6 +72,9 @@ export function el<K extends keyof HTMLElementTagNameMap>(
     }
     if (attrs.value !== undefined && 'value' in node) {
       (node as HTMLInputElement).value = attrs.value;
+    }
+    if (attrs.selected !== undefined && typeof HTMLOptionElement !== 'undefined' && node instanceof HTMLOptionElement) {
+      node.selected = attrs.selected;
     }
     if (attrs.src !== undefined && node instanceof HTMLImageElement) {
       // Only allow local relative asset paths (never external URLs, traversal, query, or fragment)

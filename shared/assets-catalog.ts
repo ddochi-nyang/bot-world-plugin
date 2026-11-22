@@ -218,6 +218,56 @@ const THEME_GEOMETRIES: Readonly<Record<ThemeId, ThemeGeometry>> = Object.freeze
     ],
     overflowGrid: { originX: 890, originY: 160, stepX: 130, stepY: 74, cols: 3 },
   },
+  cozy_cafe: {
+    id: 'cozy_cafe',
+    bgPath: THEME_BG_PATHS.cozy_cafe,
+    designSize: [1376, 768],
+    bossDeskPos: [775, 215],
+    officeDoorPos: [1155, 635],
+    automationBoardPos: [185, 270],
+    botDesks: [
+      { slot: 0, x: 305, y: 390, facing: 'right', workerOffset: [-40, 20] },
+      { slot: 1, x: 515, y: 290, facing: 'right', workerOffset: [-40, 20] },
+      { slot: 2, x: 205, y: 485, facing: 'right', workerOffset: [-40, 18] },
+      { slot: 3, x: 635, y: 365, facing: 'left', workerOffset: [40, 18] },
+      { slot: 4, x: 785, y: 445, facing: 'left', workerOffset: [40, 18] },
+      { slot: 5, x: 415, y: 575, facing: 'right', workerOffset: [-40, 18] },
+      { slot: 6, x: 565, y: 520, facing: 'left', workerOffset: [40, 18] },
+      { slot: 7, x: 805, y: 635, facing: 'left', workerOffset: [40, 12] },
+      { slot: 8, x: 655, y: 695, facing: 'left', workerOffset: [40, 10] },
+      { slot: 9, x: 945, y: 505, facing: 'left', workerOffset: [40, 16] },
+      { slot: 10, x: 370, y: 445, facing: 'left', workerOffset: [40, 18] },
+      { slot: 11, x: 485, y: 355, facing: 'right', workerOffset: [-40, 18] },
+      { slot: 12, x: 485, y: 645, facing: 'right', workerOffset: [-40, 14] },
+      { slot: 13, x: 630, y: 595, facing: 'left', workerOffset: [40, 16] },
+    ],
+    overflowGrid: { originX: 885, originY: 390, stepX: 126, stepY: 86, cols: 3 },
+  },
+  cyber_ops: {
+    id: 'cyber_ops',
+    bgPath: THEME_BG_PATHS.cyber_ops,
+    designSize: [1376, 768],
+    bossDeskPos: [760, 185],
+    officeDoorPos: [1030, 620],
+    automationBoardPos: [315, 175],
+    botDesks: [
+      { slot: 0, x: 490, y: 265, facing: 'right', workerOffset: [-40, 20] },
+      { slot: 1, x: 645, y: 355, facing: 'left', workerOffset: [40, 18] },
+      { slot: 2, x: 160, y: 395, facing: 'right', workerOffset: [38, 18] },
+      { slot: 3, x: 395, y: 465, facing: 'right', workerOffset: [-40, 18] },
+      { slot: 4, x: 565, y: 415, facing: 'left', workerOffset: [40, 18] },
+      { slot: 5, x: 935, y: 435, facing: 'left', workerOffset: [40, 18] },
+      { slot: 6, x: 1065, y: 505, facing: 'left', workerOffset: [40, 14] },
+      { slot: 7, x: 635, y: 575, facing: 'right', workerOffset: [-40, 16] },
+      { slot: 8, x: 785, y: 655, facing: 'right', workerOffset: [-40, 12] },
+      { slot: 9, x: 490, y: 545, facing: 'right', workerOffset: [-40, 18] },
+      { slot: 10, x: 795, y: 515, facing: 'left', workerOffset: [40, 16] },
+      { slot: 11, x: 1015, y: 385, facing: 'left', workerOffset: [40, 18] },
+      { slot: 12, x: 325, y: 385, facing: 'right', workerOffset: [-40, 18] },
+      { slot: 13, x: 695, y: 470, facing: 'left', workerOffset: [40, 18] },
+    ],
+    overflowGrid: { originX: 855, originY: 280, stepX: 126, stepY: 86, cols: 3 },
+  },
 });
 
 function buildThemeConfig(themeId: ThemeId, locale: UiLocale): ThemeConfig {
@@ -245,14 +295,19 @@ const THEME_CONFIGS_BY_LOCALE: Readonly<Record<UiLocale, Readonly<Record<ThemeId
     en: Object.freeze({
       startup_office: buildThemeConfig('startup_office', 'en'),
       corporate_office: buildThemeConfig('corporate_office', 'en'),
+      cozy_cafe: buildThemeConfig('cozy_cafe', 'en'),
+      cyber_ops: buildThemeConfig('cyber_ops', 'en'),
     }),
     ko: Object.freeze({
       startup_office: buildThemeConfig('startup_office', 'ko'),
       corporate_office: buildThemeConfig('corporate_office', 'ko'),
+      cozy_cafe: buildThemeConfig('cozy_cafe', 'ko'),
+      cyber_ops: buildThemeConfig('cyber_ops', 'ko'),
     }),
   });
 
 export const THEME_CONFIGS: Readonly<Record<ThemeId, ThemeConfig>> = THEME_CONFIGS_BY_LOCALE.en;
+export const THEME_CATALOG = THEME_CONFIGS;
 
 export function resolveThemeName(themeId: ThemeId, locale: UiLocale = 'en'): string {
   return tStrings(locale).themeFull[themeId];
@@ -428,7 +483,7 @@ export function deskPosition(theme: ThemeConfig, index: number): [number, number
   // Pass 2: secondary full-canvas scan for large fleets (e.g. 30-45+ bots)
   if (placed.length <= overflowIdx) {
     const scanStartX = minX + 15;
-    for (let y = clampedOriginY; y <= maxY && placed.length <= overflowIdx; y += stepY) {
+    for (let y = minY; y <= maxY && placed.length <= overflowIdx; y += stepY) {
       for (let x = scanStartX; x <= maxX && placed.length <= overflowIdx; x += stepX) {
         if (
           isClearOverflowCell(

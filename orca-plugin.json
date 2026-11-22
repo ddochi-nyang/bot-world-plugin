@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "bot-world",
   "name": "Bot World",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Read-only virtual office visualizer for Orca bots and live sub-workers",
   "license": "MIT",
   "author": {
@@ -39,6 +39,18 @@
       "theme": "dark",
       "alt": "Bot World wide .botworld office board in Night mode with warm desk lamp glows, steaming coffee, idle Zzz bubbles, and a sub-worker entering through the door",
       "caption": "Living Office Night mode with warm desk lamp spotlights, idle Zzz bubbles, and sub-worker commute animation"
+    },
+    {
+      "path": "assets/showcase/cozy-cafe.jpg",
+      "theme": "dark",
+      "alt": "Bot World Cozy Cafe theme at sunset with 8 live bots spread across wooden desks and round cafe tables",
+      "caption": "Cozy Cafe botanical studio theme at sunset with flying handoff couriers"
+    },
+    {
+      "path": "assets/showcase/cyber-ops.jpg",
+      "theme": "dark",
+      "alt": "Bot World Cyber Ops midnight neon control room theme with live bots, glowing monitors, and sub-workers",
+      "caption": "Cyber Ops midnight neon operations center theme with live desk lamps and idle Zzz bubbles"
     }
   ],
   "engines": {
@@ -118,14 +130,18 @@
         "type": "string",
         "enum": [
           "startup_office",
-          "corporate_office"
+          "corporate_office",
+          "cozy_cafe",
+          "cyber_ops"
         ],
         "enumLabels": [
           "Startup Office",
-          "Corporate Office"
+          "Corporate Office",
+          "Cozy Cafe",
+          "Cyber Ops"
         ],
         "default": "startup_office",
-        "description": "Default office canvas theme (startup_office or corporate_office)"
+        "description": "Default office canvas theme (startup_office, corporate_office, cozy_cafe, or cyber_ops)"
       },
       {
         "key": "redactMode",

@@ -8,12 +8,15 @@ import {
   type BotWorldStatePayload,
   type CharacterId,
   DEFAULT_BOTWORLD_DOCUMENT,
+  type DeskCoordinate,
   type LanguageSetting,
   type ThemeId,
   type UiLocale,
+  VALID_THEME_IDS,
   type WorldSnapshot,
   createEmptySnapshot,
   isSafeKey,
+  isValidThemeId,
 } from '../src/types.ts';
 import { getThemeConfig } from '../shared/assets-catalog.ts';
 import {
@@ -21,7 +24,7 @@ import {
   renderEventTimelineList,
 } from '../shared/bot-detail-view.ts';
 import { type DemoOfficeSession, createDemoOfficeSession } from '../shared/demo-office.ts';
-import { el } from '../shared/dom.ts';
+import { clearChildren, el } from '../shared/dom.ts';
 import { effectiveLocale, getHostLocale, resolveUiLocale, tStrings } from '../shared/i18n.ts';
 import {
   MotionDirector,
@@ -30,9 +33,15 @@ import {
   type ReplaySpeed,
 } from '../shared/motion.ts';
 import {
+  buildOfficeReport,
+  formatReportMarkdown,
+  renderOfficeReportModal,
+} from '../shared/office-report.ts';
+import {
   atmosphereIcon,
   mapKeyToShortcutAction,
   nextAtmosphereMode,
+  nextThemeId,
   renderShortcutsModal,
   shouldIgnoreShortcutEvent,
 } from '../shared/shortcuts.ts';
@@ -53,6 +62,8 @@ const state: {
   hoveredBotId: string | null;
   eventsDrawerOpen: boolean;
   shortcutsOpen: boolean;
+  reportOpen: boolean;
+  reportCopied: boolean;
   selectionCleared: boolean;
 } = {
   payload: {
@@ -70,10 +81,13 @@ const state: {
   docData: {
     ...DEFAULT_BOTWORLD_DOCUMENT,
     botAppearances: {},
+    customDeskPositions: {},
   },
   hoveredBotId: null,
   eventsDrawerOpen: true,
   shortcutsOpen: false,
+  reportOpen: false,
+  reportCopied: false,
   selectionCleared: false,
 };
 
@@ -84,6 +98,7 @@ let prevLiveSnapshot: WorldSnapshot = createEmptySnapshot();
 let livePayload: BotWorldStatePayload = state.payload;
 let replayTimerId: number | null = null;
 let lastReplayTickMs = 0;
+let reportCopiedTimer: number | null = null;
 
 let demoSession: DemoOfficeSession | null = null;
 let demoTimerId: number | null = null;
@@ -92,6 +107,7 @@ let demoAtmosphereMode: AtmosphereMode = 'auto';
 let demoRedactMode = false;
 let demoLanguageSetting: LanguageSetting = 'auto';
 let demoAppearances: Record<string, CharacterId> = {};
+let demoCustomPositions: Record<string, DeskCoordinate> = {};
 let demoSelectedBotId: string | null = null;
 
 function isDemoMode(): boolean {
@@ -105,29 +121,37 @@ function currentLocale(): UiLocale {
 
 // Toolbar
 const titleEl = el('span', { className: 'bw-title' }, initialStrings.appTitleEditor);
-const startupBtn = el(
+const themeOptions = new Map<ThemeId, HTMLOptionElement>();
+const themeSelect = el('select', {
+  className: 'bw-select',
+  ariaLabel: initialStrings.themeAriaLabel,
+  title: initialStrings.themeToggleTitle,
+  onChange: () => {
+    const val = themeSelect.value;
+    if (isValidThemeId(val)) {
+      void switchTheme(val).catch(() => {});
+    }
+  },
+}) as HTMLSelectElement;
+for (const tid of VALID_THEME_IDS) {
+  const opt = el(
+    'option',
+    { value: tid, selected: tid === 'startup_office' },
+    initialStrings.themeFull[tid]
+  ) as HTMLOptionElement;
+  themeOptions.set(tid, opt);
+  themeSelect.appendChild(opt);
+}
+
+const resetSeatsBtn = el(
   'button',
   {
     type: 'button',
-    className: 'bw-seg-btn',
-    onClick: () => void switchTheme('startup_office').catch(() => {}),
+    className: 'bw-btn bw-hidden',
+    title: initialStrings.resetSeatsTitle,
+    onClick: () => resetCustomSeats(),
   },
-  initialStrings.themeFull.startup_office
-);
-const corpBtn = el(
-  'button',
-  {
-    type: 'button',
-    className: 'bw-seg-btn',
-    onClick: () => void switchTheme('corporate_office').catch(() => {}),
-  },
-  initialStrings.themeFull.corporate_office
-);
-const themeSeg = el(
-  'div',
-  { className: 'bw-seg', role: 'group', ariaLabel: initialStrings.themeAriaLabel },
-  startupBtn,
-  corpBtn
+  initialStrings.resetSeats
 );
 
 const atmoBtn = el(
@@ -179,6 +203,18 @@ const demoBtn = el(
   initialStrings.demoButton
 );
 
+const reportBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-btn',
+    title: initialStrings.reportButtonTitle,
+    ariaLabel: initialStrings.reportButtonTitle,
+    onClick: () => toggleReportModal(),
+  },
+  initialStrings.reportButton
+);
+
 const helpBtn = el(
   'button',
   {
@@ -188,6 +224,10 @@ const helpBtn = el(
     ariaLabel: initialStrings.shortcutsButtonTitle,
     onClick: () => {
       state.shortcutsOpen = !state.shortcutsOpen;
+      if (state.shortcutsOpen) {
+        state.reportOpen = false;
+        renderReportModal();
+      }
       renderShortcutsHelp();
       syncChromeLocale(currentLocale());
     },
@@ -223,11 +263,13 @@ const toolbar = el(
   el(
     'div',
     { className: 'bw-toolbar-group' },
-    themeSeg,
+    themeSelect,
+    resetSeatsBtn,
     atmoBtn,
     redactBtn,
     langBtn,
     demoBtn,
+    reportBtn,
     helpBtn,
     refreshBtn
   )
@@ -254,7 +296,8 @@ const playBtn = el(
         state.payload.events,
         state.payload.snapshot,
         theme,
-        locale
+        locale,
+        activeCustomPositions()
       );
       syncReplayLoop();
       renderUi();
@@ -318,7 +361,8 @@ const scrubber = el('input', {
       state.payload.events,
       state.payload.snapshot,
       theme,
-      locale
+      locale,
+      activeCustomPositions()
     );
     syncReplayLoop();
     renderUi();
@@ -356,6 +400,15 @@ const shortcutsBackdrop = el('div', {
   onClick: () => {
     state.shortcutsOpen = false;
     renderShortcutsHelp();
+    syncChromeLocale(currentLocale());
+  },
+});
+const reportBackdrop = el('div', {
+  className: 'bw-modal-backdrop bw-hidden',
+  onClick: () => {
+    state.reportOpen = false;
+    renderReportModal();
+    syncChromeLocale(currentLocale());
   },
 });
 
@@ -364,6 +417,7 @@ root.appendChild(demoHintBanner);
 root.appendChild(editorBody);
 root.appendChild(timelineBar);
 root.appendChild(shortcutsBackdrop);
+root.appendChild(reportBackdrop);
 
 const renderer = new StageRenderer(canvasEl, {
   onSelectBot: (botId) => {
@@ -380,6 +434,22 @@ const renderer = new StageRenderer(canvasEl, {
       state.hoveredBotId = botId;
       updateStageOverlayLabel();
     }
+  },
+  onMoveBot: (botId, pos) => {
+    if (!isSafeKey(botId)) return;
+    if (isDemoMode()) {
+      demoCustomPositions = { ...demoCustomPositions, [botId]: pos };
+    } else {
+      const nextPositions = { ...(state.docData.customDeskPositions ?? {}) };
+      Object.defineProperty(nextPositions, botId, {
+        value: pos,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+      updateDocumentPrefs({ customDeskPositions: nextPositions });
+    }
+    renderUi();
   },
 });
 
@@ -406,6 +476,20 @@ function mergedAppearances(): Record<string, CharacterId> {
   };
 }
 
+function activeCustomPositions(): Record<string, DeskCoordinate> {
+  if (isDemoMode()) return demoCustomPositions;
+  return state.docData.customDeskPositions ?? {};
+}
+
+function resetCustomSeats(): void {
+  if (isDemoMode()) {
+    demoCustomPositions = {};
+  } else {
+    updateDocumentPrefs({ customDeskPositions: {} });
+  }
+  renderUi();
+}
+
 function currentDisplayedSnapshot(): WorldSnapshot {
   return replay.isReplay ? replay.snapshot : state.payload.snapshot;
 }
@@ -419,6 +503,8 @@ function updateDocumentPrefs(patch: Partial<BotWorldDocumentData>): void {
     selectedBotId:
       patch.selectedBotId !== undefined ? patch.selectedBotId : state.docData.selectedBotId,
     botAppearances: patch.botAppearances ?? { ...state.docData.botAppearances },
+    customDeskPositions:
+      patch.customDeskPositions ?? { ...(state.docData.customDeskPositions ?? {}) },
   };
   state.docData = next;
   if (docSession && !docSession.readOnly) {
@@ -465,8 +551,89 @@ function renderShortcutsHelp(): void {
     onClose: () => {
       state.shortcutsOpen = false;
       renderShortcutsHelp();
+      syncChromeLocale(currentLocale());
     },
   });
+}
+
+async function copyReportMarkdown(text: string): Promise<void> {
+  let ok = false;
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      ok = true;
+    }
+  } catch {
+    ok = false;
+  }
+  if (!ok && typeof document !== 'undefined' && typeof document.execCommand === 'function') {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.className = 'bw-sr-only';
+      document.body.appendChild(ta);
+      ta.select();
+      ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+    } catch {
+      ok = false;
+    }
+  }
+  if (ok) {
+    state.reportCopied = true;
+    renderReportModal();
+    if (reportCopiedTimer !== null) {
+      clearTimeout(reportCopiedTimer);
+    }
+    reportCopiedTimer = window.setTimeout(() => {
+      state.reportCopied = false;
+      reportCopiedTimer = null;
+      if (state.reportOpen) {
+        renderReportModal();
+      }
+    }, 1800);
+  }
+}
+
+function renderReportModal(): void {
+  if (!state.reportOpen) {
+    clearChildren(reportBackdrop);
+    reportBackdrop.classList.add('bw-hidden');
+    return;
+  }
+  const locale = currentLocale();
+  const redactMode = activeRedactMode();
+  const report = buildOfficeReport(state.payload.events, state.payload.snapshot, {
+    redactMode,
+    locale,
+  });
+  renderOfficeReportModal(reportBackdrop, {
+    open: state.reportOpen,
+    report,
+    redactMode,
+    locale,
+    copied: state.reportCopied,
+    onCopyMarkdown: () => {
+      const md = formatReportMarkdown(report, { redactMode, locale });
+      void copyReportMarkdown(md).catch(() => {});
+    },
+    onClose: () => {
+      state.reportOpen = false;
+      renderReportModal();
+      syncChromeLocale(currentLocale());
+    },
+  });
+}
+
+function toggleReportModal(): void {
+  state.reportOpen = !state.reportOpen;
+  if (state.reportOpen) {
+    state.shortcutsOpen = false;
+    state.reportCopied = false;
+    renderShortcutsHelp();
+  }
+  renderReportModal();
+  syncChromeLocale(currentLocale());
 }
 
 function syncChromeLocale(locale: UiLocale): void {
@@ -476,11 +643,13 @@ function syncChromeLocale(locale: UiLocale): void {
   document.documentElement.lang = locale;
   document.title = s.appTitleEditor;
   titleEl.textContent = s.appTitleEditor;
-  startupBtn.textContent = s.themeFull.startup_office;
-  startupBtn.title = s.themeToggleTitle;
-  corpBtn.textContent = s.themeFull.corporate_office;
-  corpBtn.title = s.themeToggleTitle;
-  themeSeg.setAttribute('aria-label', s.themeAriaLabel);
+  for (const [tid, opt] of themeOptions.entries()) {
+    opt.textContent = s.themeFull[tid];
+  }
+  themeSelect.setAttribute('aria-label', s.themeAriaLabel);
+  themeSelect.title = s.themeToggleTitle;
+  resetSeatsBtn.textContent = s.resetSeats;
+  resetSeatsBtn.title = s.resetSeatsTitle;
   atmoBtn.textContent = `${atmosphereIcon(atmoMode)} ${atmoLabel}`;
   atmoBtn.title = s.atmosphereToggleTitle(atmoLabel);
   atmoBtn.className = atmoMode !== 'auto' ? 'bw-btn bw-btn-active' : 'bw-btn';
@@ -491,6 +660,10 @@ function syncChromeLocale(locale: UiLocale): void {
   demoBtn.textContent = isDemoMode() ? s.exitDemoOffice : s.demoButton;
   demoBtn.title = s.demoToggleTitle;
   demoBtn.className = isDemoMode() ? 'bw-btn bw-btn-active' : 'bw-btn';
+  reportBtn.textContent = s.reportButton;
+  reportBtn.title = s.reportButtonTitle;
+  reportBtn.setAttribute('aria-label', s.reportButtonTitle);
+  reportBtn.className = state.reportOpen ? 'bw-btn bw-btn-active' : 'bw-btn';
   helpBtn.title = s.shortcutsButtonTitle;
   helpBtn.setAttribute('aria-label', s.shortcutsButtonTitle);
   helpBtn.className = state.shortcutsOpen ? 'bw-btn bw-btn-active' : 'bw-btn';
@@ -512,10 +685,9 @@ function renderToolbarOnly(
 ): void {
   const s = tStrings(locale);
   const botCount = Object.keys(snap.bots).length;
-  startupBtn.className =
-    themeId === 'startup_office' ? 'bw-seg-btn bw-seg-btn-active' : 'bw-seg-btn';
-  corpBtn.className =
-    themeId === 'corporate_office' ? 'bw-seg-btn bw-seg-btn-active' : 'bw-seg-btn';
+  themeSelect.value = themeId;
+  const hasCustomSeats = Object.keys(activeCustomPositions()).length > 0;
+  resetSeatsBtn.classList.toggle('bw-hidden', !hasCustomSeats);
 
   redactBtn.textContent = redactMode ? s.redactOn : s.redactOff;
   redactBtn.className = redactMode ? 'bw-btn bw-btn-warn' : 'bw-btn';
@@ -576,6 +748,7 @@ function renderStageFrame(
     selectedBotId: selectedId,
     redactMode,
     botAppearances: appearances,
+    customDeskPositions: activeCustomPositions(),
     motion: replay.isReplay ? replay.motion : liveMotion,
     replay,
     locale,
@@ -679,7 +852,8 @@ function renderSidePanelsIfNeeded(
             state.payload.events,
             state.payload.snapshot,
             getThemeConfig(activeThemeId(), curLocale),
-            curLocale
+            curLocale,
+            activeCustomPositions()
           );
           syncReplayLoop();
           renderUi();
@@ -710,7 +884,8 @@ function syncReplayLoop(): void {
           state.payload.events,
           state.payload.snapshot,
           getThemeConfig(themeId, locale),
-          locale
+          locale,
+          activeCustomPositions()
         );
         const snap = currentDisplayedSnapshot();
         const redactMode = activeRedactMode();
@@ -747,6 +922,7 @@ function renderUi(forceSidePanels = false): void {
   renderStageFrame(themeId, redactMode, appearances, snap, selectedId, locale);
   renderSidePanelsIfNeeded(snap, selectedId, redactMode, appearances, locale, forceSidePanels);
   renderShortcutsHelp();
+  renderReportModal();
 }
 
 function buildDemoPayload(): BotWorldStatePayload | null {
@@ -770,11 +946,17 @@ function syncDemoTick(advance: boolean, forceSidePanels = false): void {
   const theme = getThemeConfig(demoThemeId, locale);
   if (generatedCount > 0 && !replay.isReplay) {
     const newEvents = nextPayload.events.slice(-generatedCount).map((r) => r.event);
-    liveMotion.enqueueEvents(newEvents, nextPayload.snapshot, theme, locale);
+    liveMotion.enqueueEvents(newEvents, nextPayload.snapshot, theme, locale, activeCustomPositions());
   }
   state.payload = nextPayload;
   if (replay.isReplay) {
-    replay.resyncSnapshot(nextPayload.keyframes, nextPayload.snapshot, theme, locale);
+    replay.resyncSnapshot(
+      nextPayload.keyframes,
+      nextPayload.snapshot,
+      theme,
+      locale,
+      activeCustomPositions()
+    );
   }
   renderUi(forceSidePanels);
 }
@@ -787,6 +969,7 @@ function enterDemoMode(): void {
   demoRedactMode = Boolean(livePayload.redactMode) || Boolean(state.docData.redactMode);
   demoLanguageSetting = livePayload.languageSetting;
   demoAppearances = {};
+  demoCustomPositions = {};
   demoSelectedBotId = null;
   demoSession = createDemoOfficeSession();
   replay.returnToLive();
@@ -811,6 +994,7 @@ function exitDemoMode(): void {
   }
   state.selectionCleared = false;
   demoSession = null;
+  demoCustomPositions = {};
   demoSelectedBotId = null;
   replay.returnToLive();
   liveMotion.clearTransients();
@@ -831,13 +1015,19 @@ function applyIncomingPayload(nextPayload: BotWorldStatePayload): void {
   if (hadPrev && nextPayload.snapshot.initialSyncComplete) {
     const newEvents = diffSnapshots(prevLiveSnapshot, nextPayload.snapshot, false, locale);
     if (newEvents.length > 0) {
-      liveMotion.enqueueEvents(newEvents, nextPayload.snapshot, theme, locale);
+      liveMotion.enqueueEvents(newEvents, nextPayload.snapshot, theme, locale, activeCustomPositions());
     }
   }
   prevLiveSnapshot = nextPayload.snapshot;
   state.payload = nextPayload;
   if (replay.isReplay) {
-    replay.resyncSnapshot(nextPayload.keyframes, nextPayload.snapshot, theme, locale);
+    replay.resyncSnapshot(
+      nextPayload.keyframes,
+      nextPayload.snapshot,
+      theme,
+      locale,
+      activeCustomPositions()
+    );
   }
   renderUi();
 }
@@ -1014,9 +1204,7 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
   if (!action) return;
   switch (action) {
     case 'toggleTheme': {
-      const nextTheme: ThemeId =
-        activeThemeId() === 'startup_office' ? 'corporate_office' : 'startup_office';
-      void switchTheme(nextTheme).catch(() => {});
+      void switchTheme(nextThemeId(activeThemeId())).catch(() => {});
       break;
     }
     case 'toggleRedact':
@@ -1041,19 +1229,31 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
         state.payload.events,
         state.payload.snapshot,
         theme,
-        locale
+        locale,
+        activeCustomPositions()
       );
       syncReplayLoop();
       renderUi();
       break;
     }
+    case 'toggleReport':
+      toggleReportModal();
+      break;
     case 'toggleHelp':
       state.shortcutsOpen = !state.shortcutsOpen;
+      if (state.shortcutsOpen) {
+        state.reportOpen = false;
+        renderReportModal();
+      }
       renderShortcutsHelp();
       syncChromeLocale(currentLocale());
       break;
     case 'closeOrClearSelection':
-      if (state.shortcutsOpen) {
+      if (state.reportOpen) {
+        state.reportOpen = false;
+        renderReportModal();
+        syncChromeLocale(currentLocale());
+      } else if (state.shortcutsOpen) {
         state.shortcutsOpen = false;
         renderShortcutsHelp();
         syncChromeLocale(currentLocale());
@@ -1079,6 +1279,10 @@ function cleanup(): void {
   if (demoTimerId !== null) {
     clearInterval(demoTimerId);
     demoTimerId = null;
+  }
+  if (reportCopiedTimer !== null) {
+    clearTimeout(reportCopiedTimer);
+    reportCopiedTimer = null;
   }
   if (replayTimerId !== null) {
     cancelAnimationFrame(replayTimerId);

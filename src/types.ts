@@ -25,7 +25,12 @@ export function isValidLanguageSetting(value: unknown): value is LanguageSetting
   return typeof value === 'string' && (VALID_LANGUAGE_SETTINGS as readonly string[]).includes(value);
 }
 
-export type ThemeId = 'startup_office' | 'corporate_office';
+export type ThemeId = 'startup_office' | 'corporate_office' | 'cozy_cafe' | 'cyber_ops';
+
+export type DeskCoordinate = {
+  x: number;
+  y: number;
+};
 
 export type CharacterId =
   | 'ddochi'
@@ -43,7 +48,11 @@ export type CharacterId =
 export const VALID_THEME_IDS: readonly ThemeId[] = [
   'startup_office',
   'corporate_office',
+  'cozy_cafe',
+  'cyber_ops',
 ] as const;
+
+export const THEME_IDS = VALID_THEME_IDS;
 
 export const POOL_CHARACTER_IDS: readonly CharacterId[] = [
   'ddochi',
@@ -66,11 +75,15 @@ export const VALID_CHARACTER_IDS: readonly CharacterId[] = [
 export const THEME_CONFIG_PATHS: Readonly<Record<ThemeId, string>> = Object.freeze({
   startup_office: '../assets/themes/startup_office/theme.json',
   corporate_office: '../assets/themes/corporate_office/theme.json',
+  cozy_cafe: '../assets/themes/cozy_cafe/theme.json',
+  cyber_ops: '../assets/themes/cyber_ops/theme.json',
 });
 
 export const THEME_BG_PATHS: Readonly<Record<ThemeId, string>> = Object.freeze({
   startup_office: '../assets/themes/startup_office/bg.png',
   corporate_office: '../assets/themes/corporate_office/bg.png',
+  cozy_cafe: '../assets/themes/cozy_cafe/bg.jpg',
+  cyber_ops: '../assets/themes/cyber_ops/bg.jpg',
 });
 
 export const CHARACTER_SPRITE_PATHS: Readonly<Record<CharacterId, string>> = Object.freeze({
@@ -91,6 +104,48 @@ const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
 export const MAX_STRIP_DEPTH = 16;
 export const MAX_BOT_APPEARANCES = 256;
+export const MAX_CUSTOM_DESK_POSITIONS = 128;
+export const DESK_COORD_MIN_X = 80;
+export const DESK_COORD_MAX_X = 1296;
+export const DESK_COORD_MIN_Y = 120;
+export const DESK_COORD_MAX_Y = 700;
+
+export function clampDeskCoordinate(pos: DeskCoordinate): DeskCoordinate {
+  const round1 = (n: number) => Math.round(n * 10) / 10;
+  return {
+    x: round1(Math.max(DESK_COORD_MIN_X, Math.min(DESK_COORD_MAX_X, pos.x))),
+    y: round1(Math.max(DESK_COORD_MIN_Y, Math.min(DESK_COORD_MAX_Y, pos.y))),
+  };
+}
+
+export function sanitizeCustomDeskPositions(raw: unknown): Record<string, DeskCoordinate> {
+  const map = new Map<string, DeskCoordinate>();
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (const [botId, pos] of Object.entries(raw as Record<string, unknown>)) {
+      if (map.size >= MAX_CUSTOM_DESK_POSITIONS) break;
+      if (
+        !isSafeKey(botId) ||
+        botId.length > 128 ||
+        CONTROL_CHAR_RE.test(botId) ||
+        !pos ||
+        typeof pos !== 'object' ||
+        Array.isArray(pos)
+      ) {
+        continue;
+      }
+      const rec = pos as Record<string, unknown>;
+      if (
+        typeof rec.x === 'number' &&
+        Number.isFinite(rec.x) &&
+        typeof rec.y === 'number' &&
+        Number.isFinite(rec.y)
+      ) {
+        map.set(botId, clampDeskCoordinate({ x: rec.x, y: rec.y }));
+      }
+    }
+  }
+  return toPlainSafeRecord(map);
+}
 
 export function isSafeKey(key: string): boolean {
   return typeof key === 'string' && key.length > 0 && key.length <= 256 && !DANGEROUS_KEYS.has(key);
@@ -150,6 +205,8 @@ export function isValidThemeId(id: unknown): id is ThemeId {
   return typeof id === 'string' && (VALID_THEME_IDS as readonly string[]).includes(id);
 }
 
+export const isThemeId = isValidThemeId;
+
 export function isValidCharacterId(id: unknown): id is CharacterId {
   return typeof id === 'string' && (VALID_CHARACTER_IDS as readonly string[]).includes(id);
 }
@@ -167,6 +224,7 @@ export type BotWorldDocumentData = {
   redactMode: boolean;
   selectedBotId: string | null;
   botAppearances: Record<string, CharacterId>;
+  customDeskPositions?: Record<string, DeskCoordinate>;
 };
 
 export const DEFAULT_BOTWORLD_DOCUMENT: BotWorldDocumentData = {
@@ -176,6 +234,7 @@ export const DEFAULT_BOTWORLD_DOCUMENT: BotWorldDocumentData = {
   redactMode: false,
   selectedBotId: null,
   botAppearances: {},
+  customDeskPositions: {},
 };
 
 export function validateBotWorldDocument(
@@ -185,12 +244,14 @@ export function validateBotWorldDocument(
   const fallbackAtmosphere: AtmosphereMode = isValidAtmosphereMode(fallback.atmosphereMode)
     ? fallback.atmosphereMode
     : 'auto';
+  const fallbackPositions = sanitizeCustomDeskPositions(fallback.customDeskPositions);
   if (typeof rawText !== 'string' || rawText.trim().length === 0) {
     return {
       data: {
         ...fallback,
         atmosphereMode: fallbackAtmosphere,
         botAppearances: { ...fallback.botAppearances },
+        customDeskPositions: fallbackPositions,
       },
       valid: false,
     };
@@ -201,6 +262,7 @@ export function validateBotWorldDocument(
         ...fallback,
         atmosphereMode: fallbackAtmosphere,
         botAppearances: { ...fallback.botAppearances },
+        customDeskPositions: fallbackPositions,
       },
       valid: false,
     };
@@ -213,6 +275,7 @@ export function validateBotWorldDocument(
           ...fallback,
           atmosphereMode: fallbackAtmosphere,
           botAppearances: { ...fallback.botAppearances },
+          customDeskPositions: fallbackPositions,
         },
         valid: false,
       };
@@ -246,6 +309,8 @@ export function validateBotWorldDocument(
       }
     }
 
+    const customDeskPositions = sanitizeCustomDeskPositions(rec.customDeskPositions);
+
     return {
       data: {
         version: 1,
@@ -254,6 +319,7 @@ export function validateBotWorldDocument(
         redactMode,
         selectedBotId,
         botAppearances: toPlainSafeRecord(appearancesMap),
+        customDeskPositions,
       },
       valid: true,
     };
@@ -263,6 +329,7 @@ export function validateBotWorldDocument(
         ...fallback,
         atmosphereMode: fallbackAtmosphere,
         botAppearances: { ...fallback.botAppearances },
+        customDeskPositions: fallbackPositions,
       },
       valid: false,
     };

@@ -5,10 +5,12 @@ import {
   type BotActivityStatus,
   type BotState,
   type CharacterId,
+  type DeskCoordinate,
   type ThemeId,
   type UiLocale,
   type WorldSnapshot,
   botStatusLabel,
+  clampDeskCoordinate,
   isSafeKey,
   isWorkerUnverifiableWarning,
   isWorkerVisibleOnStage,
@@ -304,7 +306,7 @@ export function resolveAtmospherePhase(
   mode: AtmosphereMode,
   timestampMs: number
 ): AtmospherePhase {
-  if (mode !== 'auto') return mode;
+  if (mode === 'day' || mode === 'sunset' || mode === 'night') return mode;
   const ts = Number.isFinite(timestampMs) ? timestampMs : Date.now();
   const hour = new Date(ts).getHours();
   if (hour >= 7 && hour <= 16) return 'day';
@@ -329,6 +331,7 @@ export type StageRenderInput = {
   selectedBotId: string | null;
   redactMode: boolean;
   botAppearances: Record<string, CharacterId>;
+  customDeskPositions?: Readonly<Record<string, DeskCoordinate>>;
   motion: MotionDirector;
   replay?: ReplayController | null;
   locale?: UiLocale;
@@ -339,14 +342,29 @@ type HitBox = {
   rect: Rect;
 };
 
+type DragCandidate = {
+  botId: string;
+  pointerId: number;
+  startClientX: number;
+  startClientY: number;
+  startDesignX: number;
+  startDesignY: number;
+  isDragging: boolean;
+  currentPos: DeskCoordinate;
+};
+
 export class StageRenderer {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private readonly imageCache = new Map<string, HTMLImageElement>();
   private readonly onSelectBot: (botId: string) => void;
   private readonly onHoverBot?: (botId: string | null) => void;
+  private readonly onMoveBot?: (botId: string, pos: DeskCoordinate) => void;
   private lastInput: StageRenderInput | null = null;
+  private lastViewport: ViewportTransform | null = null;
   private hitBoxes: HitBox[] = [];
+  private dragCandidate: DragCandidate | null = null;
+  private suppressNextClick = false;
   private rafId: number | null = null;
   private lastFrameMs = 0;
   private lastIdleAnimRenderMs = 0;
@@ -360,6 +378,7 @@ export class StageRenderer {
     options: {
       onSelectBot: (botId: string) => void;
       onHoverBot?: (botId: string | null) => void;
+      onMoveBot?: (botId: string, pos: DeskCoordinate) => void;
     }
   ) {
     this.canvas = canvas;
@@ -370,9 +389,13 @@ export class StageRenderer {
     this.ctx = ctx;
     this.onSelectBot = options.onSelectBot;
     this.onHoverBot = options.onHoverBot;
+    this.onMoveBot = options.onMoveBot;
 
     this.canvas.addEventListener('click', this.handleClick);
+    this.canvas.addEventListener('pointerdown', this.handlePointerDown);
     this.canvas.addEventListener('pointermove', this.handlePointerMove);
+    this.canvas.addEventListener('pointerup', this.handlePointerUp);
+    this.canvas.addEventListener('pointercancel', this.handlePointerCancel);
     this.canvas.addEventListener('pointerleave', this.handlePointerLeave);
 
     if (typeof ResizeObserver !== 'undefined') {
@@ -417,7 +440,7 @@ export class StageRenderer {
     const locale = input.locale ?? 'en';
     const theme = getThemeConfig(input.themeId, locale);
     input.motion.setLocale(locale);
-    input.motion.syncLayout(input.snapshot, theme);
+    input.motion.syncLayout(input.snapshot, theme, input.customDeskPositions);
     this.renderNow();
     this.ensureAnimationLoopIfNeeded();
   }
@@ -500,7 +523,7 @@ export class StageRenderer {
     const theme = getThemeConfig(input.themeId, input.locale ?? 'en');
     const isPlayingReplay = Boolean(input.replay?.isReplay && input.replay.isPlaying);
     if (!isPlayingReplay) {
-      input.motion.step(dtSecs, input.snapshot, theme);
+      input.motion.step(dtSecs, input.snapshot, theme, input.customDeskPositions);
     }
 
     const isIdleOnlyAmbient =
@@ -512,38 +535,122 @@ export class StageRenderer {
     this.ensureAnimationLoopIfNeeded();
   };
 
-  private readonly handleClick = (ev: MouseEvent): void => {
+  private findHitBotId(clientX: number, clientY: number): string | null {
     const rect = this.canvas.getBoundingClientRect();
-    const x = ev.clientX - rect.left;
-    const y = ev.clientY - rect.top;
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
     for (let i = this.hitBoxes.length - 1; i >= 0; i--) {
       const hb = this.hitBoxes[i];
       const [rx, ry, rw, rh] = hb.rect;
       if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) {
-        this.onSelectBot(hb.botId);
-        return;
+        return hb.botId;
       }
+    }
+    return null;
+  }
+
+  private readonly handleClick = (ev: MouseEvent): void => {
+    if (this.suppressNextClick) {
+      this.suppressNextClick = false;
+      return;
+    }
+    const botId = this.findHitBotId(ev.clientX, ev.clientY);
+    if (botId) {
+      this.onSelectBot(botId);
+    }
+  };
+
+  private readonly handlePointerDown = (ev: PointerEvent): void => {
+    if (!this.onMoveBot || ev.button !== 0 || !this.lastInput) return;
+    const botId = this.findHitBotId(ev.clientX, ev.clientY);
+    if (!botId) return;
+    const desk = this.lastInput.motion.layout.botDesks.get(botId);
+    if (!desk) return;
+    this.dragCandidate = {
+      botId,
+      pointerId: ev.pointerId,
+      startClientX: ev.clientX,
+      startClientY: ev.clientY,
+      startDesignX: desk.x,
+      startDesignY: desk.y,
+      isDragging: false,
+      currentPos: { x: desk.x, y: desk.y },
+    };
+    try {
+      this.canvas.setPointerCapture?.(ev.pointerId);
+    } catch {
+      // Ignore capture errors in non-DOM/synthetic environments
     }
   };
 
   private readonly handlePointerMove = (ev: PointerEvent): void => {
-    const rect = this.canvas.getBoundingClientRect();
-    const x = ev.clientX - rect.left;
-    const y = ev.clientY - rect.top;
-    let hovered: string | null = null;
-    for (let i = this.hitBoxes.length - 1; i >= 0; i--) {
-      const hb = this.hitBoxes[i];
-      const [rx, ry, rw, rh] = hb.rect;
-      if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) {
-        hovered = hb.botId;
-        break;
+    if (this.dragCandidate && ev.pointerId === this.dragCandidate.pointerId) {
+      const dist = Math.hypot(
+        ev.clientX - this.dragCandidate.startClientX,
+        ev.clientY - this.dragCandidate.startClientY
+      );
+      if (!this.dragCandidate.isDragging && dist >= 6) {
+        this.dragCandidate.isDragging = true;
+        this.canvas.style.cursor = 'grabbing';
       }
+      if (this.dragCandidate.isDragging && this.lastViewport) {
+        const dxDesign = (ev.clientX - this.dragCandidate.startClientX) / this.lastViewport.scale;
+        const dyDesign = (ev.clientY - this.dragCandidate.startClientY) / this.lastViewport.scale;
+        this.dragCandidate.currentPos = clampDeskCoordinate({
+          x: Math.round(this.dragCandidate.startDesignX + dxDesign),
+          y: Math.round(this.dragCandidate.startDesignY + dyDesign),
+        });
+        this.renderNow();
+      }
+      return;
     }
-    this.canvas.style.cursor = hovered ? 'pointer' : 'default';
+
+    const hovered = this.findHitBotId(ev.clientX, ev.clientY);
+    this.canvas.style.cursor = hovered ? (this.onMoveBot ? 'grab' : 'pointer') : 'default';
     this.onHoverBot?.(hovered);
   };
 
-  private readonly handlePointerLeave = (): void => {
+  private readonly handlePointerUp = (ev: PointerEvent): void => {
+    if (!this.dragCandidate || ev.pointerId !== this.dragCandidate.pointerId) return;
+    try {
+      this.canvas.releasePointerCapture?.(ev.pointerId);
+    } catch {
+      // Ignore release errors
+    }
+    const cand = this.dragCandidate;
+    this.dragCandidate = null;
+    if (cand.isDragging) {
+      this.suppressNextClick = true;
+      setTimeout(() => {
+        this.suppressNextClick = false;
+      }, 0);
+      this.canvas.style.cursor = this.onMoveBot ? 'grab' : 'pointer';
+      this.onMoveBot?.(cand.botId, cand.currentPos);
+      this.renderNow();
+    } else {
+      this.canvas.style.cursor = this.onMoveBot ? 'grab' : 'pointer';
+    }
+  };
+
+  private readonly handlePointerCancel = (ev: PointerEvent): void => {
+    if (!this.dragCandidate || ev.pointerId !== this.dragCandidate.pointerId) return;
+    try {
+      this.canvas.releasePointerCapture?.(ev.pointerId);
+    } catch {
+      // Ignore release errors
+    }
+    this.dragCandidate = null;
+    this.canvas.style.cursor = 'default';
+    this.renderNow();
+  };
+
+  private readonly handlePointerLeave = (ev: PointerEvent): void => {
+    if (this.dragCandidate) {
+      const hasCap = this.canvas.hasPointerCapture?.(ev.pointerId) ?? false;
+      if (hasCap) return;
+      this.dragCandidate = null;
+      this.renderNow();
+    }
     this.canvas.style.cursor = 'default';
     this.onHoverBot?.(null);
   };
@@ -569,6 +676,7 @@ export class StageRenderer {
     const s = tStrings(locale);
     const theme: ThemeConfig = getThemeConfig(input.themeId, locale);
     const vt = createViewportTransform(cssW, cssH, theme.designSize);
+    this.lastViewport = vt;
     const bgW = vt.designW * vt.scale;
     const bgH = vt.designH * vt.scale;
     const bgImg = this.loadImage(resolveThemeAssetPath(input.themeId));
@@ -611,6 +719,7 @@ export class StageRenderer {
       selected: boolean;
       needsOwner: boolean;
       isWorker: boolean;
+      isDragging?: boolean;
     };
 
     type BotOverlay = {
@@ -653,13 +762,26 @@ export class StageRenderer {
       const desk = layout.botDesks.get(bot.id);
       if (!desk) return;
 
-      const pose = motion.actorPose(`bot:${bot.id}`, [desk.x, desk.y]);
+      const isDraggingBot = Boolean(
+        this.dragCandidate?.isDragging && this.dragCandidate.botId === bot.id
+      );
+      const rawPose = motion.actorPose(`bot:${bot.id}`, [desk.x, desk.y]);
+      const pose = isDraggingBot
+        ? {
+            ...rawPose,
+            footX: this.dragCandidate!.currentPos.x,
+            footY: this.dragCandidate!.currentPos.y,
+            isWalking: false,
+          }
+        : rawPose;
       const charId = resolveCharacterIdWithPrefs(botAppearances, bot.id, bot.name);
       const spec = CHARACTER_SPECS[charId];
 
       let yBobPx = 0;
       let xShakePx = 0;
-      if (pose.isWalking) {
+      if (isDraggingBot) {
+        yBobPx = -8 * vt.scale;
+      } else if (pose.isWalking) {
         yBobPx = pose.yBobPx;
       } else if (bot.status.kind === 'Working') {
         yBobPx = (this.animTick + idx) % 2 === 0 ? -1.5 : 1.5;
@@ -677,7 +799,7 @@ export class StageRenderer {
       actors.push({
         footX: pose.footX + xShakePx,
         footY: pose.footY,
-        zBias: 0,
+        zBias: isDraggingBot ? 10 : 0,
         spritePath: resolveCharacterSpritePath(charId),
         scale: spec.scale,
         anchor: spec.anchor,
@@ -689,6 +811,7 @@ export class StageRenderer {
         selected,
         needsOwner,
         isWorker: false,
+        isDragging: isDraggingBot,
       });
 
       const [sx, sy] = designToScreen(vt, pose.footX, pose.footY);
@@ -850,7 +973,17 @@ export class StageRenderer {
       const sx = fx - shadowW * 0.5;
       const sy = fy - shadowH * 0.45;
 
-      if (actor.selected) {
+      if (actor.isDragging) {
+        ctx.save();
+        drawRoundedRect(ctx, sx - 8, sy - 6, shadowW + 16, shadowH + 12, 16);
+        ctx.fillStyle = 'rgba(56, 189, 248, 0.16)';
+        ctx.fill();
+        ctx.setLineDash([5 * vt.scale, 4 * vt.scale]);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#38bdf8';
+        ctx.stroke();
+        ctx.restore();
+      } else if (actor.selected) {
         drawRoundedRect(ctx, sx - 5, sy - 4, shadowW + 10, shadowH + 8, 14);
         ctx.fillStyle = 'rgba(56, 189, 248, 0.2)';
         ctx.fill();
@@ -1786,7 +1919,10 @@ export class StageRenderer {
     }
     this.resizeObserver?.disconnect();
     this.canvas.removeEventListener('click', this.handleClick);
+    this.canvas.removeEventListener('pointerdown', this.handlePointerDown);
     this.canvas.removeEventListener('pointermove', this.handlePointerMove);
+    this.canvas.removeEventListener('pointerup', this.handlePointerUp);
+    this.canvas.removeEventListener('pointercancel', this.handlePointerCancel);
     this.canvas.removeEventListener('pointerleave', this.handlePointerLeave);
   }
 }

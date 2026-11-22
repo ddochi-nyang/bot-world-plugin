@@ -1,0 +1,26 @@
+{
+  "id": "cozy_cafe",
+  "name": "Cozy Cafe",
+  "background_path": "themes/cozy_cafe/bg.jpg",
+  "design_size": [1376, 768],
+  "boss_desk": { "x": 775.0, "y": 215.0, "label": "Owner Desk" },
+  "office_door": { "x": 1155.0, "y": 635.0, "label": "Entrance" },
+  "automation_board": { "x": 185.0, "y": 270.0, "label": "Automation Board" },
+  "bot_desks": [
+    { "slot": 0, "x": 305.0, "y": 390.0, "facing": "right", "worker_offset": [-40.0, 20.0] },
+    { "slot": 1, "x": 515.0, "y": 290.0, "facing": "right", "worker_offset": [-40.0, 20.0] },
+    { "slot": 2, "x": 205.0, "y": 485.0, "facing": "right", "worker_offset": [-40.0, 18.0] },
+    { "slot": 3, "x": 635.0, "y": 365.0, "facing": "left", "worker_offset": [40.0, 18.0] },
+    { "slot": 4, "x": 785.0, "y": 445.0, "facing": "left", "worker_offset": [40.0, 18.0] },
+    { "slot": 5, "x": 415.0, "y": 575.0, "facing": "right", "worker_offset": [-40.0, 18.0] },
+    { "slot": 6, "x": 565.0, "y": 520.0, "facing": "left", "worker_offset": [40.0, 18.0] },
+    { "slot": 7, "x": 805.0, "y": 635.0, "facing": "left", "worker_offset": [40.0, 12.0] },
+    { "slot": 8, "x": 655.0, "y": 695.0, "facing": "left", "worker_offset": [40.0, 10.0] },
+    { "slot": 9, "x": 945.0, "y": 505.0, "facing": "left", "worker_offset": [40.0, 16.0] },
+    { "slot": 10, "x": 370.0, "y": 445.0, "facing": "left", "worker_offset": [40.0, 18.0] },
+    { "slot": 11, "x": 485.0, "y": 355.0, "facing": "right", "worker_offset": [-40.0, 18.0] },
+    { "slot": 12, "x": 485.0, "y": 645.0, "facing": "right", "worker_offset": [-40.0, 14.0] },
+    { "slot": 13, "x": 630.0, "y": 595.0, "facing": "left", "worker_offset": [40.0, 16.0] }
+  ],
+  "overflow_grid": { "origin_x": 885.0, "origin_y": 390.0, "step_x": 126.0, "step_y": 86.0, "cols": 3 }
+}
