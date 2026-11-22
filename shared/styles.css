@@ -94,6 +94,12 @@ body {
   border-color: rgba(250, 204, 21, 0.45);
 }
 
+.bw-status-demo {
+  color: var(--bw-accent);
+  border-color: rgba(56, 189, 248, 0.45);
+  background: var(--bw-accent-bg);
+}
+
 .bw-btn {
   appearance: none;
   border: 1px solid var(--bw-border);
@@ -114,6 +120,16 @@ body {
   background: var(--bw-accent-bg);
   border-color: var(--bw-accent);
   color: var(--bw-accent);
+}
+
+.bw-btn-primary {
+  background: var(--bw-accent);
+  border-color: var(--bw-accent);
+  color: #082f49;
+}
+
+.bw-btn-primary:hover {
+  filter: brightness(1.08);
 }
 
 .bw-btn-warn {
@@ -582,6 +598,16 @@ body {
 .bw-empty-desc {
   font-size: 11px;
   color: var(--bw-muted);
+}
+
+.bw-empty-cta {
+  margin-top: 12px;
+  padding: 6px 14px;
+  font-size: 11.5px;
+}
+
+[hidden] {
+  display: none !important;
 }
 
 .bw-hidden {

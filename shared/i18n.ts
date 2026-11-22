@@ -213,8 +213,14 @@ export type UiDictionary = {
   automationGeneric: string;
   automationNumbered: (idx: number) => string;
   selectBotTitle: string;
+  noBotsTitle: string;
   selectBotDescWithBots: string;
   selectBotDescEmpty: string;
+  demoButton: string;
+  tryDemoOffice: string;
+  exitDemoOffice: string;
+  demoModeBadge: (count: number) => string;
+  demoModeHint: string;
   avatarAlt: (name: string) => string;
   redactSpecialtyHidden: string;
   closeDetailAria: string;
@@ -324,10 +330,17 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     automationGeneric: 'Automation',
     automationNumbered: (idx) => `Automation #${idx}`,
     selectBotTitle: 'Select a bot',
+    noBotsTitle: 'No bots active yet',
     selectBotDescWithBots:
       'Click a bot on the office canvas to inspect active tasks, recent requests/replies, open items, sub-workers, and switch among 10 character avatars.',
     selectBotDescEmpty:
       'No bots yet. Create a bot in Orca and it will take a desk here automatically.',
+    demoButton: 'Demo',
+    tryDemoOffice: 'Try Demo Office',
+    exitDemoOffice: 'Exit Demo',
+    demoModeBadge: (count) => `Demo · ${count} bots`,
+    demoModeHint:
+      'Simulated demo office (read-only preview). Click Exit Demo to return to live Orca status.',
     avatarAlt: (name) => `${name} character`,
     redactSpecialtyHidden: 'Redact mode active: specialty hidden',
     closeDetailAria: 'Close details',
@@ -463,9 +476,16 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     automationGeneric: '정기 자동화',
     automationNumbered: (idx) => `정기 자동화 #${idx}`,
     selectBotTitle: '봇을 선택하세요',
+    noBotsTitle: '아직 활성 봇이 없습니다',
     selectBotDescWithBots:
       '오피스 캔버스에서 봇을 클릭하면 진행 작업, 최근 요청/답변, 열린 항목, 소속 워커와 10종 캐릭터 교체를 볼 수 있습니다.',
     selectBotDescEmpty: '아직 생성된 봇이 없습니다. Orca에서 봇을 만들면 이곳 책상에 자동으로 배치됩니다.',
+    demoButton: '데모',
+    tryDemoOffice: '데모 오피스 체험',
+    exitDemoOffice: '데모 종료',
+    demoModeBadge: (count) => `데모 · 봇 ${count}개`,
+    demoModeHint:
+      "가상 데모 오피스(읽기 전용 미리보기)입니다. '데모 종료'를 누르면 실시간 Orca 상태로 돌아갑니다.",
     avatarAlt: (name) => `${name} 캐릭터`,
     redactSpecialtyHidden: '가림 모드 활성: 세부 분야 숨김',
     closeDetailAria: '상세 닫기',

@@ -93,6 +93,8 @@ export function renderBotDetail(
     onSelectCharacter: (botId: string, charId: CharacterId) => void;
     onClose?: () => void;
     locale?: UiLocale;
+    botCount?: number;
+    onStartDemo?: () => void;
   }
 ): void {
   clearChildren(container);
@@ -104,21 +106,35 @@ export function renderBotDetail(
     onSelectCharacter,
     onClose,
     locale = 'en',
+    botCount,
+    onStartDemo,
   } = options;
   const s = tStrings(locale);
 
   if (!bot) {
-    const botList = Object.values(snapshot.bots);
+    const resolvedCount = botCount ?? Object.keys(snapshot.bots).length;
+    const isZeroBots = resolvedCount === 0;
     container.appendChild(
       el(
         'div',
         { className: 'bw-empty' },
-        el('div', { className: 'bw-empty-title' }, s.selectBotTitle),
+        el('div', { className: 'bw-empty-title' }, isZeroBots ? s.noBotsTitle : s.selectBotTitle),
         el(
           'div',
           { className: 'bw-empty-desc' },
-          botList.length > 0 ? s.selectBotDescWithBots : s.selectBotDescEmpty
-        )
+          isZeroBots ? s.selectBotDescEmpty : s.selectBotDescWithBots
+        ),
+        isZeroBots && onStartDemo
+          ? el(
+              'button',
+              {
+                type: 'button',
+                className: 'bw-btn bw-btn-primary bw-empty-cta',
+                onClick: onStartDemo,
+              },
+              s.tryDemoOffice
+            )
+          : null
       )
     );
     return;

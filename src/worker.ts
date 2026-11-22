@@ -777,7 +777,7 @@ export class BotWorldWorkerController {
       const keys = Object.keys(payload.snapshot.bots);
       while (totalBytes > MAX_IPC_PAYLOAD_BYTES && keys.length > 0) {
         const k = keys.pop();
-        if (k) delete payload.snapshot.bots[k];
+        if (k && isSafeKey(k)) delete payload.snapshot.bots[k];
         totalBytes = utf8ByteLength(payload);
       }
     }

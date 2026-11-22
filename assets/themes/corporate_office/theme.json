@@ -1,11 +1,11 @@
 {
   "id": "corporate_office",
-  "name": "대기업 사무실",
+  "name": "Corporate Office",
   "background_path": "themes/corporate_office/bg.png",
   "design_size": [1376, 768],
-  "boss_desk": { "x": 750.0, "y": 200.0, "label": "사장님 책상" },
-  "office_door": { "x": 1015.0, "y": 625.0, "label": "출입구" },
-  "automation_board": { "x": 245.0, "y": 195.0, "label": "자동화 보드" },
+  "boss_desk": { "x": 750.0, "y": 200.0, "label": "Owner Desk" },
+  "office_door": { "x": 1015.0, "y": 625.0, "label": "Entrance" },
+  "automation_board": { "x": 245.0, "y": 195.0, "label": "Automation Board" },
   "bot_desks": [
     { "slot": 0, "x": 468.0, "y": 276.0, "facing": "right", "worker_offset": [-42.0, 22.0] },
     { "slot": 1, "x": 885.0, "y": 458.0, "facing": "right", "worker_offset": [-42.0, 20.0] },
@@ -22,5 +22,5 @@
     { "slot": 12, "x": 794.0, "y": 538.0, "facing": "left", "worker_offset": [42.0, 16.0] },
     { "slot": 13, "x": 910.0, "y": 578.0, "facing": "left", "worker_offset": [42.0, -10.0] }
   ],
-  "overflow_grid": { "origin_x": 770.0, "origin_y": 295.0, "step_x": 115.0, "step_y": 76.0, "cols": 3 }
+  "overflow_grid": { "origin_x": 890.0, "origin_y": 160.0, "step_x": 130.0, "step_y": 74.0, "cols": 3 }
 }

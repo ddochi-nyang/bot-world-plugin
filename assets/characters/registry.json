@@ -13,7 +13,9 @@
   ],
   "worker_character": "worker_helper",
   "name_overrides": {
-    "또치": "ddochi",
+    "Ops Lead": "ddochi",
+    "Coordinator": "ddochi",
+    "총괄": "ddochi",
     "보안": "security",
     "IaC": "iac",
     "클라우드 운영": "cloud_ops",

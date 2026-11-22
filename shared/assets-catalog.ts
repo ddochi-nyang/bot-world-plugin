@@ -129,8 +129,9 @@ export function resolveCharacterText(
 }
 
 const NAME_OVERRIDES = new Map<string, CharacterId>([
-  ['또치', 'ddochi'],
-  ['ddochi', 'ddochi'],
+  ['ops lead', 'ddochi'],
+  ['coordinator', 'ddochi'],
+  ['총괄', 'ddochi'],
   ['보안', 'security'],
   ['security', 'security'],
   ['iac', 'iac'],
@@ -151,6 +152,7 @@ const NAME_OVERRIDES = new Map<string, CharacterId>([
   ['doc_review', 'doc_review'],
   ['봇 월드', 'bot_world'],
   ['bot world', 'bot_world'],
+  ['bot-world', 'bot_world'],
   ['bot_world', 'bot_world'],
 ]);
 
@@ -189,7 +191,7 @@ const THEME_GEOMETRIES: Readonly<Record<ThemeId, ThemeGeometry>> = Object.freeze
       { slot: 12, x: 502, y: 565, facing: 'left', workerOffset: [40, 18] },
       { slot: 13, x: 308, y: 586, facing: 'right', workerOffset: [-42, 20] },
     ],
-    overflowGrid: { originX: 860, originY: 280, stepX: 90, stepY: 64, cols: 3 },
+    overflowGrid: { originX: 905, originY: 155, stepX: 132, stepY: 74, cols: 3 },
   },
   corporate_office: {
     id: 'corporate_office',
@@ -214,7 +216,7 @@ const THEME_GEOMETRIES: Readonly<Record<ThemeId, ThemeGeometry>> = Object.freeze
       { slot: 12, x: 794, y: 538, facing: 'left', workerOffset: [42, 16] },
       { slot: 13, x: 910, y: 578, facing: 'left', workerOffset: [42, -10] },
     ],
-    overflowGrid: { originX: 1135, originY: 245, stepX: 80, stepY: 66, cols: 2 },
+    overflowGrid: { originX: 890, originY: 160, stepX: 130, stepY: 74, cols: 3 },
   },
 });
 
@@ -286,13 +288,14 @@ export function fnv1aHash(text: string): number {
 }
 
 const KEYWORD_CHARACTER_RULES: ReadonlyArray<readonly [CharacterId, RegExp]> = [
-  ['cve', /(?:cve|vuln|audit|scan|취약점|감사)/],
+  ['cost', /(?:cost|finops|billing|budget|비용|예산)/],
+  ['cve', /(?:cve|advisory|vuln|audit|scan|취약점|감사)/],
+  ['ddochi', /(?:coord|lead|orchestr|manager|dispatcher|조율|총괄|리더|팀장)/],
+  ['iac', /(?:(?:^|[^a-z])iac(?:$|[^a-z])|infra|terraform|pulumi|ansible|k8s|kubernetes|devops|인프라)/],
   [
     'security',
     /(?:security|appsec|infosec|secops|(?:^|[^a-z])sec(?:$|[^a-z]|bot)|(?:^|[^a-z])o?auth(?!or)|guard|보안|인증)/,
   ],
-  ['cost', /(?:cost|finops|billing|budget|비용)/],
-  ['iac', /(?:(?:^|[^a-z])iac(?:$|[^a-z])|infra|terraform|k8s|kubernetes|devops|인프라)/],
   [
     'cloud_ops',
     /(?:cloud|(?:^|[^a-z])ops(?:$|[^a-z])|(?:^|[^a-z])sre(?:$|[^a-z])|deploy|on-?call|monitor|운영|온콜)/,
@@ -300,19 +303,21 @@ const KEYWORD_CHARACTER_RULES: ReadonlyArray<readonly [CharacterId, RegExp]> = [
   ['internal_tools', /(?:tool|(?:^|[^a-z])ci(?:$|[^a-z])|cicd|ci\/cd|build|(?:^|[^a-z])auto|도구|자동화)/],
   ['doc_review', /(?:(?:^|[^a-z])docs?(?:$|[^a-z])|document|review|(?:^|[^a-z])qa(?:$|[^a-z])|(?:^|[^a-z])test|리뷰|문서)/],
   ['personal_assist', /(?:assist|help|plan|note|(?:^|[^a-z])pm(?:$|[^a-z])|보조|기획)/],
-  ['ddochi', /(?:coord|lead|orch|manager|조율|총괄|리더)/],
+  ['bot_world', /(?:bot[\s_-]?world|(?:^|[^a-z])world(?:$|[^a-z])|월드)/],
 ];
 
 export function resolveCharacterId(botId: string, botName: string): CharacterId {
-  const normalized = botName.trim().toLowerCase();
-  const override = NAME_OVERRIDES.get(normalized) ?? NAME_OVERRIDES.get(botName);
+  const safeBotId = typeof botId === 'string' ? botId : '';
+  const safeBotName = typeof botName === 'string' ? botName : '';
+  const normalized = safeBotName.trim().toLowerCase();
+  const override = NAME_OVERRIDES.get(normalized) ?? NAME_OVERRIDES.get(safeBotName);
   if (override) return override;
   for (const [charId, pattern] of KEYWORD_CHARACTER_RULES) {
     if (pattern.test(normalized)) {
       return charId;
     }
   }
-  const idx = fnv1aHash(botId);
+  const idx = fnv1aHash(safeBotId);
   return POOL_CHARACTER_IDS[idx] ?? 'ddochi';
 }
 
@@ -321,13 +326,56 @@ export function resolveCharacterIdWithPrefs(
   botId: string,
   botName: string
 ): CharacterId {
-  if (Object.hasOwn(botAppearances, botId)) {
+  if (botAppearances && typeof botId === 'string' && Object.hasOwn(botAppearances, botId)) {
     const custom = botAppearances[botId];
     if (isPoolCharacterId(custom)) {
       return custom;
     }
   }
   return resolveCharacterId(botId, botName);
+}
+
+const OVERFLOW_MIN_SEPARATION_PX = 72;
+
+function isHudExclusionZone(x: number, y: number, designH: number): boolean {
+  return x < 260 && y > designH - 110;
+}
+
+function isClearOverflowCell(
+  x: number,
+  y: number,
+  theme: ThemeConfig,
+  placed: ReadonlyArray<readonly [number, number]>,
+  minX: number,
+  maxX: number,
+  minY: number,
+  maxY: number,
+  designH: number,
+  minPeerSpacingX: number,
+  minPeerSpacingY: number
+): boolean {
+  if (x < minX || x > maxX || y < minY || y > maxY) return false;
+  if (isHudExclusionZone(x, y, designH)) return false;
+
+  for (const desk of theme.botDesks) {
+    if (Math.hypot(x - desk.x, y - desk.y) < OVERFLOW_MIN_SEPARATION_PX) {
+      return false;
+    }
+  }
+  for (const landmark of [theme.officeDoor, theme.bossDesk, theme.automationBoard]) {
+    if (Math.hypot(x - landmark.x, y - landmark.y) < OVERFLOW_MIN_SEPARATION_PX) {
+      return false;
+    }
+  }
+  for (const [px, py] of placed) {
+    if (Math.abs(px - x) < minPeerSpacingX && Math.abs(py - y) < minPeerSpacingY) {
+      return false;
+    }
+    if (Math.hypot(px - x, py - y) < OVERFLOW_MIN_SEPARATION_PX) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export function deskPosition(theme: ThemeConfig, index: number): [number, number, [number, number]] {
@@ -337,30 +385,93 @@ export function deskPosition(theme: ThemeConfig, index: number): [number, number
   }
   const designW = Math.max(200, theme.designSize[0]);
   const designH = Math.max(200, theme.designSize[1]);
-  const minX = 72;
-  const maxX = Math.max(minX, designW - 84);
+  const minX = 95;
+  const maxX = Math.max(minX, designW - 95);
   const minY = 145;
-  const maxY = Math.max(minY, designH - 36);
+  const maxY = Math.max(minY, designH - 72);
 
   const overflowIdx = Math.max(0, index - theme.botDesks.length);
   const cols = Math.max(1, theme.overflowGrid.cols);
-  const stepX = Math.max(1, theme.overflowGrid.stepX);
-  const stepY = Math.max(1, theme.overflowGrid.stepY);
-  const col = overflowIdx % cols;
-  const rawRow = Math.floor(overflowIdx / cols);
-
+  const stepX = Math.max(124, theme.overflowGrid.stepX);
+  const stepY = Math.max(68, theme.overflowGrid.stepY);
+  const clampedOriginX = Math.max(minX, Math.min(maxX, theme.overflowGrid.originX));
   const clampedOriginY = Math.max(minY, Math.min(maxY, theme.overflowGrid.originY));
-  const usableHeight = Math.max(0, maxY - clampedOriginY);
-  const maxRows = Math.max(1, Math.floor(usableHeight / stepY) + 1);
-  const wrappedRow = rawRow % maxRows;
-  const lap = Math.floor(rawRow / maxRows);
-  const lapOffsetX = lap > 0 ? (lap % 2 === 1 ? 1 : -1) * Math.min(28, lap * 16) : 0;
-  const lapOffsetY = lap > 0 ? (lap * 14) % Math.max(16, Math.floor(stepY * 0.5)) : 0;
 
-  const rawX = theme.overflowGrid.originX + col * stepX + lapOffsetX;
-  const rawY = clampedOriginY + wrappedRow * stepY + lapOffsetY;
+  const placed: Array<[number, number]> = [];
+  const minPeerSpacingX = Math.max(118, stepX * 0.9);
+  const minPeerSpacingY = Math.max(60, stepY * 0.85);
 
-  const x = Math.max(minX, Math.min(maxX, rawX));
-  const y = Math.max(minY, Math.min(maxY, rawY));
+  // Pass 1: primary overflowGrid area on the right/configured zone
+  for (let y = clampedOriginY; y <= maxY && placed.length <= overflowIdx; y += stepY) {
+    for (let col = 0; col < cols && placed.length <= overflowIdx; col++) {
+      const x = clampedOriginX + col * stepX;
+      if (
+        isClearOverflowCell(
+          x,
+          y,
+          theme,
+          placed,
+          minX,
+          maxX,
+          minY,
+          maxY,
+          designH,
+          minPeerSpacingX,
+          minPeerSpacingY
+        )
+      ) {
+        placed.push([x, y]);
+      }
+    }
+  }
+
+  // Pass 2: secondary full-canvas scan for large fleets (e.g. 30-45+ bots)
+  if (placed.length <= overflowIdx) {
+    const scanStartX = minX + 15;
+    for (let y = clampedOriginY; y <= maxY && placed.length <= overflowIdx; y += stepY) {
+      for (let x = scanStartX; x <= maxX && placed.length <= overflowIdx; x += stepX) {
+        if (
+          isClearOverflowCell(
+            x,
+            y,
+            theme,
+            placed,
+            minX,
+            maxX,
+            minY,
+            maxY,
+            designH,
+            minPeerSpacingX,
+            minPeerSpacingY
+          )
+        ) {
+          placed.push([x, y]);
+        }
+      }
+    }
+  }
+
+  if (overflowIdx < placed.length) {
+    const [x, y] = placed[overflowIdx];
+    return [x, y, [-38, 20]];
+  }
+
+  // Pass 3: deterministic lap-offset fallback if every non-overlapping cell is occupied
+  const baseList: Array<[number, number]> =
+    placed.length > 0 ? placed : [[clampedOriginX, clampedOriginY]];
+  const baseIdx = overflowIdx % baseList.length;
+  const lap = Math.floor(overflowIdx / baseList.length);
+  const [baseX, baseY] = baseList[baseIdx];
+  const lapOffsetX = (lap % 2 === 1 ? 1 : -1) * Math.min(28, lap * 16);
+  const lapOffsetY = (lap * 14) % Math.max(16, Math.floor(stepY * 0.5));
+  let x = Math.max(minX, Math.min(maxX, baseX + lapOffsetX));
+  let y = Math.max(minY, Math.min(maxY, baseY + lapOffsetY));
+
+  if (
+    !isClearOverflowCell(x, y, theme, [], minX, maxX, minY, maxY, designH, 0, 0)
+  ) {
+    x = baseX;
+    y = baseY;
+  }
   return [x, y, [-38, 20]];
 }

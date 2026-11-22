@@ -35,7 +35,7 @@ describe('OrcaCli security & argument validation', () => {
     ]) {
       assert.throws(() => validateBotName(bad), isOrcaCliError);
     }
-    assert.equal(validateBotName('또치'), '또치');
+    assert.equal(validateBotName('Ops Lead'), 'Ops Lead');
     assert.equal(validateBotName('클라우드 운영'), '클라우드 운영');
     assert.equal(validateBotName('bot_world-1'), 'bot_world-1');
   });
@@ -57,9 +57,9 @@ describe('OrcaCli security & argument validation', () => {
   test('enforces read-only subcommand allowlist at runtime', () => {
     assertAllowedSubcommand(['status', '--json']);
     assertAllowedSubcommand(['bot', 'list', '--json']);
-    assertAllowedSubcommand(['bot', 'chats', '--bot', '또치', '--all', '--json']);
-    assertAllowedSubcommand(['bot', 'item', 'list', '--bot', '또치', '--json']);
-    assertAllowedSubcommand(['bot', 'item', 'list', '--bot', '또치', '--all', '--json']);
+    assertAllowedSubcommand(['bot', 'chats', '--bot', 'Ops Lead', '--all', '--json']);
+    assertAllowedSubcommand(['bot', 'item', 'list', '--bot', 'Ops Lead', '--json']);
+    assertAllowedSubcommand(['bot', 'item', 'list', '--bot', 'Ops Lead', '--all', '--json']);
     assertAllowedSubcommand(['worktree', 'ps', '--since', '24h', '--json']);
     assertAllowedSubcommand(['orchestration', 'inbox', '--limit', '30', '--full', '--json']);
     assertAllowedSubcommand(['orchestration', 'worker-list', '--limit', '100', '--full', '--json']);
@@ -69,12 +69,12 @@ describe('OrcaCli security & argument validation', () => {
 
     for (const disallowed of [
       ['terminal', 'send', '--text', 'rm -rf /'],
-      ['bot', 'send', '--bot', '또치', '--text', 'hi'],
+      ['bot', 'send', '--bot', 'Ops Lead', '--text', 'hi'],
       ['orchestration', 'send', '--body', 'x'],
       ['agent', 'launch', '--agent', 'claude'],
       ['automations', 'create', '--name', 'evil'],
       ['bot', 'chats', '--bot', '--flag-inject', '--all', '--json'],
-      ['bot', 'chats', '--bot', '또치;id', '--all', '--json'],
+      ['bot', 'chats', '--bot', 'Ops Lead;id', '--all', '--json'],
     ]) {
       assert.throws(() => assertAllowedSubcommand(disallowed), isOrcaCliError);
     }
@@ -252,12 +252,12 @@ describe('OrcaCli security & argument validation', () => {
       }),
       botList: async () => ({
         ok: true,
-        result: { bots: [{ id: 'b1', name: '또치', agent: 'claude', paused: false }] },
+        result: { bots: [{ id: 'b1', name: 'Ops Lead', agent: 'claude', paused: false }] },
       }),
-      botChats: async () => ({ ok: true, result: { bot: '또치', chats: [] } }),
+      botChats: async () => ({ ok: true, result: { bot: 'Ops Lead', chats: [] } }),
       botItemList: async () => ({
         ok: true,
-        result: { botId: 'b1', botName: '또치', items: 'not-an-array' },
+        result: { botId: 'b1', botName: 'Ops Lead', items: 'not-an-array' },
       }),
       worktreePs: async () => ({ ok: true, result: { worktrees: [] } }),
       orchestrationInbox: async () => ({ ok: true, result: { messages: [] } }),

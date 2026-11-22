@@ -19,6 +19,7 @@ import {
   renderBotDetail,
   renderEventTimelineList,
 } from '../shared/bot-detail-view.ts';
+import { type DemoOfficeSession, createDemoOfficeSession } from '../shared/demo-office.ts';
 import { el } from '../shared/dom.ts';
 import { effectiveLocale, getHostLocale, resolveUiLocale, tStrings } from '../shared/i18n.ts';
 import {
@@ -67,11 +68,25 @@ let docSession: Awaited<ReturnType<typeof startBotWorldDocSession>> | null = nul
 const liveMotion = new MotionDirector();
 const replay = new ReplayController();
 let prevLiveSnapshot: WorldSnapshot = createEmptySnapshot();
+let livePayload: BotWorldStatePayload = state.payload;
 let replayTimerId: number | null = null;
 let lastReplayTickMs = 0;
 
+let demoSession: DemoOfficeSession | null = null;
+let demoTimerId: number | null = null;
+let demoThemeId: ThemeId = 'startup_office';
+let demoRedactMode = false;
+let demoLanguageSetting: LanguageSetting = 'auto';
+let demoAppearances: Record<string, CharacterId> = {};
+let demoSelectedBotId: string | null = null;
+
+function isDemoMode(): boolean {
+  return demoSession !== null;
+}
+
 function currentLocale(): UiLocale {
-  return effectiveLocale(state.payload.languageSetting, getHostLocale());
+  const setting = isDemoMode() ? demoLanguageSetting : state.payload.languageSetting;
+  return effectiveLocale(setting, getHostLocale());
 }
 
 // Toolbar
@@ -123,6 +138,22 @@ const langBtn = el(
   initialStrings.langToggleText
 );
 
+const demoBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-btn',
+    onClick: () => {
+      if (isDemoMode()) {
+        exitDemoMode();
+      } else {
+        enterDemoMode();
+      }
+    },
+  },
+  initialStrings.demoButton
+);
+
 const refreshBtn = el(
   'button',
   {
@@ -135,6 +166,8 @@ const refreshBtn = el(
 
 const connPill = el('span', { className: 'bw-status-pill' }, initialStrings.connecting);
 const docSyncPill = el('span', { className: 'bw-chip' }, initialStrings.docSynced);
+const demoHintText = el('span', null, initialStrings.demoModeHint);
+const demoHintBanner = el('div', { className: 'bw-hint-banner bw-hidden' }, demoHintText);
 
 const toolbar = el(
   'div',
@@ -146,7 +179,7 @@ const toolbar = el(
     connPill,
     docSyncPill
   ),
-  el('div', { className: 'bw-toolbar-group' }, themeSeg, redactBtn, langBtn, refreshBtn)
+  el('div', { className: 'bw-toolbar-group' }, themeSeg, redactBtn, langBtn, demoBtn, refreshBtn)
 );
 
 // Main 2-column area
@@ -269,12 +302,17 @@ const eventsDrawer = el('div', { className: 'bw-events-drawer' });
 const timelineBar = el('div', { className: 'bw-timeline-bar' }, timelineControls, eventsDrawer);
 
 root.appendChild(toolbar);
+root.appendChild(demoHintBanner);
 root.appendChild(editorBody);
 root.appendChild(timelineBar);
 
 const renderer = new StageRenderer(canvasEl, {
   onSelectBot: (botId) => {
-    updateDocumentPrefs({ selectedBotId: botId });
+    if (isDemoMode()) {
+      demoSelectedBotId = botId;
+    } else {
+      updateDocumentPrefs({ selectedBotId: botId });
+    }
     renderUi();
   },
   onHoverBot: (botId) => {
@@ -286,14 +324,17 @@ const renderer = new StageRenderer(canvasEl, {
 });
 
 function activeThemeId(): ThemeId {
+  if (isDemoMode()) return demoThemeId;
   return state.docData.themeId ?? state.payload.activeTheme;
 }
 
 function activeRedactMode(): boolean {
+  if (isDemoMode()) return demoRedactMode;
   return Boolean(state.payload.redactMode) || Boolean(state.docData.redactMode);
 }
 
 function mergedAppearances(): Record<string, CharacterId> {
+  if (isDemoMode()) return { ...demoAppearances };
   return {
     ...state.payload.botAppearances,
     ...state.docData.botAppearances,
@@ -336,7 +377,7 @@ function updateStageOverlayLabel(): void {
 }
 
 function resolveSelectedBotId(snap: WorldSnapshot): string | null {
-  let selectedId = state.docData.selectedBotId;
+  let selectedId = isDemoMode() ? demoSelectedBotId : state.docData.selectedBotId;
   if (selectedId && !Object.hasOwn(snap.bots, selectedId)) {
     selectedId = null;
   }
@@ -358,6 +399,10 @@ function syncChromeLocale(locale: UiLocale): void {
   langBtn.textContent = s.langToggleText;
   langBtn.title = s.langToggleTitle;
   langBtn.setAttribute('aria-label', s.langToggleTitle);
+  demoBtn.textContent = isDemoMode() ? s.exitDemoOffice : s.demoButton;
+  demoBtn.className = isDemoMode() ? 'bw-btn bw-btn-active' : 'bw-btn';
+  demoHintText.textContent = s.demoModeHint;
+  demoHintBanner.classList.toggle('bw-hidden', !isDemoMode());
   refreshBtn.textContent = s.refresh;
   liveBtn.textContent = s.live;
   speedSeg.setAttribute('aria-label', s.speedAriaLabel);
@@ -372,6 +417,7 @@ function renderToolbarOnly(
   locale: UiLocale
 ): void {
   const s = tStrings(locale);
+  const botCount = Object.keys(snap.bots).length;
   startupBtn.className =
     themeId === 'startup_office' ? 'bw-seg-btn bw-seg-btn-active' : 'bw-seg-btn';
   corpBtn.className =
@@ -380,17 +426,21 @@ function renderToolbarOnly(
   redactBtn.textContent = redactMode ? s.redactOn : s.redactOff;
   redactBtn.className = redactMode ? 'bw-btn bw-btn-warn' : 'bw-btn';
 
-  if (snap.runtime.connected) {
-    connPill.textContent = s.connectedBots(Object.keys(snap.bots).length);
+  if (isDemoMode()) {
+    connPill.textContent = s.demoModeBadge(botCount);
+    connPill.className = 'bw-status-pill bw-status-demo';
+    docSyncPill.textContent = s.docReadOnly;
+  } else if (snap.runtime.connected) {
+    connPill.textContent = s.connectedBots(botCount);
     connPill.className = 'bw-status-pill bw-status-online';
+    docSyncPill.textContent = docSession?.readOnly ? s.docReadOnly : s.docSynced;
   } else {
     connPill.textContent = snap.runtime.retryAfterSecs
       ? s.offlineRetry(snap.runtime.retryAfterSecs)
       : s.offline;
     connPill.className = 'bw-status-pill bw-status-offline';
+    docSyncPill.textContent = docSession?.readOnly ? s.docReadOnly : s.docSynced;
   }
-
-  docSyncPill.textContent = docSession?.readOnly ? s.docReadOnly : s.docSynced;
 }
 
 function renderTimelineControlsOnly(snap: WorldSnapshot, locale: UiLocale): void {
@@ -431,6 +481,7 @@ function renderStageFrame(
   });
 }
 
+let lastDetailDemoMode: boolean | null = null;
 let lastDetailBotsRef: WorldSnapshot['bots'] | null = null;
 let lastDetailWorkersRef: WorldSnapshot['workers'] | null = null;
 let lastDetailItemsRef: WorldSnapshot['items'] | null = null;
@@ -456,8 +507,10 @@ function renderSidePanelsIfNeeded(
   force = false
 ): void {
   const appearancesJson = JSON.stringify(appearances);
+  const demoActive = isDemoMode();
   const detailChanged =
     force ||
+    demoActive !== lastDetailDemoMode ||
     snap.bots !== lastDetailBotsRef ||
     snap.workers !== lastDetailWorkersRef ||
     snap.items !== lastDetailItemsRef ||
@@ -470,6 +523,7 @@ function renderSidePanelsIfNeeded(
     appearancesJson !== lastDetailAppearancesJson;
 
   if (detailChanged) {
+    lastDetailDemoMode = demoActive;
     lastDetailBotsRef = snap.bots;
     lastDetailWorkersRef = snap.workers;
     lastDetailItemsRef = snap.items;
@@ -492,6 +546,8 @@ function renderSidePanelsIfNeeded(
       redactMode,
       botAppearances: appearances,
       locale,
+      botCount: Object.keys(snap.bots).length,
+      onStartDemo: demoActive ? undefined : enterDemoMode,
       onSelectCharacter: (botId, charId) => void setBotAppearance(botId, charId).catch(() => {}),
     });
   }
@@ -591,7 +647,78 @@ function renderUi(forceSidePanels = false): void {
   renderSidePanelsIfNeeded(snap, selectedId, redactMode, appearances, locale, forceSidePanels);
 }
 
+function buildDemoPayload(): BotWorldStatePayload | null {
+  if (!demoSession) return null;
+  return demoSession.getPayload({
+    themeId: demoThemeId,
+    redactMode: demoRedactMode,
+    locale: currentLocale(),
+    languageSetting: demoLanguageSetting,
+    botAppearances: demoAppearances,
+  });
+}
+
+function syncDemoTick(advance: boolean, forceSidePanels = false): void {
+  if (!demoSession) return;
+  const generatedCount = advance ? demoSession.tick().length : 0;
+  const nextPayload = buildDemoPayload();
+  if (!nextPayload) return;
+  const locale = currentLocale();
+  const theme = getThemeConfig(demoThemeId, locale);
+  if (generatedCount > 0 && !replay.isReplay) {
+    const newEvents = nextPayload.events.slice(-generatedCount).map((r) => r.event);
+    liveMotion.enqueueEvents(newEvents, nextPayload.snapshot, theme, locale);
+  }
+  state.payload = nextPayload;
+  if (replay.isReplay) {
+    replay.resyncSnapshot(nextPayload.keyframes, nextPayload.snapshot, theme, locale);
+  }
+  renderUi(forceSidePanels);
+}
+
+function enterDemoMode(): void {
+  if (isDemoMode()) return;
+  demoThemeId = state.docData.themeId ?? livePayload.activeTheme;
+  demoRedactMode = Boolean(livePayload.redactMode) || Boolean(state.docData.redactMode);
+  demoLanguageSetting = livePayload.languageSetting;
+  demoAppearances = {};
+  demoSelectedBotId = null;
+  demoSession = createDemoOfficeSession();
+  replay.returnToLive();
+  liveMotion.clearTransients();
+  syncReplayLoop();
+  const initialDemo = buildDemoPayload();
+  if (initialDemo) {
+    state.payload = initialDemo;
+    demoSelectedBotId = initialDemo.snapshot.botOrder[0] ?? null;
+  }
+  demoTimerId = window.setInterval(() => {
+    if (!demoSession || replay.isReplay) return;
+    syncDemoTick(true);
+  }, 2600);
+  renderUi(true);
+}
+
+function exitDemoMode(): void {
+  if (demoTimerId !== null) {
+    clearInterval(demoTimerId);
+    demoTimerId = null;
+  }
+  demoSession = null;
+  demoSelectedBotId = null;
+  replay.returnToLive();
+  liveMotion.clearTransients();
+  syncReplayLoop();
+  state.payload = livePayload;
+  renderUi(true);
+  void triggerRefresh().catch(() => {});
+}
+
 function applyIncomingPayload(nextPayload: BotWorldStatePayload): void {
+  livePayload = nextPayload;
+  if (isDemoMode()) {
+    return;
+  }
   const locale = effectiveLocale(nextPayload.languageSetting, getHostLocale());
   const theme = getThemeConfig(activeThemeId(), locale);
   const hadPrev = Object.keys(prevLiveSnapshot.bots).length > 0;
@@ -610,11 +737,17 @@ function applyIncomingPayload(nextPayload: BotWorldStatePayload): void {
 }
 
 async function switchTheme(themeId: ThemeId): Promise<void> {
+  if (isDemoMode()) {
+    demoThemeId = themeId;
+    syncDemoTick(false, true);
+    return;
+  }
   updateDocumentPrefs({ themeId });
   renderUi();
   try {
     const res = await orca.plugin.request('botWorld.setTheme', { themeId });
     state.payload = { ...state.payload, activeTheme: res.themeId };
+    livePayload = state.payload;
     renderUi();
   } catch {
     // Document change is already persisted locally in .botworld
@@ -622,12 +755,18 @@ async function switchTheme(themeId: ThemeId): Promise<void> {
 }
 
 async function toggleRedact(): Promise<void> {
+  if (isDemoMode()) {
+    demoRedactMode = !demoRedactMode;
+    syncDemoTick(false, true);
+    return;
+  }
   const nextRedact = !activeRedactMode();
   updateDocumentPrefs({ redactMode: nextRedact });
   renderUi(true);
   try {
     const res = await orca.plugin.request('botWorld.setRedactMode', { redactMode: nextRedact });
     state.payload = { ...state.payload, redactMode: res.redactMode };
+    livePayload = state.payload;
     renderUi(true);
     if (res.redactMode) {
       const fresh = await orca.plugin.request('botWorld.getState', { locale: getHostLocale() });
@@ -640,6 +779,11 @@ async function toggleRedact(): Promise<void> {
 
 async function toggleLanguage(): Promise<void> {
   const nextLanguage: LanguageSetting = currentLocale() === 'ko' ? 'en' : 'ko';
+  if (isDemoMode()) {
+    demoLanguageSetting = nextLanguage;
+    syncDemoTick(false, true);
+    return;
+  }
   try {
     const res = await orca.plugin.request('botWorld.setLanguage', {
       language: nextLanguage,
@@ -650,6 +794,7 @@ async function toggleLanguage(): Promise<void> {
       languageSetting: res.languageSetting,
       locale: res.locale,
     };
+    livePayload = state.payload;
     renderUi(true);
     const fresh = await orca.plugin.request('botWorld.getState', { locale: getHostLocale() });
     applyIncomingPayload(fresh);
@@ -660,6 +805,16 @@ async function toggleLanguage(): Promise<void> {
 
 async function setBotAppearance(botId: string, characterId: CharacterId): Promise<void> {
   if (!isSafeKey(botId)) return;
+  if (isDemoMode()) {
+    Object.defineProperty(demoAppearances, botId, {
+      value: characterId,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+    syncDemoTick(false, true);
+    return;
+  }
   const nextAppearances = { ...state.docData.botAppearances };
   Object.defineProperty(nextAppearances, botId, {
     value: characterId,
@@ -672,6 +827,7 @@ async function setBotAppearance(botId: string, characterId: CharacterId): Promis
   try {
     const res = await orca.plugin.request('botWorld.setBotAppearance', { botId, characterId });
     state.payload = { ...state.payload, botAppearances: res.botAppearances };
+    livePayload = state.payload;
     renderUi();
   } catch {
     // Ignore
@@ -679,6 +835,10 @@ async function setBotAppearance(botId: string, characterId: CharacterId): Promis
 }
 
 async function triggerRefresh(): Promise<void> {
+  if (isDemoMode()) {
+    syncDemoTick(true, true);
+    return;
+  }
   refreshBtn.disabled = true;
   try {
     const next = await orca.plugin.request('botWorld.refresh', { locale: getHostLocale() });
@@ -722,6 +882,10 @@ async function boot(): Promise<void> {
 }
 
 window.addEventListener('beforeunload', () => {
+  if (demoTimerId !== null) {
+    clearInterval(demoTimerId);
+    demoTimerId = null;
+  }
   if (replayTimerId !== null) cancelAnimationFrame(replayTimerId);
   docSession?.dispose();
   renderer.dispose();

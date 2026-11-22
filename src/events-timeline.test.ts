@@ -32,7 +32,7 @@ function buildBaseSnapshot() {
     ok: true,
     result: {
       bots: [
-        { id: 'b1', name: '또치', agent: 'claude', paused: false, specialty: '조율' },
+        { id: 'b1', name: 'Ops Lead', agent: 'claude', paused: false, specialty: '조율' },
         { id: 'b2', name: '보안', agent: 'claude', paused: false, specialty: '보안' },
       ],
     },
@@ -40,7 +40,7 @@ function buildBaseSnapshot() {
   applyBotChats(snap, {
     ok: true,
     result: {
-      bot: '또치',
+      bot: 'Ops Lead',
       chats: [{ id: 'c1', title: 'Home', home: true, lastActivityAt: 1000 }],
     },
   });
@@ -64,7 +64,7 @@ describe('Normalization, 18-kind event diffing, and 24h replay timeline', () => 
         ok: true,
         result: {
           botId: 'b1',
-          botName: '또치',
+          botName: 'Ops Lead',
           items: [
             {
               uid: 'it1',
@@ -81,7 +81,7 @@ describe('Normalization, 18-kind event diffing, and 24h replay timeline', () => 
     applyBotChats(snap, {
       ok: true,
       result: {
-        bot: '또치',
+        bot: 'Ops Lead',
         chats: [
           { id: 'c-raw', title: '──── From: 보안', home: false, lastActivityAt: 999999 },
           { id: 'c1', title: 'Home', home: true, lastActivityAt: 5000 },
@@ -100,7 +100,7 @@ describe('Normalization, 18-kind event diffing, and 24h replay timeline', () => 
       ok: true,
       result: {
         bots: [
-          { id: 'b1', name: '또치', agent: 'claude', paused: false, specialty: '조율' },
+          { id: 'b1', name: 'Ops Lead', agent: 'claude', paused: false, specialty: '조율' },
           { id: 'b2', name: '보안', agent: 'claude', paused: false, specialty: '보안' },
           { id: 'b3', name: 'IaC', agent: 'claude', paused: true, specialty: '테라폼' },
         ],
@@ -134,7 +134,7 @@ describe('Normalization, 18-kind event diffing, and 24h replay timeline', () => 
         worktrees: [
           {
             worktreeId: 'wt-1',
-            bot: '또치',
+            bot: 'Ops Lead',
             botHome: true,
             agents: [
               {
@@ -244,7 +244,7 @@ describe('Normalization, 18-kind event diffing, and 24h replay timeline', () => 
     assert.equal(buf.keyframes.length, MAX_KEYFRAMES);
 
     for (let i = 0; i < MAX_EVENTS + 40; i++) {
-      buf.pushEvent({ kind: 'BotWorking', botId: 'b1', botName: '또치', tool: 'read_file' }, baseMs + i * 100);
+      buf.pushEvent({ kind: 'BotWorking', botId: 'b1', botName: 'Ops Lead', tool: 'read_file' }, baseMs + i * 100);
     }
     assert.equal(buf.eventLog.length, MAX_EVENTS);
 
@@ -281,7 +281,7 @@ describe('Normalization, 18-kind event diffing, and 24h replay timeline', () => 
           timestampMs: now - 500,
           summary: '작업 중',
           redactedSummary: '작업 중',
-          event: { kind: 'BotWorking', botId: 'b1', botName: '또치', tool: 'read_file' },
+          event: { kind: 'BotWorking', botId: 'b1', botName: 'Ops Lead', tool: 'read_file' },
         },
       ],
       keyframes: [
@@ -319,7 +319,7 @@ describe('Normalization, 18-kind event diffing, and 24h replay timeline', () => 
     for (let i = 0; i < 30; i++) {
       bigBuf.recordKeyframe(snap, now - 30_000 + i * 1000);
       bigBuf.pushEvent(
-        { kind: 'BotWorking', botId: 'b1', botName: '또치', tool: 'read_file' },
+        { kind: 'BotWorking', botId: 'b1', botName: 'Ops Lead', tool: 'read_file' },
         now - 30_000 + i * 1000
       );
     }
@@ -335,7 +335,7 @@ describe('Normalization, 18-kind event diffing, and 24h replay timeline', () => 
         taskId: null,
         runId: null,
         parentBotId: 'b1',
-        parentBotName: '또치',
+        parentBotName: 'Ops Lead',
         provider: 'claude',
         model: null,
         workerState: 'succeeded',

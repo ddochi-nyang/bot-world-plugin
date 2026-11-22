@@ -18,6 +18,7 @@ import {
   renderBotQuickPills,
   renderEventTimelineList,
 } from '../shared/bot-detail-view.ts';
+import { type DemoOfficeSession, createDemoOfficeSession } from '../shared/demo-office.ts';
 import { clearChildren, el } from '../shared/dom.ts';
 import { effectiveLocale, getHostLocale, resolveUiLocale, tStrings } from '../shared/i18n.ts';
 import { MotionDirector, ReplayController } from '../shared/motion.ts';
@@ -58,9 +59,22 @@ const state: {
 const liveMotion = new MotionDirector();
 const replay = new ReplayController();
 let prevLiveSnapshot: WorldSnapshot = createEmptySnapshot();
+let livePayload: BotWorldStatePayload = state.payload;
+
+let demoSession: DemoOfficeSession | null = null;
+let demoTimerId: number | null = null;
+let demoThemeId: ThemeId = 'startup_office';
+let demoRedactMode = false;
+let demoLanguageSetting: LanguageSetting = 'auto';
+let demoAppearances: Record<string, CharacterId> = {};
+
+function isDemoMode(): boolean {
+  return demoSession !== null;
+}
 
 function currentLocale(): UiLocale {
-  return effectiveLocale(state.payload.languageSetting, getHostLocale());
+  const setting = isDemoMode() ? demoLanguageSetting : state.payload.languageSetting;
+  return effectiveLocale(setting, getHostLocale());
 }
 
 // Build static shell DOM safely
@@ -112,6 +126,22 @@ const langBtn = el(
   initialStrings.langToggleText
 );
 
+const demoBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-btn',
+    onClick: () => {
+      if (isDemoMode()) {
+        exitDemoMode();
+      } else {
+        enterDemoMode();
+      }
+    },
+  },
+  initialStrings.demoButton
+);
+
 const refreshBtn = el(
   'button',
   {
@@ -128,7 +158,7 @@ const toolbar = el(
   'div',
   { className: 'bw-toolbar' },
   el('div', { className: 'bw-toolbar-group' }, titleEl, connPill),
-  el('div', { className: 'bw-toolbar-group' }, themeSeg, redactBtn, langBtn, refreshBtn)
+  el('div', { className: 'bw-toolbar-group' }, themeSeg, redactBtn, langBtn, demoBtn, refreshBtn)
 );
 
 const boardHintText = el('span', null, initialStrings.boardHint);
@@ -230,11 +260,77 @@ function syncChromeLocale(locale: UiLocale): void {
   langBtn.textContent = s.langToggleText;
   langBtn.title = s.langToggleTitle;
   langBtn.setAttribute('aria-label', s.langToggleTitle);
+  demoBtn.textContent = isDemoMode() ? s.exitDemoOffice : s.demoButton;
+  demoBtn.className = isDemoMode() ? 'bw-btn bw-btn-active' : 'bw-btn';
   refreshBtn.textContent = s.refresh;
-  boardHintText.textContent = s.boardHint;
+  boardHintText.textContent = isDemoMode() ? s.demoModeHint : s.boardHint;
   tabDetailBtn.textContent = s.tabDetail;
   tabTimelineBtn.textContent = s.tabTimeline;
   backToLiveBtn.textContent = s.backToLive;
+}
+
+function buildDemoPayload(): BotWorldStatePayload | null {
+  if (!demoSession) return null;
+  return demoSession.getPayload({
+    themeId: demoThemeId,
+    redactMode: demoRedactMode,
+    locale: currentLocale(),
+    languageSetting: demoLanguageSetting,
+    botAppearances: demoAppearances,
+  });
+}
+
+function syncDemoTick(advance: boolean): void {
+  if (!demoSession) return;
+  const generatedCount = advance ? demoSession.tick().length : 0;
+  const nextPayload = buildDemoPayload();
+  if (!nextPayload) return;
+  const locale = currentLocale();
+  const theme = getThemeConfig(nextPayload.activeTheme, locale);
+  if (generatedCount > 0 && !replay.isReplay) {
+    const newEvents = nextPayload.events.slice(-generatedCount).map((r) => r.event);
+    liveMotion.enqueueEvents(newEvents, nextPayload.snapshot, theme, locale);
+  }
+  state.payload = nextPayload;
+  if (replay.isReplay) {
+    replay.resyncSnapshot(nextPayload.keyframes, nextPayload.snapshot, theme, locale);
+  }
+  renderUi();
+}
+
+function enterDemoMode(): void {
+  if (isDemoMode()) return;
+  demoThemeId = state.payload.activeTheme;
+  demoRedactMode = state.payload.redactMode;
+  demoLanguageSetting = state.payload.languageSetting;
+  demoAppearances = {};
+  demoSession = createDemoOfficeSession();
+  replay.returnToLive();
+  liveMotion.clearTransients();
+  const initialDemo = buildDemoPayload();
+  if (initialDemo) {
+    state.payload = initialDemo;
+    state.selectedBotId = initialDemo.snapshot.botOrder[0] ?? null;
+  }
+  demoTimerId = window.setInterval(() => {
+    if (!demoSession || replay.isReplay) return;
+    syncDemoTick(true);
+  }, 2600);
+  renderUi();
+}
+
+function exitDemoMode(): void {
+  if (demoTimerId !== null) {
+    clearInterval(demoTimerId);
+    demoTimerId = null;
+  }
+  demoSession = null;
+  replay.returnToLive();
+  liveMotion.clearTransients();
+  state.payload = livePayload;
+  state.selectedBotId = null;
+  renderUi();
+  void triggerRefresh().catch(() => {});
 }
 
 function renderUi(): void {
@@ -242,6 +338,7 @@ function renderUi(): void {
   const locale = currentLocale();
   const s = tStrings(locale);
   const snap = currentDisplayedSnapshot();
+  const botCount = Object.keys(snap.bots).length;
 
   syncChromeLocale(locale);
 
@@ -253,8 +350,11 @@ function renderUi(): void {
   redactBtn.textContent = redactMode ? s.redactOn : s.redactOff;
   redactBtn.className = redactMode ? 'bw-btn bw-btn-warn' : 'bw-btn';
 
-  if (snap.runtime.connected) {
-    connPill.textContent = s.connectedBots(Object.keys(snap.bots).length);
+  if (isDemoMode()) {
+    connPill.textContent = s.demoModeBadge(botCount);
+    connPill.className = 'bw-status-pill bw-status-demo';
+  } else if (snap.runtime.connected) {
+    connPill.textContent = s.connectedBots(botCount);
     connPill.className = 'bw-status-pill bw-status-online';
   } else {
     connPill.textContent = snap.runtime.retryAfterSecs
@@ -289,6 +389,7 @@ function renderUi(): void {
     locale,
   });
 
+  botStrip.hidden = botCount === 0;
   renderBotQuickPills(botStrip, {
     snapshot: snap,
     selectedBotId: state.selectedBotId,
@@ -310,6 +411,8 @@ function renderUi(): void {
       redactMode,
       botAppearances,
       locale,
+      botCount,
+      onStartDemo: isDemoMode() ? undefined : enterDemoMode,
       onSelectCharacter: (botId, charId) => void setBotAppearance(botId, charId).catch(() => {}),
     });
   } else {
@@ -339,6 +442,10 @@ function renderUi(): void {
 }
 
 function applyIncomingPayload(nextPayload: BotWorldStatePayload): void {
+  livePayload = nextPayload;
+  if (isDemoMode()) {
+    return;
+  }
   const locale = effectiveLocale(nextPayload.languageSetting, getHostLocale());
   const theme = getThemeConfig(nextPayload.activeTheme, locale);
   const hadPrev = Object.keys(prevLiveSnapshot.bots).length > 0;
@@ -357,9 +464,15 @@ function applyIncomingPayload(nextPayload: BotWorldStatePayload): void {
 }
 
 async function switchTheme(themeId: ThemeId): Promise<void> {
+  if (isDemoMode()) {
+    demoThemeId = themeId;
+    syncDemoTick(false);
+    return;
+  }
   try {
     const res = await orca.plugin.request('botWorld.setTheme', { themeId });
     state.payload = { ...state.payload, activeTheme: res.themeId };
+    livePayload = state.payload;
     renderUi();
   } catch {
     // Ignore RPC failure
@@ -367,11 +480,17 @@ async function switchTheme(themeId: ThemeId): Promise<void> {
 }
 
 async function toggleRedact(): Promise<void> {
+  if (isDemoMode()) {
+    demoRedactMode = !demoRedactMode;
+    syncDemoTick(false);
+    return;
+  }
   try {
     const res = await orca.plugin.request('botWorld.setRedactMode', {
       redactMode: !state.payload.redactMode,
     });
     state.payload = { ...state.payload, redactMode: res.redactMode };
+    livePayload = state.payload;
     renderUi();
     if (res.redactMode) {
       const fresh = await orca.plugin.request('botWorld.getState', { locale: getHostLocale() });
@@ -384,6 +503,11 @@ async function toggleRedact(): Promise<void> {
 
 async function toggleLanguage(): Promise<void> {
   const nextLanguage: LanguageSetting = currentLocale() === 'ko' ? 'en' : 'ko';
+  if (isDemoMode()) {
+    demoLanguageSetting = nextLanguage;
+    syncDemoTick(false);
+    return;
+  }
   try {
     const res = await orca.plugin.request('botWorld.setLanguage', {
       language: nextLanguage,
@@ -394,6 +518,7 @@ async function toggleLanguage(): Promise<void> {
       languageSetting: res.languageSetting,
       locale: res.locale,
     };
+    livePayload = state.payload;
     renderUi();
     const fresh = await orca.plugin.request('botWorld.getState', { locale: getHostLocale() });
     applyIncomingPayload(fresh);
@@ -403,9 +528,21 @@ async function toggleLanguage(): Promise<void> {
 }
 
 async function setBotAppearance(botId: string, characterId: CharacterId): Promise<void> {
+  if (!isSafeKey(botId)) return;
+  if (isDemoMode()) {
+    Object.defineProperty(demoAppearances, botId, {
+      value: characterId,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+    syncDemoTick(false);
+    return;
+  }
   try {
     const res = await orca.plugin.request('botWorld.setBotAppearance', { botId, characterId });
     state.payload = { ...state.payload, botAppearances: res.botAppearances };
+    livePayload = state.payload;
     renderUi();
   } catch {
     // Ignore RPC failure
@@ -413,6 +550,10 @@ async function setBotAppearance(botId: string, characterId: CharacterId): Promis
 }
 
 async function triggerRefresh(): Promise<void> {
+  if (isDemoMode()) {
+    syncDemoTick(true);
+    return;
+  }
   refreshBtn.disabled = true;
   try {
     const next = await orca.plugin.request('botWorld.refresh', { locale: getHostLocale() });
@@ -443,6 +584,10 @@ async function boot(): Promise<void> {
 }
 
 window.addEventListener('beforeunload', () => {
+  if (demoTimerId !== null) {
+    clearInterval(demoTimerId);
+    demoTimerId = null;
+  }
   renderer.dispose();
 });
 

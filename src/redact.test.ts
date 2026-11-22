@@ -64,7 +64,7 @@ describe('Secret & PII scrubbing and redactMode', () => {
     assert.ok(cleaned.includes('시각: 1795185500000'));
 
     const safe =
-      '보안 봇이 ~/Desktop/dev/halo/bot-world 에서 작업 중 (ts=1795185500000, id=550e8400-e29b-41d4-a716-446655440000, numericUuid=550e8400-e29b-41d4-a716-123456789012, date=2026-11-21).';
+      '보안 봇이 ~/projects/demo/bot-world 에서 작업 중 (ts=1795185500000, id=550e8400-e29b-41d4-a716-446655440000, numericUuid=550e8400-e29b-41d4-a716-123456789012, date=2026-11-21).';
     assert.equal(scrubAll(safe), safe);
   });
 
