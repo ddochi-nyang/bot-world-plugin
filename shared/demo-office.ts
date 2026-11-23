@@ -9,13 +9,17 @@ import {
   type AtmosphereMode,
   type BotActivityStatus,
   type BotItemState,
+  type BotRpgProfile,
+  type BotRpgStore,
   type BotState,
   type BotWorldStatePayload,
   type CharacterId,
   type DailyTrendPoint,
+  type DeskPropId,
   type InboxMessage,
   type Keyframe,
   type LanguageSetting,
+  type RpgXpAction,
   type SoundMode,
   type ThemeId,
   type UiLocale,
@@ -33,6 +37,13 @@ import {
   getLastSevenDaysTrend,
   mergeEventsIntoWeeklyTrend,
 } from '../src/weekly-trend.ts';
+import {
+  applyRpgActionToStore,
+  applyWorldEventsToRpgStore,
+  buildRpgProfilesForSnapshot,
+  createEmptyBotRpgStore,
+  equipDeskPropInStore,
+} from './bot-rpg.ts';
 import { tStrings } from './i18n.ts';
 
 const MAX_DEMO_EVENTS = 120;
@@ -152,7 +163,11 @@ function formatDemoSnapshot(
       agent: redactMode ? s.privateLabel : scrubAll(bot.agent),
       specialty: redactMode ? '' : scrubAll(tx(bot.specialty, locale)),
       status,
-      currentTaskTitle: redactMode ? redactLabel(bot.name, statusLabel) : localizedTask,
+      currentTaskTitle: redactMode
+        ? redactLabel(bot.name, statusLabel)
+        : localizedTask !== null
+          ? scrubAll(localizedTask)
+          : null,
       currentTool: redactMode ? null : bot.currentTool,
     };
     Object.defineProperty(bots, id, {
@@ -973,6 +988,9 @@ export class DemoOfficeSession {
   private workerSeqCounter = 5;
   private lastTickMs: number;
   private readonly explicitClock: boolean;
+  private rpgStore: BotRpgStore;
+  private readonly rpgCooldowns = new Map<string, number>();
+  private readonly seenRpgEvents = new Set<string>();
 
   constructor(nowMs?: number) {
     this.explicitClock = typeof nowMs === 'number' && Number.isFinite(nowMs);
@@ -982,6 +1000,81 @@ export class DemoOfficeSession {
     const history = buildInitialDemoHistory(this.snapshot, baseMs);
     this.events = history.events;
     this.keyframes = history.keyframes;
+    this.rpgStore = createEmptyBotRpgStore(baseMs);
+    this.rpgStore.profiles = {
+      'demo-ops-lead': {
+        xp: 540,
+        completions: 14,
+        delegations: 12,
+        headpats: 2,
+        highFives: 3,
+        coffees: 2,
+        equippedProp: 'gold_trophy',
+      },
+      'demo-security': {
+        xp: 350,
+        completions: 9,
+        delegations: 6,
+        headpats: 1,
+        highFives: 2,
+        coffees: 2,
+        equippedProp: 'cat_plush',
+      },
+      'demo-infra-ops': {
+        xp: 215,
+        completions: 6,
+        delegations: 5,
+        headpats: 1,
+        highFives: 1,
+        coffees: 1,
+        equippedProp: 'dual_monitor',
+      },
+      'demo-dev-tools': {
+        xp: 125,
+        completions: 3,
+        delegations: 3,
+        headpats: 1,
+        highFives: 1,
+        coffees: 1,
+        equippedProp: 'mech_keyboard',
+      },
+      'demo-bot-world': {
+        xp: 140,
+        completions: 4,
+        delegations: 2,
+        headpats: 2,
+        highFives: 1,
+        coffees: 1,
+        equippedProp: 'mech_keyboard',
+      },
+      'demo-cloud-ops': {
+        xp: 60,
+        completions: 1,
+        delegations: 2,
+        headpats: 1,
+        highFives: 1,
+        coffees: 0,
+        equippedProp: 'mini_plant',
+      },
+      'demo-doc-review': {
+        xp: 25,
+        completions: 0,
+        delegations: 1,
+        headpats: 1,
+        highFives: 1,
+        coffees: 0,
+        equippedProp: 'rubber_duck',
+      },
+      'demo-cost-guard': {
+        xp: 15,
+        completions: 0,
+        delegations: 1,
+        headpats: 1,
+        highFives: 0,
+        coffees: 0,
+        equippedProp: 'rubber_duck',
+      },
+    };
   }
 
   private pushEvent(ev: WorldEvent, ts: number, workerSeqHint = 1): void {
@@ -1327,6 +1420,10 @@ export class DemoOfficeSession {
       }
     }
 
+    if (generated.length > 0) {
+      applyWorldEventsToRpgStore(this.rpgStore, generated, this.seenRpgEvents, ts);
+    }
+
     if (this.stepIndex % 2 === 0) {
       this.keyframes.push({ timestampMs: ts, snapshot: clonePlain(this.snapshot) });
       if (this.keyframes.length > MAX_DEMO_KEYFRAMES) {
@@ -1335,6 +1432,39 @@ export class DemoOfficeSession {
     }
 
     return generated;
+  }
+
+  awardRpgXp(
+    botId: string,
+    action: RpgXpAction,
+    nowMs: number = Date.now()
+  ): {
+    ok: boolean;
+    reason?: 'unknown_bot' | 'cooldown';
+    xpAwarded: number;
+    leveledUp: boolean;
+    cooldownRemainingMs?: number;
+    profile?: BotRpgProfile;
+  } {
+    if (!isSafeKey(botId) || !Object.hasOwn(this.snapshot.bots, botId)) {
+      return { ok: false, reason: 'unknown_bot', xpAwarded: 0, leveledUp: false };
+    }
+    return applyRpgActionToStore(this.rpgStore, botId, action, nowMs, this.rpgCooldowns);
+  }
+
+  equipDeskProp(
+    botId: string,
+    propId: DeskPropId,
+    nowMs: number = Date.now()
+  ): {
+    ok: boolean;
+    reason?: 'unknown_bot' | 'prop_locked';
+    profile?: BotRpgProfile;
+  } {
+    if (!isSafeKey(botId) || !Object.hasOwn(this.snapshot.bots, botId)) {
+      return { ok: false, reason: 'unknown_bot' };
+    }
+    return equipDeskPropInStore(this.rpgStore, botId, propId, nowMs);
   }
 
   sendQuickMessage(
@@ -1516,6 +1646,7 @@ export class DemoOfficeSession {
       soundMode,
       redactMode,
       botAppearances: safeAppearances,
+      rpgProfiles: buildRpgProfilesForSnapshot(this.rpgStore, snapshot),
       pollIntervalSec: 5,
       locale,
       languageSetting,

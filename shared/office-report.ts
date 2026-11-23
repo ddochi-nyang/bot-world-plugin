@@ -1,7 +1,9 @@
 import { eventRelatedBotId } from '../src/events.ts';
 import { scrubAll } from '../src/redact.ts';
 import {
+  type BotRpgProfile,
   type DailyTrendPoint,
+  type DeskPropId,
   type UiLocale,
   type WorldEvent,
   type WorldEventRecord,
@@ -9,6 +11,7 @@ import {
   isSafeKey,
 } from '../src/types.ts';
 import { getLastSevenDaysTrend, mergeEventsIntoWeeklyTrend } from '../src/weekly-trend.ts';
+import { propEmoji, rpgTitleForLevel } from './bot-rpg.ts';
 import { clearChildren, el } from './dom.ts';
 import { getBotRedactedAlias } from './filter.ts';
 import { formatTimeHms, tStrings } from './i18n.ts';
@@ -39,6 +42,16 @@ export type OfficeReportBadgeEntry = {
   winners: string[];
 };
 
+export type OfficeReportRpgBot = {
+  botId: string;
+  botName: string;
+  level: number;
+  title: string;
+  xp: number;
+  equippedProp: DeskPropId;
+  propEmoji: string;
+};
+
 export type OfficeReport = {
   redacted?: boolean;
   windowHours: number;
@@ -56,6 +69,7 @@ export type OfficeReport = {
   hourlyBuckets: OfficeReportHourlyBucket[];
   weeklyTrend?: DailyTrendPoint[];
   badges: OfficeReportBadgeEntry[];
+  topRpgBots?: OfficeReportRpgBot[];
 };
 
 const HOUR_MS = 3600_000;
@@ -120,6 +134,7 @@ export function buildOfficeReport(
     redactMode: boolean;
     locale: UiLocale;
     weeklyTrend?: readonly DailyTrendPoint[];
+    rpgProfiles?: Readonly<Record<string, BotRpgProfile>>;
   }
 ): OfficeReport {
   const s = tStrings(opts.locale);
@@ -276,6 +291,32 @@ export function buildOfficeReport(
   const mergedWeekly = mergeEventsIntoWeeklyTrend(opts.weeklyTrend ?? [], windowEvents, nowMs);
   const weeklyTrend = getLastSevenDaysTrend(mergedWeekly, nowMs);
 
+  const topRpgBots: OfficeReportRpgBot[] = [];
+  if (opts.rpgProfiles) {
+    for (const [botId, prof] of Object.entries(opts.rpgProfiles)) {
+      if (!isSafeKey(botId) || !prof) continue;
+      if (!Object.hasOwn(snapshot.bots, botId)) continue;
+      const displayName = opts.redactMode
+        ? getBotRedactedAlias(botId, snapshot, opts.locale)
+        : scrubAll(snapshot.bots[botId].name);
+      topRpgBots.push({
+        botId,
+        botName: displayName,
+        level: prof.level,
+        title: rpgTitleForLevel(prof.level, opts.locale),
+        xp: prof.xp,
+        equippedProp: prof.equippedProp,
+        propEmoji: propEmoji(prof.equippedProp),
+      });
+    }
+    topRpgBots.sort(
+      (a, b) => b.xp - a.xp || b.level - a.level || a.botName.localeCompare(b.botName) || a.botId.localeCompare(b.botId)
+    );
+    if (topRpgBots.length > 5) {
+      topRpgBots.length = 5;
+    }
+  }
+
   return {
     redacted: opts.redactMode,
     windowHours: REPORT_WINDOW_HOURS,
@@ -293,6 +334,7 @@ export function buildOfficeReport(
     hourlyBuckets,
     weeklyTrend,
     badges,
+    topRpgBots,
   };
 }
 
@@ -364,6 +406,18 @@ export function formatReportMarkdown(
   lines.push('| --- | --- | --- | --- | --- |');
   for (const pt of weekly) {
     lines.push(`| ${pt.date} | ${pt.events} | ${pt.tasksDone} | ${pt.workerRuns} | ${pt.collaborations} |`);
+  }
+
+  if (report.topRpgBots && report.topRpgBots.length > 0) {
+    lines.push('');
+    lines.push(`## ${s.reportSectionRpg}`);
+    report.topRpgBots.forEach((rb, idx) => {
+      const displayName = needsFallbackMask ? s.botGeneric : scrubAll(rb.botName);
+      const propTag = rb.equippedProp !== 'none' ? ` · ${rb.propEmoji} ${s.rpgPropLabels[rb.equippedProp]}` : '';
+      lines.push(
+        `${idx + 1}. **${displayName}** — Lv.${rb.level} (${rb.title}) · ${rb.xp} XP${propTag}`
+      );
+    });
   }
 
   return lines.join('\n');
@@ -556,6 +610,40 @@ export function renderOfficeReportModal(
         )
   );
 
+  const rpgBots = report.topRpgBots ?? [];
+  const rpgSection = el(
+    'div',
+    { className: 'bw-section' },
+    el('div', { className: 'bw-section-title' }, s.reportSectionRpg),
+    rpgBots.length === 0
+      ? el('div', { className: 'bw-muted-note' }, s.reportNoRpgBots)
+      : el(
+          'div',
+          { className: 'bw-report-rpg-list' },
+          ...rpgBots.map((rb, idx) => {
+            const displayName = needsFallbackMask ? s.botGeneric : scrubAll(rb.botName);
+            const propTag =
+              rb.equippedProp !== 'none'
+                ? `${rb.propEmoji} ${s.rpgPropLabels[rb.equippedProp]}`
+                : s.rpgPropLabels.none;
+            return el(
+              'div',
+              { className: 'bw-report-rpg-row' },
+              el(
+                'span',
+                { className: 'bw-report-bot-name' },
+                `${idx + 1}. ${displayName}`
+              ),
+              el(
+                'span',
+                { className: 'bw-meta-time' },
+                `Lv.${rb.level} ${rb.title} · ${rb.xp} XP · ${propTag}`
+              )
+            );
+          })
+        )
+  );
+
   const titleRowChildren = [
     el('span', { className: 'bw-modal-title' }, s.reportTitle),
     redactMode ? el('span', { className: 'bw-badge bw-badge-needs' }, s.reportRedactedBadge) : null,
@@ -612,6 +700,7 @@ export function renderOfficeReportModal(
       s.reportActiveBotsMeta(report.activeBotsCount, report.totalBotsCount, report.needsOwnerCount)
     ),
     badgesSection,
+    rpgSection,
     topBotsSection,
     hourlyChart,
     weeklyChart

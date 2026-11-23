@@ -1,11 +1,14 @@
 import type {
   AtmosphereMode,
+  BotRpgProfile,
   BotWorldStatePayload,
   CharacterId,
+  DeskPropId,
   FocusTerminalResponse,
   LanguageSetting,
   OpenWorkspaceResponse,
   QuickSendResponse,
+  RpgXpAction,
   SoundMode,
   ThemeId,
   UiLocale,
@@ -66,6 +69,27 @@ declare module 'orca' {
     'botWorld.openWorkspace': {
       input: { workspaceId: string };
       output: OpenWorkspaceResponse;
+    };
+    'botWorld.awardRpgXp': {
+      input: { botId: string; action: RpgXpAction };
+      output: {
+        ok: boolean;
+        reason?: 'unknown_bot' | 'cooldown';
+        profile?: BotRpgProfile;
+        xpAwarded: number;
+        leveledUp: boolean;
+        cooldownRemainingMs?: number;
+        rpgProfiles: Record<string, BotRpgProfile>;
+      };
+    };
+    'botWorld.equipDeskProp': {
+      input: { botId: string; propId: DeskPropId };
+      output: {
+        ok: boolean;
+        reason?: 'unknown_bot' | 'prop_locked';
+        profile?: BotRpgProfile;
+        rpgProfiles: Record<string, BotRpgProfile>;
+      };
     };
   }
 

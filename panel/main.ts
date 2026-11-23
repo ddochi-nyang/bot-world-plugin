@@ -4,10 +4,13 @@ import { scrubAll } from '../src/redact.ts';
 import { formatTimeHms } from '../src/timeline.ts';
 import {
   type AtmosphereMode,
+  type BotRpgProfile,
   type BotWorldStatePayload,
   type CharacterId,
+  type DeskPropId,
   type LanguageSetting,
   type PetToyKind,
+  type RpgXpAction,
   type SoundMode,
   type TeamZone,
   type ThemeId,
@@ -51,6 +54,7 @@ import {
   formatReportMarkdown,
   renderOfficeReportModal,
 } from '../shared/office-report.ts';
+import { OwnerAvatarController, type OwnerInteractionAction } from '../shared/owner-avatar.ts';
 import { PetTerrariumRenderer } from '../shared/pet-terrarium.ts';
 import { capturePhotoCard } from '../shared/photo-card.ts';
 import { QuickSendBar } from '../shared/quick-send.ts';
@@ -115,6 +119,7 @@ const state: {
     allowQuickSend: false,
     redactMode: false,
     botAppearances: {},
+    rpgProfiles: {},
     pollIntervalSec: 5,
     locale: initialLocale,
     languageSetting: 'auto',
@@ -141,6 +146,10 @@ const timelapse = new TimelapseController();
 const soundscape = new SoundscapeEngine();
 const liveMilestones = new MilestoneTracker();
 const demoMilestones = new MilestoneTracker();
+const ownerAvatar = new OwnerAvatarController();
+const prevBotLevels = new Map<string, number>();
+let ownerRoamRafId: number | null = null;
+let lastOwnerRoamMs = 0;
 let prevLiveSnapshot: WorldSnapshot = createEmptySnapshot();
 let livePayload: BotWorldStatePayload = state.payload;
 let reportCopiedTimer: number | null = null;
@@ -230,6 +239,18 @@ const viewModeBtn = el(
     onClick: () => void toggleViewMode().catch(() => {}),
   },
   `🐾 ${initialStrings.viewModePetButton}`
+);
+
+const roamBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-btn',
+    title: initialStrings.roamButtonTitle,
+    ariaLabel: initialStrings.roamButtonTitle,
+    onClick: () => void toggleRoamMode().catch(() => {}),
+  },
+  `🚶`
 );
 
 const soundBtn = el(
@@ -387,6 +408,7 @@ const toolbar = el(
     { className: 'bw-toolbar-group' },
     themeSelect,
     viewModeBtn,
+    roamBtn,
     atmoBtn,
     weatherBtn,
     soundBtn,
@@ -498,6 +520,32 @@ const cameraHud = el(
   zoomInBtn,
   followHudBtn
 );
+const roamHudTarget = el('span', { className: 'bw-roam-hud-target' });
+const roamHighFiveBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-roam-hud-btn',
+    onClick: () => void triggerOwnerProximityInteraction('high_five').catch(() => {}),
+  },
+  initialStrings.roamHudHighFive
+) as HTMLButtonElement;
+const roamCoffeeBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-roam-hud-btn',
+    onClick: () => void triggerOwnerProximityInteraction('coffee').catch(() => {}),
+  },
+  initialStrings.roamHudCoffee
+) as HTMLButtonElement;
+const roamHud = el(
+  'div',
+  { className: 'bw-roam-hud bw-hidden' },
+  roamHudTarget,
+  roamHighFiveBtn,
+  roamCoffeeBtn
+);
 const stageWrap = el(
   'div',
   { className: 'bw-stage-wrap-panel' },
@@ -506,6 +554,7 @@ const stageWrap = el(
   stageOverlayNote,
   stageToast,
   cameraHud,
+  roamHud,
   petActionStrip
 );
 
@@ -689,6 +738,12 @@ const renderer = new StageRenderer(canvasEl, {
   onCameraChange: () => {
     updateCameraHud(currentLocale());
   },
+  onDoubleClickFloor: (nx, ny) => {
+    if (!ownerAvatar.roaming || isPetMode()) return;
+    ownerAvatar.walkToNormalized(nx, ny);
+    syncOwnerRoamLoop();
+    renderUi();
+  },
 });
 
 const petRenderer = new PetTerrariumRenderer(petCanvasEl, {
@@ -697,6 +752,7 @@ const petRenderer = new PetTerrariumRenderer(petCanvasEl, {
     state.selectedBotId = botId;
     state.activeTab = 'detail';
     soundscape.playCue('task_done', { suppressed: false });
+    void awardBotRpgXp(botId, 'headpat').catch(() => {});
     renderUi();
   },
   onHoverBot: (botId) => {
@@ -719,7 +775,264 @@ function isPetMode(): boolean {
 function handleDropPetToy(kind: PetToyKind): void {
   petRenderer.engine.dropToy(kind);
   soundscape.playCue('handoff', { suppressed: false });
+  const snap = state.payload.snapshot;
+  const targetId = state.selectedBotId ?? snap.botOrder[0] ?? null;
+  if (targetId) {
+    void awardBotRpgXp(targetId, 'toy').catch(() => {});
+  }
   petRenderer.renderNow();
+}
+
+function activeRpgProfiles(): Record<string, BotRpgProfile> {
+  return state.payload.rpgProfiles ?? {};
+}
+
+function seedOrCelebrateRpgLevels(
+  profiles: Readonly<Record<string, BotRpgProfile>> | undefined,
+  seedOnly: boolean,
+  locale: UiLocale
+): void {
+  if (!profiles) return;
+  for (const [botId, prof] of Object.entries(profiles)) {
+    if (!isSafeKey(botId) || !prof) continue;
+    const prev = prevBotLevels.get(botId);
+    if (prev === undefined || seedOnly) {
+      prevBotLevels.set(botId, prof.level);
+      continue;
+    }
+    if (prof.level > prev) {
+      prevBotLevels.set(botId, prof.level);
+      if (!replay.isReplay) {
+        liveMotion.triggerLevelUp(botId, prof.level, undefined, locale);
+        soundscape.playMilestoneCue({ suppressed: false });
+      }
+    } else {
+      prevBotLevels.set(botId, prof.level);
+    }
+  }
+}
+
+async function awardBotRpgXp(botId: string, action: RpgXpAction): Promise<void> {
+  if (!isSafeKey(botId)) return;
+  const locale = currentLocale();
+  if (isDemoMode() && demoSession) {
+    const res = demoSession.awardRpgXp(botId, action);
+    if (res.ok) {
+      syncDemoTick(false);
+    }
+    return;
+  }
+  try {
+    const res = await orca.plugin.request('botWorld.awardRpgXp', { botId, action });
+    if (res.rpgProfiles) {
+      seedOrCelebrateRpgLevels(res.rpgProfiles, false, locale);
+      state.payload = { ...state.payload, rpgProfiles: res.rpgProfiles };
+      livePayload = state.payload;
+      renderUi();
+    }
+  } catch {
+    // Ignore RPG XP failure
+  }
+}
+
+async function equipBotDeskProp(botId: string, propId: DeskPropId): Promise<void> {
+  if (!isSafeKey(botId)) return;
+  if (isDemoMode() && demoSession) {
+    const res = demoSession.equipDeskProp(botId, propId);
+    if (res.ok) {
+      syncDemoTick(false);
+    }
+    return;
+  }
+  try {
+    const res = await orca.plugin.request('botWorld.equipDeskProp', { botId, propId });
+    if (res.rpgProfiles) {
+      state.payload = { ...state.payload, rpgProfiles: res.rpgProfiles };
+      livePayload = state.payload;
+      renderUi();
+    }
+  } catch {
+    // Ignore equip failure
+  }
+}
+
+function normalizedBotPositions(
+  snap: WorldSnapshot,
+  themeId: ThemeId,
+  locale: UiLocale
+): {
+  positions: Map<string, [number, number]>;
+  bossDeskNorm: [number, number];
+  designSize: [number, number];
+} {
+  const theme = getThemeConfig(themeId, locale);
+  liveMotion.syncLayout(snap, theme);
+  const dw = Math.max(1, theme.designSize[0]);
+  const dh = Math.max(1, theme.designSize[1]);
+  const positions = new Map<string, [number, number]>();
+  for (const [botId, desk] of liveMotion.layout.botDesks.entries()) {
+    const pose = liveMotion.actorPose(`bot:${botId}`, [desk.x, desk.y]);
+    positions.set(botId, [pose.footX / dw, pose.footY / dh]);
+  }
+  return {
+    positions,
+    bossDeskNorm: [theme.bossDesk.x / dw, theme.bossDesk.y / dh],
+    designSize: theme.designSize,
+  };
+}
+
+function updateOwnerRoamHud(
+  snap: WorldSnapshot,
+  redactMode: boolean,
+  locale: UiLocale
+): string | null {
+  const petActive = isPetMode();
+  if (!ownerAvatar.roaming || petActive || replay.isReplay) {
+    roamHud.classList.add('bw-hidden');
+    return null;
+  }
+  const { positions } = normalizedBotPositions(snap, state.payload.activeTheme, locale);
+  const nearby = ownerAvatar.findNearbyBot(snap, positions);
+  if (!nearby) {
+    roamHud.classList.add('bw-hidden');
+    return null;
+  }
+  const bot = snap.bots[nearby.botId];
+  if (!bot) {
+    roamHud.classList.add('bw-hidden');
+    return null;
+  }
+  const s = tStrings(locale);
+  const displayName = redactMode
+    ? getBotRedactedAlias(bot.id, snap, locale)
+    : scrubAll(bot.name);
+  const nowMs = Date.now();
+  roamHudTarget.textContent = displayName;
+  roamHighFiveBtn.textContent = s.roamHudHighFive;
+  roamCoffeeBtn.textContent = s.roamHudCoffee;
+  roamHighFiveBtn.disabled = !ownerAvatar.canInteract(bot.id, 'high_five', nowMs);
+  roamCoffeeBtn.disabled = !ownerAvatar.canInteract(bot.id, 'coffee', nowMs);
+  roamHud.classList.remove('bw-hidden');
+  return bot.id;
+}
+
+async function triggerOwnerProximityInteraction(action: OwnerInteractionAction): Promise<void> {
+  if (!ownerAvatar.roaming || isPetMode() || replay.isReplay) return;
+  const snap = currentDisplayedSnapshot();
+  const locale = currentLocale();
+  const { positions, designSize } = normalizedBotPositions(snap, state.payload.activeTheme, locale);
+  const nearby = ownerAvatar.findNearbyBot(snap, positions);
+  if (!nearby) return;
+  const nowMs = Date.now();
+  if (!ownerAvatar.canInteract(nearby.botId, action, nowMs)) return;
+
+  ownerAvatar.recordInteraction(nearby.botId, action, nowMs);
+  const botNorm = positions.get(nearby.botId) ?? [ownerAvatar.x, ownerAvatar.y];
+  const ownerDesign: [number, number] = [ownerAvatar.x * designSize[0], ownerAvatar.y * designSize[1]];
+  const botDesign: [number, number] = [botNorm[0] * designSize[0], botNorm[1] * designSize[1]];
+  liveMotion.triggerOwnerInteraction(action, ownerDesign, nearby.botId, botDesign, locale);
+  soundscape.playCue(action === 'high_five' ? 'task_done' : 'handoff', { suppressed: false });
+  renderUi();
+  await awardBotRpgXp(nearby.botId, action);
+}
+
+function syncOwnerRoamLoop(): void {
+  if (ownerAvatar.roaming && !isPetMode()) {
+    if (ownerRoamRafId === null) {
+      lastOwnerRoamMs = performance.now();
+      const tick = (nowMs: number) => {
+        if (!ownerAvatar.roaming || isPetMode()) {
+          ownerRoamRafId = null;
+          return;
+        }
+        const dtSecs = Math.max(0, Math.min(0.25, (nowMs - lastOwnerRoamMs) / 1000));
+        lastOwnerRoamMs = nowMs;
+        const moved = ownerAvatar.step(dtSecs);
+        if (moved) {
+          const snap = currentDisplayedSnapshot();
+          const locale = currentLocale();
+          const redactMode = state.payload.redactMode;
+          const nearbyBotId = updateOwnerRoamHud(snap, redactMode, locale);
+          const s = tStrings(locale);
+          const displayTimestampMs = replay.isReplay
+            ? replay.cursorMs
+            : snap.capturedAt > 0
+              ? snap.capturedAt
+              : Date.now();
+          const filterMatchedBotIds = isFilterActive(state.filterPreset, state.searchQuery)
+            ? filterBotIds(snap, {
+                preset: state.filterPreset,
+                query: state.searchQuery,
+                redactMode,
+                locale,
+              })
+            : null;
+          renderer.update({
+            snapshot: snap,
+            themeId: state.payload.activeTheme,
+            atmosphereMode: activeAtmosphereMode(),
+            weatherMode: activeWeatherMode(),
+            displayTimestampMs,
+            selectedBotId: state.selectedBotId,
+            redactMode,
+            botAppearances: state.payload.botAppearances,
+            rpgProfiles: activeRpgProfiles(),
+            ownerAvatar: {
+              roaming: ownerAvatar.roaming,
+              x: ownerAvatar.x,
+              y: ownerAvatar.y,
+              facing: ownerAvatar.facing,
+              walkPhase: ownerAvatar.walkPhase,
+              isMoving: ownerAvatar.isMoving,
+              ripple: ownerAvatar.ripple,
+              nearbyBotId,
+              ownerTag: s.ownerTag,
+            },
+            motion: replay.isReplay ? replay.motion : liveMotion,
+            replay,
+            locale,
+            filterMatchedBotIds,
+            showCollabNetwork: state.showCollabNetwork,
+            collabEdges: state.showCollabNetwork
+              ? buildCollabNetwork(state.payload.events, snap, { nowMs: displayTimestampMs })
+              : [],
+            mvpBotId: computeOfficeBadges(state.payload.events, snap, {
+              nowMs: displayTimestampMs,
+              redactMode,
+              locale,
+            }).mvpBotId,
+            zones: activeZones(),
+            showZones: activeShowZones(),
+            timelapseActive: timelapse.active,
+          });
+        }
+        if (ownerAvatar.roaming && !isPetMode()) {
+          ownerRoamRafId = requestAnimationFrame(tick);
+        } else {
+          ownerRoamRafId = null;
+        }
+      };
+      ownerRoamRafId = requestAnimationFrame(tick);
+    }
+  } else if (ownerRoamRafId !== null) {
+    cancelAnimationFrame(ownerRoamRafId);
+    ownerRoamRafId = null;
+  }
+}
+
+async function toggleRoamMode(): Promise<void> {
+  if (isPetMode()) {
+    await toggleViewMode();
+  }
+  const locale = currentLocale();
+  const { bossDeskNorm } = normalizedBotPositions(
+    currentDisplayedSnapshot(),
+    state.payload.activeTheme,
+    locale
+  );
+  ownerAvatar.toggleRoaming(bossDeskNorm);
+  syncOwnerRoamLoop();
+  renderUi();
 }
 
 function activeAtmosphereMode(): AtmosphereMode {
@@ -877,6 +1190,7 @@ function renderReportModal(): void {
     redactMode,
     locale,
     weeklyTrend: state.payload.weeklyTrend,
+    rpgProfiles: activeRpgProfiles(),
   });
   renderOfficeReportModal(reportBackdrop, {
     open: state.reportOpen,
@@ -1193,6 +1507,9 @@ function syncChromeLocale(locale: UiLocale): void {
   viewModeBtn.title = s.viewModeToggleTitle(vMode);
   viewModeBtn.setAttribute('aria-label', s.viewModeToggleTitle(vMode));
   viewModeBtn.className = vMode === 'pet' ? 'bw-btn bw-btn-active' : 'bw-btn';
+  roamBtn.title = s.roamButtonTitle;
+  roamBtn.setAttribute('aria-label', s.roamButtonTitle);
+  roamBtn.className = ownerAvatar.roaming && vMode !== 'pet' ? 'bw-btn bw-btn-active' : 'bw-btn';
   petCoffeeBtn.textContent = `☕ ${s.petActionCoffee}`;
   petCoffeeBtn.title = s.petActionCoffeeTitle;
   petBallBtn.textContent = `🎾 ${s.petActionBall}`;
@@ -1266,6 +1583,7 @@ function syncDemoTick(advance: boolean): void {
   const locale = currentLocale();
   const theme = getThemeConfig(nextPayload.activeTheme, locale);
   if (advance && generatedCount > 0 && !replay.isReplay) {
+    seedOrCelebrateRpgLevels(nextPayload.rpgProfiles, false, locale);
     const newEvents = nextPayload.events.slice(-generatedCount).map((r) => r.event);
     liveMotion.enqueueEvents(newEvents, nextPayload.snapshot, theme, locale);
     petRenderer.engine.onEvents(newEvents, locale);
@@ -1305,8 +1623,10 @@ function enterDemoMode(): void {
   replay.returnToLive();
   liveMotion.clearTransients();
   const initialDemo = buildDemoPayload();
+  prevBotLevels.clear();
   if (initialDemo) {
     state.payload = initialDemo;
+    seedOrCelebrateRpgLevels(initialDemo.rpgProfiles, true, currentLocale());
     state.selectedBotId = initialDemo.snapshot.botOrder[0] ?? null;
     demoMilestones.seedBaseline(
       initialDemo.events,
@@ -1345,6 +1665,8 @@ function exitDemoMode(): void {
   replay.returnToLive();
   liveMotion.clearTransients();
   state.payload = livePayload;
+  prevBotLevels.clear();
+  seedOrCelebrateRpgLevels(livePayload.rpgProfiles, true, currentLocale());
   soundscape.setMode(livePayload.soundMode ?? 'off', { fromUserGesture: false });
   liveMilestones.seedBaseline(
     livePayload.events,
@@ -1450,21 +1772,23 @@ function renderUi(): void {
   stageOverlayNote.classList.toggle('bw-stage-overlay-note-pet', petActive);
   stageWrap.classList.toggle('bw-stage-pet-mode', petActive);
   petRenderer.setActive(petActive);
-  petRenderer.update({
-    snapshot: snap,
-    themeId: activeTheme,
-    atmosphereMode: atmoMode,
-    weatherMode: wMode,
-    displayTimestampMs,
-    selectedBotId: state.selectedBotId,
-    redactMode,
-    botAppearances,
-    locale,
-    filterMatchedBotIds,
-  });
+  if (petActive) {
+    petRenderer.update({
+      snapshot: snap,
+      themeId: activeTheme,
+      atmosphereMode: atmoMode,
+      weatherMode: wMode,
+      displayTimestampMs,
+      selectedBotId: state.selectedBotId,
+      redactMode,
+      botAppearances,
+      locale,
+      filterMatchedBotIds,
+    });
+  }
 
   quickSendBar.update({
-    snapshot: snap,
+    snapshot: state.payload.snapshot,
     selectedBotId: state.selectedBotId,
     redactMode,
     allowQuickSend: Boolean(state.payload.allowQuickSend),
@@ -1474,6 +1798,7 @@ function renderUi(): void {
   });
 
   if (!petActive) {
+    const nearbyBotId = updateOwnerRoamHud(snap, redactMode, locale);
     renderer.update({
       snapshot: snap,
       themeId: activeTheme,
@@ -1483,6 +1808,18 @@ function renderUi(): void {
       selectedBotId: state.selectedBotId,
       redactMode,
       botAppearances,
+      rpgProfiles: activeRpgProfiles(),
+      ownerAvatar: {
+        roaming: ownerAvatar.roaming,
+        x: ownerAvatar.x,
+        y: ownerAvatar.y,
+        facing: ownerAvatar.facing,
+        walkPhase: ownerAvatar.walkPhase,
+        isMoving: ownerAvatar.isMoving,
+        ripple: ownerAvatar.ripple,
+        nearbyBotId,
+        ownerTag: s.ownerTag,
+      },
       motion: replay.isReplay ? replay.motion : liveMotion,
       replay,
       locale,
@@ -1494,6 +1831,8 @@ function renderUi(): void {
       showZones: activeShowZones(),
       timelapseActive: timelapse.active,
     });
+  } else {
+    roamHud.classList.add('bw-hidden');
   }
 
   botStrip.hidden = botCount === 0;
@@ -1516,6 +1855,7 @@ function renderUi(): void {
       state.selectedBotId && isSafeKey(state.selectedBotId) && Object.hasOwn(snap.bots, state.selectedBotId)
         ? snap.bots[state.selectedBotId]
         : null;
+    const rpgProfiles = activeRpgProfiles();
     renderBotDetail(lowerContent, {
       snapshot: snap,
       bot: selectedBot,
@@ -1524,6 +1864,8 @@ function renderUi(): void {
       locale,
       botCount,
       badges: selectedBot ? (badgeSummary.badgesByBot[selectedBot.id] ?? []) : [],
+      rpgProfile: selectedBot && Object.hasOwn(rpgProfiles, selectedBot.id) ? rpgProfiles[selectedBot.id] : null,
+      onEquipProp: (botId, propId) => void equipBotDeskProp(botId, propId).catch(() => {}),
       onStartDemo: isDemoMode() ? undefined : enterDemoMode,
       onSelectCharacter: (botId, charId) => void setBotAppearance(botId, charId).catch(() => {}),
       onFocusTerminal: (terminalId) => void focusTerminal(terminalId).catch(() => {}),
@@ -1570,6 +1912,7 @@ function applyIncomingPayload(nextPayload: BotWorldStatePayload): void {
   const theme = getThemeConfig(nextPayload.activeTheme, locale);
   const nowMs = nextPayload.snapshot.capturedAt > 0 ? nextPayload.snapshot.capturedAt : Date.now();
   const hadPrev = Object.keys(prevLiveSnapshot.bots).length > 0;
+  seedOrCelebrateRpgLevels(nextPayload.rpgProfiles, !hadPrev || prevBotLevels.size === 0, locale);
   if (!liveMilestones.isSeeded() || !hadPrev || !nextPayload.snapshot.initialSyncComplete) {
     liveMilestones.seedBaseline(nextPayload.events, nowMs);
   } else {
@@ -1735,8 +2078,8 @@ async function handleQuickSend(botId: string, message: string): Promise<void> {
     const res = demoSession.sendQuickMessage(botId, message);
     if (!res) return;
     quickSendBar.clearInput();
-    const snap = currentDisplayedSnapshot();
-    liveMotion.launchQuickMessageCourier(botId, snap, theme, message, redactMode);
+    const snap = state.payload.snapshot;
+    liveMotion.launchQuickMessageCourier(botId, snap, theme, message, redactMode, undefined, locale);
     petRenderer.engine.dropQuickMessageLetter(botId, locale);
     soundscape.playCue('handoff', { suppressed: false });
     const targetDisplay = redactMode
@@ -1776,8 +2119,8 @@ async function handleQuickSend(botId: string, message: string): Promise<void> {
     const res = await orca.plugin.request('botWorld.sendQuickMessage', { botId, message });
     if (res.ok) {
       quickSendBar.clearInput();
-      const snap = currentDisplayedSnapshot();
-      liveMotion.launchQuickMessageCourier(botId, snap, theme, message, redactMode);
+      const snap = state.payload.snapshot;
+      liveMotion.launchQuickMessageCourier(botId, snap, theme, message, redactMode, undefined, locale);
       petRenderer.engine.dropQuickMessageLetter(botId, locale);
       soundscape.playCue('handoff', { suppressed: false });
       const targetDisplay = redactMode
@@ -1920,6 +2263,13 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
   handleGestureUnlock();
   const modalOpen = state.shortcutsOpen || state.reportOpen || state.zonesOpen;
   if (shouldIgnoreShortcutEvent(ev, { modalOpen })) return;
+  if (!modalOpen && ownerAvatar.roaming && !isPetMode()) {
+    if (ownerAvatar.setMoveKey(ev.key, true)) {
+      ev.preventDefault();
+      syncOwnerRoamLoop();
+      return;
+    }
+  }
   const action = mapKeyToShortcutAction(ev.key, { isEditor: false, modalOpen });
   if (!action) return;
   switch (action) {
@@ -1976,6 +2326,15 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
     case 'toggleViewMode':
       void toggleViewMode().catch(() => {});
       break;
+    case 'toggleRoam':
+      void toggleRoamMode().catch(() => {});
+      break;
+    case 'highFiveNearby':
+      void triggerOwnerProximityInteraction('high_five').catch(() => {});
+      break;
+    case 'handCoffeeNearby':
+      void triggerOwnerProximityInteraction('coffee').catch(() => {});
+      break;
     case 'toggleHelp':
       state.shortcutsOpen = !state.shortcutsOpen;
       if (state.shortcutsOpen) {
@@ -2027,7 +2386,17 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
   }
 };
 
+const handleKeyUp = (ev: KeyboardEvent): void => {
+  ownerAvatar.setMoveKey(ev.key, false);
+};
+
+const handleWindowBlur = (): void => {
+  ownerAvatar.clearKeys();
+};
+
 window.addEventListener('keydown', handleKeyDown);
+window.addEventListener('keyup', handleKeyUp);
+window.addEventListener('blur', handleWindowBlur);
 window.addEventListener('pointerdown', handleGestureUnlock);
 
 let cleanedUp = false;
@@ -2055,8 +2424,15 @@ function cleanup(): void {
     cancelAnimationFrame(timelapseTimerId);
     timelapseTimerId = null;
   }
+  if (ownerRoamRafId !== null) {
+    cancelAnimationFrame(ownerRoamRafId);
+    ownerRoamRafId = null;
+  }
+  ownerAvatar.clearKeys();
   timelapse.stop();
   window.removeEventListener('keydown', handleKeyDown);
+  window.removeEventListener('keyup', handleKeyUp);
+  window.removeEventListener('blur', handleWindowBlur);
   window.removeEventListener('pointerdown', handleGestureUnlock);
   soundscape.dispose();
   petRenderer.dispose();

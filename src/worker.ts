@@ -1,10 +1,19 @@
 import type { JsonValue, OrcaWorkerApi } from 'orca/worker';
 import {
+  applyRpgActionToStore,
+  applyWorldEventsToRpgStore,
+  buildRpgProfilesForSnapshot,
+  createEmptyBotRpgStore,
+  equipDeskPropInStore,
+  sanitizeBotRpgStore,
+} from '../shared/bot-rpg.ts';
+import {
   effectiveLocale,
   localizeBotErrorMessage,
   normalizeLanguageSetting,
   tStrings,
 } from '../shared/i18n.ts';
+import { DesktopNotificationManager } from './desktop-notify.ts';
 import {
   diffSnapshots,
   extractWorkerSeq,
@@ -27,6 +36,7 @@ import { TimelineBuffer, scrubFullSnapshot } from './timeline.ts';
 import {
   type ActorRef,
   type AtmosphereMode,
+  type BotRpgStore,
   type BotWorldStatePayload,
   type CharacterId,
   type FocusTerminalResponse,
@@ -46,7 +56,9 @@ import {
   isPoolCharacterId,
   isSafeKey,
   isValidAtmosphereMode,
+  isValidDeskPropId,
   isValidLanguageSetting,
+  isValidRpgXpAction,
   isValidSoundMode,
   isValidThemeId,
   isValidViewMode,
@@ -66,6 +78,7 @@ import {
 const STORAGE_PREFS_KEY = 'botWorld.prefs';
 const STORAGE_TIMELINE_KEY = 'botWorld.timeline';
 const STORAGE_WEEKLY_TREND_KEY = 'botWorld.weeklyTrend';
+const STORAGE_RPG_KEY = 'botWorld.rpg.v1';
 export const MAX_IPC_PAYLOAD_BYTES = 220 * 1024;
 const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
 const LOCALE_TAG_RE = /^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{1,8}){0,6}$/;
@@ -536,9 +549,13 @@ export class BotWorldWorkerController {
   private readonly quickSendFn: QuickSendFn;
   private readonly nowMs: () => number;
   private readonly quickSendCooldowns = new Map<string, number>();
+  private readonly rpgActionCooldowns = new Map<string, number>();
+  private readonly seenRpgEventIds = new Set<string>();
+  private readonly desktopNotifier = new DesktopNotificationManager();
   private readonly session = new PollerSession();
   private timeline = new TimelineBuffer();
   private weeklyTrendStore: WeeklyTrendStore = { days: [], seenIds: [] };
+  private rpgStore: BotRpgStore = createEmptyBotRpgStore();
   private prefs: StoredPrefs = {
     activeTheme: 'startup_office',
     atmosphereMode: 'auto',
@@ -563,6 +580,7 @@ export class BotWorldWorkerController {
     weatherMode: WeatherMode;
     viewMode: ViewMode;
     allowQuickSend: boolean;
+    desktopNotifications: boolean;
     redactMode: boolean;
     pollIntervalSec: number;
     language: LanguageSetting;
@@ -572,6 +590,7 @@ export class BotWorldWorkerController {
     weatherMode: 'auto',
     viewMode: 'office',
     allowQuickSend: false,
+    desktopNotifications: false,
     redactMode: false,
     pollIntervalSec: 5,
     language: 'auto',
@@ -646,6 +665,8 @@ export class BotWorldWorkerController {
     this.timeline = TimelineBuffer.hydrate(storedTimeline, initNowMs);
     const storedWeeklyTrend = await this.orca.storage.get(STORAGE_WEEKLY_TREND_KEY);
     this.weeklyTrendStore = hydrateWeeklyTrendStore(storedWeeklyTrend, initNowMs);
+    const storedRpg = await this.orca.storage.get(STORAGE_RPG_KEY);
+    this.rpgStore = sanitizeBotRpgStore(storedRpg, initNowMs);
     if (this.timeline.eventLog.length > 0) {
       const mergedInit = mergeWeeklyTrendStore(
         this.weeklyTrendStore,
@@ -689,6 +710,7 @@ export class BotWorldWorkerController {
     weatherMode: WeatherMode;
     viewMode: ViewMode;
     allowQuickSend: boolean;
+    desktopNotifications: boolean;
     redactMode: boolean;
     pollIntervalSec: number;
     language: LanguageSetting;
@@ -698,6 +720,7 @@ export class BotWorldWorkerController {
     let weatherMode: WeatherMode = 'auto';
     let viewMode: ViewMode = 'office';
     let allowQuickSend = false;
+    let desktopNotifications = false;
     let redactMode = false;
     let pollIntervalSec = 5;
     let language: LanguageSetting = 'auto';
@@ -719,6 +742,9 @@ export class BotWorldWorkerController {
         if (typeof all.allowQuickSend === 'boolean') {
           allowQuickSend = all.allowQuickSend;
         }
+        if (typeof all.desktopNotifications === 'boolean') {
+          desktopNotifications = all.desktopNotifications;
+        }
         if (typeof all.redactMode === 'boolean') {
           redactMode = all.redactMode;
         }
@@ -736,6 +762,7 @@ export class BotWorldWorkerController {
       weatherMode,
       viewMode,
       allowQuickSend,
+      desktopNotifications,
       redactMode,
       pollIntervalSec,
       language,
@@ -770,8 +797,10 @@ export class BotWorldWorkerController {
       soundMode: this.prefs.soundMode,
       viewMode: this.prefs.viewMode,
       allowQuickSend: this.lastSettings.allowQuickSend,
+      desktopNotifications: this.lastSettings.desktopNotifications,
       redactMode: redact,
       botAppearances: { ...this.prefs.botAppearances },
+      rpgProfiles: buildRpgProfilesForSnapshot(this.rpgStore, safeSnapshot),
       pollIntervalSec: this.pollIntervalSec,
       locale,
       languageSetting: this.prefs.languageSetting,
@@ -920,6 +949,10 @@ export class BotWorldWorkerController {
       payload.botAppearances = {};
       totalBytes = utf8ByteLength(payload);
     }
+    if (totalBytes > MAX_IPC_PAYLOAD_BYTES) {
+      payload.rpgProfiles = {};
+      totalBytes = utf8ByteLength(payload);
+    }
     while (totalBytes > MAX_IPC_PAYLOAD_BYTES && payload.snapshot.botOrder.length > 0) {
       const removedId = payload.snapshot.botOrder.pop();
       if (removedId && isSafeKey(removedId)) {
@@ -951,6 +984,10 @@ export class BotWorldWorkerController {
       STORAGE_WEEKLY_TREND_KEY,
       this.weeklyTrendStore as unknown as JsonValue
     );
+  }
+
+  private async persistRpgStore(): Promise<void> {
+    await this.orca.storage.set(STORAGE_RPG_KEY, this.rpgStore as unknown as JsonValue);
   }
 
   private async updateStatusBar(): Promise<void> {
@@ -1014,10 +1051,37 @@ export class BotWorldWorkerController {
         nowMs,
         newEvents.length > 0
       );
+
+      let rpgChanged = false;
+      if (!suppressDiff && newEvents.length > 0) {
+        const rpgRes = applyWorldEventsToRpgStore(
+          this.rpgStore,
+          newEvents,
+          this.seenRpgEventIds,
+          nowMs
+        );
+        rpgChanged = rpgRes.changed;
+      }
+
+      if (!suppressDiff) {
+        await this.desktopNotifier.evaluateAndNotify({
+          prevSnapshot: this.prevSnapshot,
+          nextSnapshot: snapshot,
+          enabled: this.lastSettings.desktopNotifications,
+          redactMode: this.prefs.redactMode,
+          locale,
+          nowMs: this.nowMs(),
+          orca: this.orca,
+        });
+      }
+
       this.prevSnapshot = structuredClone(snapshot);
 
       if (newEvents.length > 0 || keyframeRecorded) {
         await this.persistTimeline();
+      }
+      if (rpgChanged) {
+        await this.persistRpgStore();
       }
       if (newEvents.length > 0) {
         const mergedTrend = mergeWeeklyTrendStore(
@@ -1238,6 +1302,7 @@ export class BotWorldWorkerController {
       }),
 
       this.orca.panels.handle('botWorld.sendQuickMessage', async (input): Promise<QuickSendResponse> => {
+        await this.settingsUpdateQueue;
         if (!input || typeof input !== 'object' || Array.isArray(input)) {
           throw makeHostError('invalid_params', 'input must be an object');
         }
@@ -1297,7 +1362,89 @@ export class BotWorldWorkerController {
           // Best-effort immediate refresh after successful quick send
         }
 
-        return { ok: true, botId: bot.id, botName: bot.name };
+        return { ok: true, botId: bot.id, botName: scrubAll(bot.name) };
+      }),
+
+      this.orca.panels.handle('botWorld.awardRpgXp', async (input) => {
+        if (!input || typeof input !== 'object' || Array.isArray(input)) {
+          throw makeHostError('invalid_params', 'input must be an object');
+        }
+        const clean = stripDangerousKeys(input as Record<string, unknown>);
+        const botId = clean.botId;
+        const action = clean.action;
+        if (
+          typeof botId !== 'string' ||
+          !isSafeKey(botId) ||
+          botId.length > 128 ||
+          CONTROL_CHAR_RE.test(botId)
+        ) {
+          throw makeHostError('invalid_params', 'Invalid botId');
+        }
+        if (!isValidRpgXpAction(action)) {
+          throw makeHostError('invalid_params', 'Invalid action');
+        }
+        const latestSnap = this.session.getLatestSnapshot();
+        if (!Object.hasOwn(latestSnap.bots, botId)) {
+          return {
+            ok: false,
+            reason: 'unknown_bot' as const,
+            xpAwarded: 0,
+            leveledUp: false,
+            rpgProfiles: buildRpgProfilesForSnapshot(this.rpgStore, latestSnap),
+          };
+        }
+        const res = applyRpgActionToStore(
+          this.rpgStore,
+          botId,
+          action,
+          this.nowMs(),
+          this.rpgActionCooldowns
+        );
+        if (res.ok) {
+          await this.persistRpgStore();
+          this.postStateUpdated();
+        }
+        return {
+          ...res,
+          rpgProfiles: buildRpgProfilesForSnapshot(this.rpgStore, latestSnap),
+        };
+      }),
+
+      this.orca.panels.handle('botWorld.equipDeskProp', async (input) => {
+        if (!input || typeof input !== 'object' || Array.isArray(input)) {
+          throw makeHostError('invalid_params', 'input must be an object');
+        }
+        const clean = stripDangerousKeys(input as Record<string, unknown>);
+        const botId = clean.botId;
+        const propId = clean.propId;
+        if (
+          typeof botId !== 'string' ||
+          !isSafeKey(botId) ||
+          botId.length > 128 ||
+          CONTROL_CHAR_RE.test(botId)
+        ) {
+          throw makeHostError('invalid_params', 'Invalid botId');
+        }
+        if (!isValidDeskPropId(propId)) {
+          throw makeHostError('invalid_params', 'Invalid propId');
+        }
+        const latestSnap = this.session.getLatestSnapshot();
+        if (!Object.hasOwn(latestSnap.bots, botId)) {
+          return {
+            ok: false,
+            reason: 'unknown_bot' as const,
+            rpgProfiles: buildRpgProfilesForSnapshot(this.rpgStore, latestSnap),
+          };
+        }
+        const res = equipDeskPropInStore(this.rpgStore, botId, propId, this.nowMs());
+        if (res.ok) {
+          await this.persistRpgStore();
+          this.postStateUpdated();
+        }
+        return {
+          ...res,
+          rpgProfiles: buildRpgProfilesForSnapshot(this.rpgStore, latestSnap),
+        };
       }),
 
       this.orca.panels.handle('botWorld.setRedactMode', async (input) => {

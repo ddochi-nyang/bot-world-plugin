@@ -30,6 +30,9 @@ export type ShortcutAction =
   | 'focusSearch'
   | 'toggleCollabNetwork'
   | 'toggleViewMode'
+  | 'toggleRoam'
+  | 'highFiveNearby'
+  | 'handCoffeeNearby'
   | 'toggleHelp'
   | 'closeOrClearSelection';
 
@@ -117,6 +120,12 @@ export function mapKeyToShortcutAction(
       return 'toggleCollabNetwork';
     case 'g':
       return 'toggleViewMode';
+    case 'v':
+      return 'toggleRoam';
+    case 'h':
+      return 'highFiveNearby';
+    case 'k':
+      return 'handCoffeeNearby';
     case 'escape':
       return 'closeOrClearSelection';
     default:
@@ -220,6 +229,9 @@ export function renderShortcutsModal(
     { keyLabel: 'P', description: s.shortcutTakePhotoCard },
     { keyLabel: 'Z', description: s.shortcutToggleZones },
     { keyLabel: 'G', description: s.shortcutToggleViewMode },
+    { keyLabel: 'V', description: s.shortcutToggleRoam },
+    { keyLabel: 'H', description: s.shortcutHighFive },
+    { keyLabel: 'K', description: s.shortcutHandCoffee },
   ];
   if (options.isEditor) {
     rows.push({ keyLabel: 'Space', description: s.shortcutTogglePlay });

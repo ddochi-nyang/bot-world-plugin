@@ -1,0 +1,145 @@
+[English README](../README.md) · [한국어 README](../README.ko.md) · **Full Reference**
+
+# Bot World Technical Reference (`v0.8.0`)
+
+Complete reference for plugin settings, keyboard shortcuts, Bot RPG mechanics, security architecture, verification commands, and release history.
+
+---
+
+## Complete Settings Reference
+
+### Manifest Settings (`orca-plugin.json`)
+
+| Key | Type | Values / Range | Default | Description |
+| --- | --- | --- | --- | --- |
+| `defaultTheme` | `string` | `startup_office`, `corporate_office`, `cozy_cafe`, `cyber_ops` | `startup_office` | Default office canvas theme (`Startup Office`, `Corporate Office`, `Cozy Cafe`, or `Cyber Ops`). |
+| `redactMode` | `boolean` | `true` / `false` | `false` | Hide sensitive task titles, tool names, message bodies, and event summaries. |
+| `pollIntervalSec` | `integer` | `2` – `60` | `5` | Default status polling interval in seconds. |
+| `language` | `string` | `auto`, `en`, `ko` | `auto` | Display language (`auto` follows Orca UI locale). |
+| `atmosphereMode` | `string` | `auto`, `day`, `sunset`, `night` | `auto` | Time-of-day lighting (`auto` follows live or replay timestamp; `day` 07:00–16:59, `sunset` 17:00–19:59, `night` 20:00–06:59). |
+| `weatherMode` | `string` | `auto`, `clear`, `rain`, `snow`, `starlight` | `auto` | Ambient weather effect (`auto` matches active theme and time of day). |
+| `viewMode` | `string` | `office`, `pet` | `office` | Default visualization mode (`Isometric Office` or `Pocket Pet Terrarium`). |
+| `allowQuickSend` | `boolean` | `true` / `false` | `false` | Opt-in: allow sending messages to Orca bots from the Quick Send bar (disabled by default for read-only safety). |
+| `desktopNotifications` | `boolean` | `true` / `false` | `false` | Opt-in: OS desktop alerts when a bot enters `Needs You` or `Error` state (disabled by default; Redact-safe). |
+
+### Workspace & UI Preferences
+
+- **`soundMode`** (`off` | `chimes` | `ambient`, default `off`): Toggled via `M` or the toolbar button and persisted locally in `botWorld.prefs`. Only synthesizes Web Audio cues after an explicit user gesture.
+- **`.botworld` Document Fields**: Custom board files store view preferences only (`themeId`, `atmosphereMode`, `weatherMode`, `redactMode`, `selectedBotId`, `botAppearances`, `customDeskPositions`, `zones`, `showZones`) and never persist sensitive task text.
+- **24h Replay Timeline**: Automatically records sanitized snapshots into `botWorld.timeline` for 24h scrubbing (`1x`, `2x`, `5x`, `10x`) and 10-second Daily Timelapse playback.
+
+---
+
+## Complete Keyboard Shortcuts
+
+All shortcuts work outside text inputs in both the Sidebar Panel and `.botworld` Office Board (`Space` applies to `.botworld` Replay; `WASD` / `Arrow` keys apply while Owner Avatar Roaming is active).
+
+| Key | Action | Scope |
+| --- | --- | --- |
+| `T` | Cycle office theme (`Startup Office` → `Corporate Office` → `Cozy Cafe` → `Cyber Ops`) | Panel & `.botworld` |
+| `A` | Cycle atmosphere (`Auto` → `Day` → `Sunset` → `Night`) | Panel & `.botworld` |
+| `W` | Cycle weather (`Auto` → `Clear` → `Rain` → `Snow` → `Starlight`) | Panel & `.botworld` |
+| `M` | Cycle sound mode (`Off` → `Chimes` → `Ambient`) | Panel & `.botworld` |
+| `G` | Toggle visualization mode (`Office` ↔ `Pocket Pet Terrarium`) | Panel & `.botworld` |
+| `V` | Toggle Owner Avatar Roaming (`ON` / `OFF`) | Panel & `.botworld` |
+| `WASD` / `Arrow` / Double-click | Walk Owner Avatar across the office floor (when Roaming is `ON`) | Stage Canvas |
+| `H` | High-Five nearby bot (`+8 XP`, 3s cooldown) | Panel & `.botworld` |
+| `K` | Hand Coffee to nearby bot (`+10 XP`, 3s cooldown) | Panel & `.botworld` |
+| `N` | Focus urgent (`Needs You` / `Error`) or active bot (Focus Spotlight) | Panel & `.botworld` |
+| `F` | Toggle Follow Cam on selected bot | Panel & `.botworld` |
+| `0` | Reset camera zoom & pan | Panel & `.botworld` |
+| `/` | Focus bot search input | Panel & `.botworld` |
+| `C` | Toggle 24h collaboration network overlay | Panel & `.botworld` |
+| `Z` | Toggle `.botworld` Team Zones floor overlay | Panel & `.botworld` |
+| `P` | Save 1-click PNG Photo Card snapshot | Panel & `.botworld` |
+| `I` | Open / close 24h Office Digest Report | Panel & `.botworld` |
+| `R` | Toggle Redact Mode (`ON` / `OFF`) | Panel & `.botworld` |
+| `L` | Switch display language (`EN` / `한국어`) | Panel & `.botworld` |
+| `D` | Toggle Demo Office (`ON` / `OFF`) | Panel & `.botworld` |
+| `Space` | Play / pause 24h timeline replay | `.botworld` Editor |
+| `Esc` | Close modal, release Follow Cam, clear search/filter, or clear selection | Panel & `.botworld` |
+| `?` | Show / hide Keyboard Shortcuts modal | Panel & `.botworld` |
+
+---
+
+## Bot RPG & Owner Roaming Mechanics
+
+### Level Progression & Titles
+
+| Level | XP Floor | English Title | 한국어 칭호 |
+| :---: | :---: | :--- | :--- |
+| `Lv.1` | `0` | Intern | 인턴 |
+| `Lv.2` | `40` | Junior | 주니어 |
+| `Lv.3` | `100` | Engineer | 엔지니어 |
+| `Lv.4` | `190` | Senior | 시니어 |
+| `Lv.5` | `320` | Staff | 스태프 |
+| `Lv.6+` | `500` (`+250` per level above Lv.6) | Archmage | 아크메이지 |
+
+### XP Sources & Desk Props
+
+- **Interactive Actions** (`RPG_ACTION_XP`, 3-second per-bot/action cooldown): `headpat` (`+5 XP`), `toy` (`+5 XP`), `high_five` (`+8 XP`), `coffee` (`+10 XP`).
+- **Automated Work Events** (deduplicated per event ID): task/worker/automation completions (`+25 XP`), sub-worker starts & bot messages (`+10 XP`), working state ticks (`+5 XP`).
+- **6 Unlockable Pixel Desk Props**: `🦆` Rubber Duck (`Lv.1`), `🪴` Mini Plant (`Lv.2`), `⌨️` Mech Keyboard (`Lv.3`), `🖥️` Dual Monitor (`Lv.4`), `🐱` Cat Plush (`Lv.5`), `🏆` Gold Trophy (`Lv.6`).
+
+---
+
+## Security & Permissions
+
+Bot World is built as a **read-only-by-default**, zero-egress plugin with strict opt-in write and alert boundaries.
+
+### Declared Capabilities (`orca-plugin.json`)
+
+| Capability | Purpose & Strict Scope |
+| --- | --- |
+| `storage:own` | Persists `botWorld.prefs`, `botWorld.timeline`, `botWorld.weeklyTrend`, and `botWorld.rpg.v1` locally inside plugin storage. |
+| `settings:own` | Reads and reacts to user-configured plugin settings in Orca. |
+| `agent:read` | Reads live bot, chat, worktree, orchestration, and automation snapshots. |
+| `workspace:write` | Used exclusively for 1-click teleport (`terminal.focus` and `workspace.open`) on `↗ Terminal` / `↗ Workspace` clicks — never writes files or workspace config. |
+| `notifications:show` | Used exclusively for opt-in OS notifications (`desktopNotifications: false` by default) when a bot enters `Needs You` or `Error`. |
+
+### Runtime & Storage Guards
+
+- **Zero External Network (`connect-src 'none'`)**: Both `panel/index.html` and `editor/index.html` enforce `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none';`, and the `.botworld` editor runs with `"frame": "isolated"`.
+- **XSS-Safe DOM**: Renders UI solely via `textContent` and `createTextNode` (`shared/dom.ts`), with zero `innerHTML` or `eval`.
+- **CLI Subcommand Allowlist & Safe Spawn**: Read-only polling runs via `execFile(..., { shell: false })` with `TRUSTED_ORCA_PATHS`, symlink/ownership checks, `buildMinimalSafeEnv()`, and `assertAllowedSubcommand()` permitting only:
+  - `status --json`
+  - `bot list --json`, `bot chats --bot <name> --all --json`, `bot item list --bot <name> [--all] --json`
+  - `worktree ps --since <dur> --json`
+  - `orchestration inbox --limit <n> --full --json`, `orchestration worker-list --limit <n> [--cursor <c>] --full --json`, `orchestration run-list --full --json`
+  - `automations list --json`, `automations runs --json`
+- **Opt-In Quick Send & Notifications**:
+  - `allowQuickSend` (`false` by default): When enabled, `sendQuickBotMessage` validates bot targets, rejects control characters, enforces `1–500` character limits, and applies a 2-second per-bot cooldown outside `assertAllowedSubcommand()`.
+  - `desktopNotifications` (`false` by default): Skips initial sync bursts, applies a 60-second per-bot/kind cooldown, truncates title/body lengths, and masks names/prompts/errors when **Redact Mode** is enabled.
+- **PII-Free Local Schemas & Secret Scrubbing**:
+  - `scrubAll()` masks AWS access keys, Slack/GitHub/Bearer/API tokens, webhook URLs, PEM private key blocks, email addresses, payment card numbers, and 12-digit AWS account IDs before storage or rendering.
+  - `botWorld.weeklyTrend` stores daily integer rollups only (`date`, `events`, `tasksDone`, `workerRuns`, `collaborations`).
+  - `botWorld.rpg.v1` stores numeric counters and `equippedProp` IDs only (capped at `MAX_RPG_PROFILES = 256`, zero task text or PII).
+  - **Redact Mode (`R`)** masks bot names (`Bot #1` / `봇 #1`), task titles, tool labels, banter/pet details, Team Zone labels (`Zone #1` / `구역 #1`), 24h Digest text, and OS desktop notifications.
+
+---
+
+## Verification Commands
+
+Run the official Orca plugin verification gates from the repository root:
+
+```sh
+orca plugin validate . --json
+orca plugin check . --json
+orca plugin test . --json
+```
+
+---
+
+## Release History (`v0.1.0` → `v0.8.0`)
+
+- **`v0.8.0`**: Bot RPG XP/leveling (`Lv.1 Intern` → `Lv.6+ Archmage`) with 6 desk props, Owner Avatar Roaming (`V`, `H` High-Five, `K` Hand Coffee), idle watercooler banter, opt-in OS desktop notifications (`desktopNotifications`), and RPG growth in the 24h Digest.
+- **`v0.7.0`**: Pocket Pet Terrarium mode (`G`) with headpats & toys (`☕`/`🎾`/`🍪`), 1-click Terminal/Workspace teleport (`↗ Terminal`/`↗ Workspace`), and opt-in Quick Send paper planes (`allowQuickSend`).
+- **`v0.6.0`**: 1-click PNG Photo Card (`P`), 10-second Daily Timelapse, PII-free 7-Day Weekly Activity Trend, and `.botworld` Team Zones (`Z`).
+- **`v0.5.0`**: Procedural Web Audio soundscape (`M`), ambient weather particles (`W`), and office micro-events (error beacons, completion milestones, huddle sparkles).
+- **`v0.4.0`**: Smart Camera (`N`, `F`, `0`, zoom/pan), status filter chips & `/` search, 24h Collaboration Network overlay (`C`), and Daily MVP / Office Badges.
+- **`v0.3.0`**: `Cozy Cafe` & `Cyber Ops` themes (`T`), drag-and-drop custom desk layouts, and 24h Daily Office Digest Report (`I`).
+- **`v0.2.0`**: Living Office time-of-day atmosphere (`A`), curved paper-plane/envelope couriers, sub-worker door commutes, and keyboard shortcuts (`?`).
+- **`v0.1.3`**: Read-only **Try Demo Office** onboarding mode (`D`) and animated showcase preview.
+- **`v0.1.2`**: Generalized role-aware avatar matching and 15+ bot overflow seating grid.
+- **`v0.1.1`**: Bilingual English / 한국어 UI (`L` and `language` setting).
+- **`v0.1.0`**: Initial public release with Sidebar Panel, `.botworld` Office Board, Redact Mode (`R`), and 24h timeline replay.

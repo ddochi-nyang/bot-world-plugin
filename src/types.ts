@@ -9,6 +9,15 @@ export type WeatherKind = 'clear' | 'rain' | 'snow' | 'starlight';
 export type SoundMode = 'off' | 'chimes' | 'ambient';
 export type ViewMode = 'office' | 'pet';
 export type PetToyKind = 'coffee' | 'ball' | 'treat';
+export type DeskPropId =
+  | 'none'
+  | 'rubber_duck'
+  | 'mini_plant'
+  | 'mech_keyboard'
+  | 'dual_monitor'
+  | 'cat_plush'
+  | 'gold_trophy';
+export type RpgXpAction = 'headpat' | 'high_five' | 'coffee' | 'toy';
 
 export const VALID_ATMOSPHERE_MODES: readonly AtmosphereMode[] = [
   'auto',
@@ -54,6 +63,62 @@ export const VALID_PET_TOY_KINDS: readonly PetToyKind[] = ['coffee', 'ball', 'tr
 export function isValidPetToyKind(value: unknown): value is PetToyKind {
   return typeof value === 'string' && (VALID_PET_TOY_KINDS as readonly string[]).includes(value);
 }
+
+export const VALID_DESK_PROP_IDS: readonly DeskPropId[] = [
+  'none',
+  'rubber_duck',
+  'mini_plant',
+  'mech_keyboard',
+  'dual_monitor',
+  'cat_plush',
+  'gold_trophy',
+] as const;
+
+export function isValidDeskPropId(value: unknown): value is DeskPropId {
+  return typeof value === 'string' && (VALID_DESK_PROP_IDS as readonly string[]).includes(value);
+}
+
+export const VALID_RPG_XP_ACTIONS: readonly RpgXpAction[] = [
+  'headpat',
+  'high_five',
+  'coffee',
+  'toy',
+] as const;
+
+export function isValidRpgXpAction(value: unknown): value is RpgXpAction {
+  return typeof value === 'string' && (VALID_RPG_XP_ACTIONS as readonly string[]).includes(value);
+}
+
+export const MAX_RPG_PROFILES = 256;
+
+export type StoredBotRpgRecord = {
+  xp: number;
+  completions: number;
+  delegations: number;
+  headpats: number;
+  highFives: number;
+  coffees: number;
+  equippedProp?: DeskPropId;
+};
+
+export type BotRpgStore = {
+  version: 1;
+  updatedAtMs: number;
+  profiles: Record<string, StoredBotRpgRecord>;
+};
+
+export type BotRpgProfile = {
+  botId: string;
+  xp: number;
+  level: number;
+  completions: number;
+  delegations: number;
+  headpats: number;
+  highFives: number;
+  coffees: number;
+  equippedProp: DeskPropId;
+  unlockedProps: DeskPropId[];
+};
 
 export const VALID_LANGUAGE_SETTINGS: readonly LanguageSetting[] = [
   'auto',
@@ -882,8 +947,10 @@ export type BotWorldStatePayload = {
   soundMode?: SoundMode;
   viewMode?: ViewMode;
   allowQuickSend?: boolean;
+  desktopNotifications?: boolean;
   redactMode: boolean;
   botAppearances: Record<string, CharacterId>;
+  rpgProfiles?: Record<string, BotRpgProfile>;
   pollIntervalSec: number;
   locale: UiLocale;
   languageSetting: LanguageSetting;

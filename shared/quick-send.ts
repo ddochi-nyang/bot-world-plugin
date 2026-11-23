@@ -57,7 +57,7 @@ export class QuickSendBar {
       maxLength: 500,
       placeholder: 'Message selected bot… (Enter to send)',
       onKeyDown: (ev) => {
-        if (ev.key === 'Enter' && !ev.shiftKey) {
+        if (ev.key === 'Enter' && !ev.shiftKey && !ev.isComposing && ev.keyCode !== 229) {
           ev.preventDefault();
           this.submit();
         } else if (ev.key === 'Escape') {

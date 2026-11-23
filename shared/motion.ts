@@ -1,4 +1,5 @@
 import { formatEventSummaries } from '../src/events.ts';
+import { scrubAll } from '../src/redact.ts';
 import {
   type ActorRef,
   type BotState,
@@ -14,6 +15,7 @@ import {
   isWorkerVisibleOnStage,
 } from '../src/types.ts';
 import { type ThemeConfig, deskPosition } from './assets-catalog.ts';
+import { tStrings } from './i18n.ts';
 
 export const MAX_CONCURRENT_WALKERS = 8;
 export const MAX_BUBBLES = 5;
@@ -199,6 +201,8 @@ export type SpeechBubble = {
   maxTtl: number;
   event?: WorldEvent;
   seqHint?: number;
+  banterPairIdx?: number;
+  banterBeat?: 'a' | 'b';
 };
 
 export type ParticleKind =
@@ -638,15 +642,29 @@ export class MotionDirector {
   elapsedSecs = 0;
   private rngSeed = 0x9e3779b9;
   locale: UiLocale = 'en';
+  banterEnabled = true;
+  private banterCooldownSecs = 14;
+  private pendingBanterReply: {
+    actorKey: string;
+    fallbackPos: [number, number];
+    pairIdx: number;
+    delaySecs: number;
+  } | null = null;
 
   setLocale(locale: UiLocale): void {
     if (this.locale === locale) return;
     this.locale = locale;
+    const pairs = tStrings(locale).banterPairs;
     for (const b of this.bubbles) {
       if (b.event) {
         const [normalText, redactedText] = formatEventSummaries(b.event, b.seqHint ?? 1, locale);
         b.normalText = normalText;
         b.redactedText = redactedText;
+      } else if (typeof b.banterPairIdx === 'number' && pairs.length > 0) {
+        const pair = pairs[b.banterPairIdx % pairs.length];
+        const line = `💬 ${b.banterBeat === 'b' ? pair.b : pair.a}`;
+        b.normalText = line;
+        b.redactedText = line;
       }
     }
   }
@@ -694,6 +712,8 @@ export class MotionDirector {
     this.milestoneBanner = null;
     this.recentBotPairs.clear();
     this.lastBotPairKey = null;
+    this.pendingBanterReply = null;
+    this.banterCooldownSecs = 14;
   }
 
   recentBotPairCount(): number {
@@ -732,22 +752,84 @@ export class MotionDirector {
     theme: ThemeConfig,
     previewText: string,
     redactMode = false,
-    customDeskPositions?: Readonly<Record<string, DeskCoordinate>>
+    customDeskPositions?: Readonly<Record<string, DeskCoordinate>>,
+    locale?: UiLocale
   ): boolean {
+    if (locale) {
+      this.setLocale(locale);
+    }
     this.syncLayout(snapshot, theme, customDeskPositions);
     const desk = this.layout.botDesks.get(botId);
     if (!desk) return false;
     const toPos: [number, number] = [desk.x, desk.y];
     this.spawnCourier('paper_plane', this.layout.bossDesk, toPos, 0.95);
-    const cleanPreview = previewText.trim().slice(0, 44);
+    const cleanPreview = scrubAll(previewText).trim().slice(0, 44);
+    const redactedBubble = tStrings(this.locale).quickSendRedactedBubble;
     const bubbleText = redactMode
-      ? '✉ Quick message'
+      ? redactedBubble
       : cleanPreview.length > 0
         ? `✉ ${cleanPreview}`
-        : '✉ Quick message';
-    this.pushBubble(`bot:${botId}`, toPos, bubbleText, '✉ Quick message', 'Boss', 2.6);
+        : redactedBubble;
+    this.pushBubble(`bot:${botId}`, toPos, bubbleText, redactedBubble, 'Boss', 2.6);
     this.spawnBurst('Sparkle', toPos, 5);
     return true;
+  }
+
+  triggerOwnerInteraction(
+    kind: 'high_five' | 'coffee',
+    ownerDesignPos: [number, number],
+    botId: string,
+    botDesignPos: [number, number],
+    locale?: UiLocale
+  ): void {
+    const loc = locale ?? this.locale;
+    const s = tStrings(loc);
+    const midX = (ownerDesignPos[0] + botDesignPos[0]) * 0.5;
+    const midY = (ownerDesignPos[1] + botDesignPos[1]) * 0.5;
+    if (kind === 'high_five') {
+      this.spawnBurst('Sparkle', [midX, midY], 9);
+      this.spawnBurst('GreenCheckConfetti', botDesignPos, 8);
+      this.pushBubble(
+        `bot:${botId}`,
+        botDesignPos,
+        s.roamReactionHighFive,
+        s.roamReactionHighFive,
+        'Success',
+        2.4
+      );
+    } else {
+      this.spawnFlyingProp(
+        { kind: 'BossStamp' },
+        [ownerDesignPos[0], ownerDesignPos[1] - 12],
+        [botDesignPos[0], botDesignPos[1] - 10],
+        42,
+        0.55
+      );
+      this.spawnBurst('Sparkle', botDesignPos, 7);
+      this.pushBubble(
+        `bot:${botId}`,
+        botDesignPos,
+        s.roamReactionCoffee,
+        s.roamReactionCoffee,
+        'Boss',
+        2.6
+      );
+    }
+  }
+
+  triggerLevelUp(
+    botId: string,
+    level: number,
+    botPos?: [number, number],
+    locale?: UiLocale
+  ): void {
+    const loc = locale ?? this.locale;
+    const desk = this.layout.botDesks.get(botId);
+    const origin: [number, number] = botPos ?? (desk ? [desk.x, desk.y] : [this.layout.designSize[0] * 0.5, this.layout.designSize[1] * 0.5]);
+    const label = tStrings(loc).rpgLevelUpBubble(level);
+    this.spawnBurst('MilestoneConfetti', origin, 14);
+    this.spawnBurst('Sparkle', origin, 8);
+    this.pushBubble(`bot:${botId}`, origin, label, label, 'Boss', 2.8);
   }
 
   private assignWorkerSeq(dispatchId: string): number {
@@ -878,6 +960,93 @@ export class MotionDirector {
         this.milestoneBanner = null;
       }
     }
+
+    if (this.banterEnabled) {
+      this.stepBanter(dt, snapshot);
+    }
+  }
+
+  private stepBanter(dt: number, snapshot: WorldSnapshot): void {
+    const pairs = tStrings(this.locale).banterPairs;
+    if (pairs.length === 0) return;
+
+    if (this.pendingBanterReply) {
+      this.pendingBanterReply.delaySecs -= dt;
+      if (this.pendingBanterReply.delaySecs <= 0) {
+        const reply = this.pendingBanterReply;
+        this.pendingBanterReply = null;
+        const botId = reply.actorKey.startsWith('bot:') ? reply.actorKey.slice(4) : '';
+        if (botId && Object.hasOwn(snapshot.bots, botId)) {
+          const pair = pairs[reply.pairIdx % pairs.length];
+          const text = `💬 ${pair.b}`;
+          this.pushBubble(
+            reply.actorKey,
+            reply.fallbackPos,
+            text,
+            text,
+            'Normal',
+            3.2,
+            undefined,
+            undefined,
+            reply.pairIdx,
+            'b'
+          );
+        }
+      }
+      return;
+    }
+
+    const idleBots: BotState[] = [];
+    const orderedIds =
+      snapshot.botOrder.length > 0
+        ? snapshot.botOrder.filter((id) => isSafeKey(id) && Object.hasOwn(snapshot.bots, id))
+        : Object.keys(snapshot.bots).filter((id) => isSafeKey(id));
+    for (const id of orderedIds) {
+      const bot = snapshot.bots[id];
+      if (bot && bot.status.kind === 'Idle') {
+        idleBots.push(bot);
+      }
+    }
+    if (idleBots.length < 2) {
+      return;
+    }
+
+    this.banterCooldownSecs -= dt;
+    if (this.banterCooldownSecs > 0) {
+      return;
+    }
+
+    this.banterCooldownSecs = 14 + this.nextRand() * 8;
+    const idxA = Math.floor(this.nextRand() * idleBots.length);
+    let idxB = Math.floor(this.nextRand() * (idleBots.length - 1));
+    if (idxB >= idxA) idxB += 1;
+    const botA = idleBots[idxA];
+    const botB = idleBots[idxB];
+    const deskA = this.layout.botDesks.get(botA.id);
+    const deskB = this.layout.botDesks.get(botB.id);
+    if (!deskA || !deskB) return;
+
+    const pairIdx = Math.floor(this.nextRand() * pairs.length);
+    const pair = pairs[pairIdx];
+    const textA = `💬 ${pair.a}`;
+    this.pushBubble(
+      `bot:${botA.id}`,
+      [deskA.x, deskA.y],
+      textA,
+      textA,
+      'Normal',
+      3.2,
+      undefined,
+      undefined,
+      pairIdx,
+      'a'
+    );
+    this.pendingBanterReply = {
+      actorKey: `bot:${botB.id}`,
+      fallbackPos: [deskB.x, deskB.y],
+      pairIdx,
+      delaySecs: 1.6,
+    };
   }
 
   actorPose(actorKey: string, defaultPos: [number, number]): ActorPose {
@@ -1485,7 +1654,9 @@ export class MotionDirector {
     kind: BubbleKind,
     ttl: number,
     event?: WorldEvent,
-    seqHint?: number
+    seqHint?: number,
+    banterPairIdx?: number,
+    banterBeat?: 'a' | 'b'
   ): void {
     if (anchorActorKey) {
       const existing = this.bubbles.find((b) => b.anchorActorKey === anchorActorKey);
@@ -1498,6 +1669,8 @@ export class MotionDirector {
         existing.fallbackPos = fallbackPos;
         existing.event = event;
         existing.seqHint = seqHint;
+        existing.banterPairIdx = banterPairIdx;
+        existing.banterBeat = banterBeat;
         return;
       }
     }
@@ -1519,6 +1692,8 @@ export class MotionDirector {
       maxTtl: ttl,
       event,
       seqHint,
+      banterPairIdx,
+      banterBeat,
     });
   }
 
@@ -1765,6 +1940,10 @@ export class ReplayController {
   cursorMs = 0;
   snapshot: WorldSnapshot = createEmptySnapshot();
   motion = new MotionDirector();
+
+  constructor() {
+    this.motion.banterEnabled = false;
+  }
 
   timeBounds(keyframes: readonly Keyframe[], events: readonly WorldEventRecord[]): [number, number] | null {
     let minTs: number | null = null;

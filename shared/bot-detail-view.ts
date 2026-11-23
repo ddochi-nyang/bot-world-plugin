@@ -9,8 +9,10 @@ import { scrubAll } from '../src/redact.ts';
 import { formatTimeHms } from '../src/timeline.ts';
 import {
   type ActorRef,
+  type BotRpgProfile,
   type BotState,
   type CharacterId,
+  type DeskPropId,
   POOL_CHARACTER_IDS,
   type UiLocale,
   type WorldEventRecord,
@@ -24,6 +26,13 @@ import {
   resolveCharacterIdWithPrefs,
   resolveCharacterSpritePath,
 } from './assets-catalog.ts';
+import {
+  DESK_PROP_CATALOG,
+  computeBotRpgProfile,
+  nextLevelXpThreshold,
+  rpgTitleForLevel,
+  xpFloorForLevel,
+} from './bot-rpg.ts';
 import { type DomChild, clearChildren, el } from './dom.ts';
 import { localizeBotErrorMessage, tStrings } from './i18n.ts';
 import { type OfficeBadgeId, badgeDisplayMeta } from './office-badges.ts';
@@ -32,6 +41,11 @@ function truncateChars(text: string, maxChars: number): string {
   const chars = Array.from(text);
   if (chars.length <= maxChars) return text;
   return `${chars.slice(0, maxChars).join('')}…`;
+}
+
+function fillStepClass(ratio: number): string {
+  const clamped = Math.max(0, Math.min(1, Number.isFinite(ratio) ? ratio : 0));
+  return `bw-fill-step-${Math.round(clamped * 20)}`;
 }
 
 function shortIsoHms(iso: string): string {
@@ -97,6 +111,8 @@ export function renderBotDetail(
     botCount?: number;
     onStartDemo?: () => void;
     badges?: readonly OfficeBadgeId[];
+    rpgProfile?: BotRpgProfile | null;
+    onEquipProp?: (botId: string, propId: DeskPropId) => void;
     onFocusTerminal?: (terminalId: string) => void;
     onOpenWorkspace?: (workspaceId: string) => void;
   }
@@ -113,6 +129,8 @@ export function renderBotDetail(
     botCount,
     onStartDemo,
     badges,
+    rpgProfile,
+    onEquipProp,
     onFocusTerminal,
     onOpenWorkspace,
   } = options;
@@ -282,6 +300,86 @@ export function renderBotDetail(
         { className: 'bw-card' },
         el('div', { className: 'bw-card-text' }, taskLine),
         toolLine ? el('div', { className: 'bw-card-sub' }, toolLine) : null
+      )
+    )
+  );
+
+  // Section 1.5: Bot RPG Level & Desk Props
+  const resolvedRpg = rpgProfile ?? computeBotRpgProfile(bot.id);
+  const levelTitle = rpgTitleForLevel(resolvedRpg.level, locale);
+  const lvFloor = xpFloorForLevel(resolvedRpg.level);
+  const nextThreshold = nextLevelXpThreshold(resolvedRpg.level);
+  const span = Math.max(1, nextThreshold - lvFloor);
+  const progressRatio = Math.max(0, Math.min(1, (resolvedRpg.xp - lvFloor) / span));
+
+  const propPills: DomChild[] = [
+    el(
+      'button',
+      {
+        type: 'button',
+        className:
+          resolvedRpg.equippedProp === 'none' ? 'bw-prop-btn bw-prop-btn-active' : 'bw-prop-btn',
+        ariaPressed: String(resolvedRpg.equippedProp === 'none'),
+        onClick: () => onEquipProp?.(bot.id, 'none'),
+      },
+      `— ${s.rpgPropLabels.none}`
+    ),
+    ...DESK_PROP_CATALOG.map((spec) => {
+      const unlocked = resolvedRpg.unlockedProps.includes(spec.id);
+      const isEquipped = resolvedRpg.equippedProp === spec.id;
+      const label = s.rpgPropLabels[spec.id];
+      return el(
+        'button',
+        {
+          type: 'button',
+          className: isEquipped
+            ? 'bw-prop-btn bw-prop-btn-active'
+            : unlocked
+              ? 'bw-prop-btn'
+              : 'bw-prop-btn bw-prop-btn-locked',
+          disabled: !unlocked,
+          ariaPressed: String(isEquipped),
+          title: unlocked ? label : s.rpgPropLockedHint(spec.unlockLevel),
+          onClick: () => {
+            if (unlocked) onEquipProp?.(bot.id, spec.id);
+          },
+        },
+        unlocked ? `${spec.emoji} ${label}` : `🔒 ${spec.emoji} Lv.${spec.unlockLevel}`
+      );
+    }),
+  ];
+
+  body.appendChild(
+    el(
+      'section',
+      { className: 'bw-section' },
+      el('div', { className: 'bw-section-title' }, s.rpgSectionTitle),
+      el(
+        'div',
+        { className: 'bw-card bw-rpg-card' },
+        el(
+          'div',
+          { className: 'bw-card-meta' },
+          el(
+            'span',
+            { className: 'bw-rpg-level-pill' },
+            s.rpgLevelBadge(resolvedRpg.level, levelTitle)
+          ),
+          el(
+            'span',
+            { className: 'bw-meta-time' },
+            s.rpgXpProgress(resolvedRpg.xp, nextThreshold)
+          )
+        ),
+        el(
+          'div',
+          { className: 'bw-report-bar-track bw-rpg-progress-track' },
+          el('div', {
+            className: `bw-report-bar-fill bw-rpg-progress-fill ${fillStepClass(progressRatio)}`,
+          })
+        ),
+        el('div', { className: 'bw-rpg-prop-label' }, s.rpgDeskPropTitle),
+        el('div', { className: 'bw-rpg-prop-grid' }, ...propPills)
       )
     )
   );

@@ -3,9 +3,11 @@ import {
   type AtmosphereMode,
   type AtmospherePhase,
   type BotActivityStatus,
+  type BotRpgProfile,
   type BotState,
   type CharacterId,
   type DeskCoordinate,
+  type DeskPropId,
   type TeamZone,
   type ThemeId,
   type UiLocale,
@@ -54,6 +56,7 @@ import {
   type ReplayController,
   hasErrorDeskBeacon,
 } from './motion.ts';
+import type { OwnerRipple } from './owner-avatar.ts';
 import { WeatherSystem, resolveWeatherKind } from './weather.ts';
 import { formatZoneDisplayLabel, zoneColorPalette } from './zones.ts';
 
@@ -314,6 +317,18 @@ function isBotLongIdle(bot: BotState, phase: AtmospherePhase, displayTimestampMs
   return displayTimestampMs - bot.lastActivityAt >= IDLE_Z_THRESHOLD_MS;
 }
 
+export type StageOwnerAvatarInput = {
+  roaming: boolean;
+  x: number;
+  y: number;
+  facing: Facing;
+  walkPhase: number;
+  isMoving: boolean;
+  ripple: OwnerRipple | null;
+  nearbyBotId: string | null;
+  ownerTag: string;
+};
+
 export type StageRenderInput = {
   snapshot: WorldSnapshot;
   themeId: ThemeId;
@@ -324,6 +339,8 @@ export type StageRenderInput = {
   redactMode: boolean;
   botAppearances: Record<string, CharacterId>;
   customDeskPositions?: Readonly<Record<string, DeskCoordinate>>;
+  rpgProfiles?: Readonly<Record<string, BotRpgProfile>>;
+  ownerAvatar?: StageOwnerAvatarInput | null;
   motion: MotionDirector;
   replay?: ReplayController | null;
   locale?: UiLocale;
@@ -367,6 +384,7 @@ export class StageRenderer {
   private readonly onHoverBot?: (botId: string | null) => void;
   private readonly onMoveBot?: (botId: string, pos: DeskCoordinate) => void;
   private readonly onCameraChange?: () => void;
+  private readonly onDoubleClickFloor?: (normX: number, normY: number) => void;
   readonly camera: CameraController;
   readonly weather = new WeatherSystem();
   private lastInput: StageRenderInput | null = null;
@@ -391,6 +409,7 @@ export class StageRenderer {
       onHoverBot?: (botId: string | null) => void;
       onMoveBot?: (botId: string, pos: DeskCoordinate) => void;
       onCameraChange?: () => void;
+      onDoubleClickFloor?: (normX: number, normY: number) => void;
       camera?: CameraController;
     }
   ) {
@@ -404,9 +423,11 @@ export class StageRenderer {
     this.onHoverBot = options.onHoverBot;
     this.onMoveBot = options.onMoveBot;
     this.onCameraChange = options.onCameraChange;
+    this.onDoubleClickFloor = options.onDoubleClickFloor;
     this.camera = options.camera ?? new CameraController();
 
     this.canvas.addEventListener('click', this.handleClick);
+    this.canvas.addEventListener('dblclick', this.handleDoubleClick);
     this.canvas.addEventListener('pointerdown', this.handlePointerDown);
     this.canvas.addEventListener('pointermove', this.handlePointerMove);
     this.canvas.addEventListener('pointerup', this.handlePointerUp);
@@ -576,16 +597,23 @@ export class StageRenderer {
     const mode = input.atmosphereMode ?? 'auto';
     const displayTs = this.resolveDisplayTimestampMs(input);
     const phase = resolveAtmospherePhase(mode, displayTs);
+    let idleCount = 0;
     for (const bot of Object.values(input.snapshot.bots)) {
+      if (bot.status.kind === 'Idle') {
+        idleCount += 1;
+      }
       if (isBotLongIdle(bot, phase, displayTs)) {
         return true;
       }
     }
-    return false;
+    return idleCount >= 2 && !input.replay?.isReplay;
   }
 
   private shouldAnimate(input: StageRenderInput): boolean {
     if (this.camera.isAnimating()) return true;
+    if (input.ownerAvatar?.roaming && (input.ownerAvatar.isMoving || input.ownerAvatar.ripple !== null)) {
+      return true;
+    }
     if (input.showCollabNetwork && input.collabEdges && input.collabEdges.length > 0) return true;
     if (input.motion.hasActiveAnimations()) return true;
     if (input.timelapseActive) return false;
@@ -669,10 +697,38 @@ export class StageRenderer {
     return null;
   }
 
+  private screenClientToNormalized(clientX: number, clientY: number): [number, number] | null {
+    if (!this.lastViewport) return null;
+    const rect = this.canvas.getBoundingClientRect();
+    const sx = clientX - rect.left;
+    const sy = clientY - rect.top;
+    const designX = (sx - this.lastViewport.originX) / Math.max(0.0001, this.lastViewport.scale);
+    const designY = (sy - this.lastViewport.originY) / Math.max(0.0001, this.lastViewport.scale);
+    return [
+      designX / Math.max(1, this.lastViewport.designW),
+      designY / Math.max(1, this.lastViewport.designH),
+    ];
+  }
+
+  private readonly handleDoubleClick = (ev: MouseEvent): void => {
+    if (!this.onDoubleClickFloor || !this.lastInput?.ownerAvatar?.roaming) return;
+    const norm = this.screenClientToNormalized(ev.clientX, ev.clientY);
+    if (norm) {
+      this.onDoubleClickFloor(norm[0], norm[1]);
+    }
+  };
+
   private readonly handleClick = (ev: MouseEvent): void => {
     if (this.suppressNextClick) {
       this.suppressNextClick = false;
       return;
+    }
+    if (ev.altKey && this.onDoubleClickFloor && this.lastInput?.ownerAvatar?.roaming) {
+      const norm = this.screenClientToNormalized(ev.clientX, ev.clientY);
+      if (norm) {
+        this.onDoubleClickFloor(norm[0], norm[1]);
+        return;
+      }
     }
     const botId = this.findHitBotId(ev.clientX, ev.clientY);
     if (botId) {
@@ -943,6 +999,9 @@ export class StageRenderer {
       selected: boolean;
       needsOwner: boolean;
       isWorker: boolean;
+      isOwner?: boolean;
+      ownerTag?: string;
+      nearbyHighlight?: boolean;
       isDragging?: boolean;
     };
 
@@ -959,6 +1018,7 @@ export class StageRenderer {
       activeWorkerCount: number;
       dimmed: boolean;
       isMvp: boolean;
+      rpgLevel: number | null;
     };
 
     type WorkerOverlay = {
@@ -1028,6 +1088,14 @@ export class StageRenderer {
       const spotlighted =
         this.camera.spotlightBotId === bot.id && this.camera.spotlightRemainingSecs > 0;
 
+      const rpgProf =
+        input.rpgProfiles && isSafeKey(bot.id) && Object.hasOwn(input.rpgProfiles, bot.id)
+          ? input.rpgProfiles[bot.id]
+          : undefined;
+      const nearbyHighlight = Boolean(
+        input.ownerAvatar?.roaming && input.ownerAvatar.nearbyBotId === bot.id
+      );
+
       actors.push({
         botId: bot.id,
         footX: pose.footX + xShakePx,
@@ -1047,6 +1115,7 @@ export class StageRenderer {
         selected,
         needsOwner,
         isWorker: false,
+        nearbyHighlight,
         isDragging: isDraggingBot,
       });
 
@@ -1080,6 +1149,7 @@ export class StageRenderer {
         activeWorkerCount: bot.activeWorkerCount,
         dimmed,
         isMvp: mvpBotId === bot.id,
+        rpgLevel: rpgProf ? rpgProf.level : null,
       });
 
       const hasVisibleWorker =
@@ -1212,6 +1282,36 @@ export class StageRenderer {
       });
     }
 
+    if (input.ownerAvatar?.roaming) {
+      const ownerFootX = input.ownerAvatar.x * theme.designSize[0];
+      const ownerFootY = input.ownerAvatar.y * theme.designSize[1];
+      const bob = input.ownerAvatar.isMoving
+        ? -Math.abs(Math.sin(input.ownerAvatar.walkPhase)) * 4.5 * vt.scale
+        : Math.sin(elapsedSecs * 2.5) * 0.9 * vt.scale;
+      actors.push({
+        botId: null,
+        footX: ownerFootX,
+        footY: ownerFootY,
+        zBias: 2,
+        spritePath: resolveCharacterSpritePath('ddochi'),
+        scale: 1,
+        anchor: [0.5, 0.9],
+        basePx: BOT_SPRITE_DESIGN_PX,
+        yBobPx: bob,
+        facing: input.ownerAvatar.facing,
+        carryProp: null,
+        grayscale: false,
+        dimmed: false,
+        filterHighlighted: false,
+        spotlighted: false,
+        selected: false,
+        needsOwner: false,
+        isWorker: false,
+        isOwner: true,
+        ownerTag: input.ownerAvatar.ownerTag,
+      });
+    }
+
     // Y-sort strictly by (footY, zBias)
     actors.sort((a, b) => a.footY - b.footY || a.zBias - b.zBias);
     botOverlays.sort((a, b) => a.screenY - b.screenY || a.botId.localeCompare(b.botId));
@@ -1241,6 +1341,26 @@ export class StageRenderer {
         uiScale,
         filterSet
       );
+    }
+
+    // Owner Roaming destination ripple marker
+    if (input.ownerAvatar?.roaming && input.ownerAvatar.ripple) {
+      const rip = input.ownerAvatar.ripple;
+      const t = Math.max(0, Math.min(1, rip.age / Math.max(0.01, rip.ttl)));
+      const [rx, ry] = designToScreen(
+        vt,
+        rip.x * theme.designSize[0],
+        rip.y * theme.designSize[1]
+      );
+      const rad = (6 + t * 22) * vt.scale;
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, (1 - t) * 0.85);
+      ctx.beginPath();
+      ctx.ellipse(rx, ry, rad, rad * 0.45, 0, 0, Math.PI * 2);
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 2 * Math.max(0.7, uiScale);
+      ctx.stroke();
+      ctx.restore();
     }
 
     // Paint actors
@@ -1278,6 +1398,17 @@ export class StageRenderer {
         ctx.stroke();
       }
 
+      if (actor.nearbyHighlight) {
+        ctx.save();
+        drawRoundedRect(ctx, sx - 8, sy - 6, shadowW + 16, shadowH + 12, 16);
+        ctx.fillStyle = 'rgba(250, 204, 21, 0.22)';
+        ctx.fill();
+        ctx.lineWidth = 2.2;
+        ctx.strokeStyle = '#fbbf24';
+        ctx.stroke();
+        ctx.restore();
+      }
+
       if (actor.isDragging) {
         ctx.save();
         drawRoundedRect(ctx, sx - 8, sy - 6, shadowW + 16, shadowH + 12, 16);
@@ -1307,6 +1438,20 @@ export class StageRenderer {
       drawRoundedRect(ctx, sx, sy, shadowW, shadowH, 12);
       ctx.fillStyle = 'rgba(15, 23, 42, 0.28)';
       ctx.fill();
+
+      if (actor.isOwner) {
+        this.paintOwnerAvatar(
+          ctx,
+          fx,
+          fy + actor.yBobPx,
+          vt.scale,
+          actor.facing,
+          actor.ownerTag ?? 'YOU',
+          uiScale
+        );
+        ctx.restore();
+        continue;
+      }
 
       const sb = spriteBounds(
         vt,
@@ -1374,6 +1519,17 @@ export class StageRenderer {
       motion,
       atmospherePhase,
       displayTimestampMs,
+      elapsedSecs,
+      filterSet
+    );
+
+    // RPG unlockable pixel desk props on each bot's desk surface
+    this.paintRpgDeskProps(
+      ctx,
+      vt,
+      orderedBots,
+      layout.botDesks,
+      input.rpgProfiles,
       elapsedSecs,
       filterSet
     );
@@ -1575,6 +1731,26 @@ export class StageRenderer {
           left + boxW * 0.5,
           pillTop + 27 * npScale
         );
+      }
+
+      if (overlay.rpgLevel !== null && overlay.rpgLevel >= 1) {
+        const lvText = `Lv.${overlay.rpgLevel}`;
+        ctx.font = `700 ${Math.round(8.5 * npScale)}px ${CANVAS_FONT_FAMILY}`;
+        const lvW = Math.max(24 * npScale, ctx.measureText(lvText).width + 8 * npScale);
+        const lvH = 13 * npScale;
+        const lvX = left + 2 * npScale;
+        const lvY = Math.max(bgTop + 3, pillTop - lvH - 2 * npScale);
+        drawRoundedRect(ctx, lvX, lvY, lvW, lvH, 5 * npScale);
+        ctx.fillStyle = overlay.rpgLevel >= 5 ? 'rgba(180, 83, 9, 0.94)' : 'rgba(67, 56, 202, 0.92)';
+        ctx.fill();
+        ctx.strokeStyle = overlay.rpgLevel >= 5 ? '#facc15' : 'rgba(165, 180, 252, 0.85)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = '#fefce8';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(lvText, lvX + lvW * 0.5, lvY + lvH * 0.52);
+        obstacles.push([lvX, lvY, lvW, lvH]);
       }
       ctx.restore();
 
@@ -2652,6 +2828,279 @@ export class StageRenderer {
     });
   }
 
+  private paintOwnerAvatar(
+    ctx: CanvasRenderingContext2D,
+    fx: number,
+    fy: number,
+    scale: number,
+    facing: Facing,
+    ownerTag: string,
+    uiScale: number
+  ): void {
+    const s = Math.max(0.55, scale);
+    const dir = facing === 'Left' ? -1 : 1;
+    ctx.save();
+    // Crisp pixel-style Owner Avatar (navy coat, warm face, headset/crown badge)
+    // Legs / shoes
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(fx - 8 * s, fy - 12 * s, 6 * s, 10 * s);
+    ctx.fillRect(fx + 2 * s, fy - 12 * s, 6 * s, 10 * s);
+    // Coat / torso
+    drawRoundedRect(ctx, fx - 12 * s, fy - 33 * s, 24 * s, 22 * s, 5 * s);
+    ctx.fillStyle = '#0f172a';
+    ctx.fill();
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 1.4 * s;
+    ctx.stroke();
+    // Tie / collar accent
+    ctx.fillStyle = '#facc15';
+    ctx.fillRect(fx - 2 * s, fy - 31 * s, 4 * s, 11 * s);
+    // Head
+    drawRoundedRect(ctx, fx - 11 * s, fy - 53 * s, 22 * s, 20 * s, 7 * s);
+    ctx.fillStyle = '#fde68a';
+    ctx.fill();
+    ctx.strokeStyle = '#78350f';
+    ctx.lineWidth = 1.2 * s;
+    ctx.stroke();
+    // Hair
+    drawRoundedRect(ctx, fx - 11 * s, fy - 55 * s, 22 * s, 8 * s, 4 * s);
+    ctx.fillStyle = '#334155';
+    ctx.fill();
+    // Eyes (shifted slightly toward facing direction)
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(fx + (dir * 2 - 4) * s, fy - 44 * s, 2.5 * s, 3.2 * s);
+    ctx.fillRect(fx + (dir * 2 + 2) * s, fy - 44 * s, 2.5 * s, 3.2 * s);
+    // Golden crown accent on top
+    ctx.fillStyle = '#facc15';
+    ctx.beginPath();
+    ctx.moveTo(fx - 7 * s, fy - 55 * s);
+    ctx.lineTo(fx - 7 * s, fy - 63 * s);
+    ctx.lineTo(fx - 3 * s, fy - 59 * s);
+    ctx.lineTo(fx, fy - 65 * s);
+    ctx.lineTo(fx + 3 * s, fy - 59 * s);
+    ctx.lineTo(fx + 7 * s, fy - 63 * s);
+    ctx.lineTo(fx + 7 * s, fy - 55 * s);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#b45309';
+    ctx.lineWidth = 1 * s;
+    ctx.stroke();
+
+    // YOU / 나 micro-tag
+    ctx.font = `700 ${Math.round(9.5 * uiScale)}px ${CANVAS_FONT_FAMILY}`;
+    const tagW = Math.max(28 * uiScale, ctx.measureText(ownerTag).width + 10 * uiScale);
+    const tagH = 15 * uiScale;
+    const tagX = fx - tagW * 0.5;
+    const tagY = fy - 82 * s;
+    drawRoundedRect(ctx, tagX, tagY, tagW, tagH, 6 * uiScale);
+    ctx.fillStyle = 'rgba(202, 138, 4, 0.96)';
+    ctx.fill();
+    ctx.strokeStyle = '#fef08a';
+    ctx.lineWidth = 1.1;
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(ownerTag, fx, tagY + tagH * 0.52);
+    ctx.restore();
+  }
+
+  private paintRpgDeskProps(
+    ctx: CanvasRenderingContext2D,
+    vt: ViewportTransform,
+    orderedBots: readonly BotState[],
+    botDesks: ReadonlyMap<string, { x: number; y: number; workerOffset: [number, number] }>,
+    rpgProfiles: Readonly<Record<string, BotRpgProfile>> | undefined,
+    elapsedSecs: number,
+    filterSet: ReadonlySet<string> | null
+  ): void {
+    if (!rpgProfiles) return;
+    const s = Math.max(0.55, vt.scale);
+    orderedBots.forEach((bot, idx) => {
+      if (!isSafeKey(bot.id) || !Object.hasOwn(rpgProfiles, bot.id)) return;
+      const propId: DeskPropId = rpgProfiles[bot.id].equippedProp;
+      if (propId === 'none') return;
+      const desk = botDesks.get(bot.id);
+      if (!desk) return;
+      const [sx, sy] = designToScreen(vt, desk.x, desk.y);
+      // Place prop on opposite side of the desk from workerOffset & coffee mug
+      const sideSign = desk.workerOffset[0] > 0 ? 1 : -1;
+      const px = sx + sideSign * 31 * s;
+      const py = sy - 11 * s;
+      const dimmedAlpha = filterSet !== null && !filterSet.has(bot.id) ? 0.24 : 1;
+
+      ctx.save();
+      ctx.globalAlpha = dimmedAlpha;
+      switch (propId) {
+        case 'rubber_duck': {
+          // Yellow pixel duck with orange beak
+          drawRoundedRect(ctx, px - 6 * s, py - 3 * s, 12 * s, 7 * s, 3 * s);
+          ctx.fillStyle = '#facc15';
+          ctx.fill();
+          ctx.strokeStyle = '#a16207';
+          ctx.lineWidth = 1 * s;
+          ctx.stroke();
+          drawRoundedRect(ctx, px - 3.5 * s, py - 9 * s, 7.5 * s, 7 * s, 3 * s);
+          ctx.fillStyle = '#fde047';
+          ctx.fill();
+          ctx.stroke();
+          // Orange beak
+          ctx.fillStyle = '#f97316';
+          ctx.fillRect(px + 3.5 * s, py - 6.5 * s, 3.5 * s, 2.2 * s);
+          // Tiny eye
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(px + 1 * s, py - 7.2 * s, 1.5 * s, 1.5 * s);
+          break;
+        }
+        case 'mini_plant': {
+          // Terracotta pot + green pixel leaves
+          ctx.fillStyle = '#c2410c';
+          ctx.beginPath();
+          ctx.moveTo(px - 5 * s, py - 4 * s);
+          ctx.lineTo(px + 5 * s, py - 4 * s);
+          ctx.lineTo(px + 3.5 * s, py + 4 * s);
+          ctx.lineTo(px - 3.5 * s, py + 4 * s);
+          ctx.closePath();
+          ctx.fill();
+          ctx.fillStyle = '#ea580c';
+          ctx.fillRect(px - 5.8 * s, py - 5.5 * s, 11.6 * s, 2.2 * s);
+          // Leaves
+          ctx.fillStyle = '#22c55e';
+          ctx.beginPath();
+          ctx.ellipse(px - 4 * s, py - 9 * s, 4 * s, 2.6 * s, -0.45, 0, Math.PI * 2);
+          ctx.ellipse(px + 4 * s, py - 9 * s, 4 * s, 2.6 * s, 0.45, 0, Math.PI * 2);
+          ctx.ellipse(px, py - 11.5 * s, 2.8 * s, 4.2 * s, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#4ade80';
+          ctx.fillRect(px - 1 * s, py - 12 * s, 2 * s, 4 * s);
+          break;
+        }
+        case 'mech_keyboard': {
+          // Compact RGB-accented mechanical keyboard
+          drawRoundedRect(ctx, px - 10 * s, py - 3.5 * s, 20 * s, 8 * s, 2 * s);
+          ctx.fillStyle = '#1e293b';
+          ctx.fill();
+          ctx.strokeStyle = '#38bdf8';
+          ctx.lineWidth = 1.1 * s;
+          ctx.stroke();
+          // Keycap rows
+          ctx.fillStyle = '#cbd5e1';
+          for (let kx = -7.5; kx <= 6.5; kx += 3.5) {
+            ctx.fillRect(px + kx * s, py - 2 * s, 2.5 * s, 2 * s);
+            ctx.fillRect(px + kx * s, py + 0.8 * s, 2.5 * s, 2 * s);
+          }
+          // RGB underglow strip
+          const rgbCols = ['#38bdf8', '#a78bfa', '#f472b6', '#4ade80'];
+          const col = rgbCols[Math.floor(elapsedSecs * 2 + idx) % rgbCols.length];
+          ctx.fillStyle = col;
+          ctx.fillRect(px - 8.5 * s, py + 3.5 * s, 17 * s, 1.5 * s);
+          break;
+        }
+        case 'dual_monitor': {
+          // Secondary glowing monitor angled on desk
+          ctx.fillStyle = '#334155';
+          ctx.fillRect(px - 1.5 * s, py - 1 * s, 3 * s, 5 * s);
+          ctx.fillRect(px - 5 * s, py + 3 * s, 10 * s, 2 * s);
+          drawRoundedRect(ctx, px - 10 * s, py - 14 * s, 20 * s, 13 * s, 2 * s);
+          ctx.fillStyle = '#0f172a';
+          ctx.fill();
+          ctx.strokeStyle = '#64748b';
+          ctx.lineWidth = 1.2 * s;
+          ctx.stroke();
+          // Glowing screen code lines
+          ctx.fillStyle = '#0ea5e9';
+          ctx.fillRect(px - 8 * s, py - 12 * s, 16 * s, 9 * s);
+          ctx.fillStyle = '#e0f2fe';
+          ctx.fillRect(px - 6.5 * s, py - 10.5 * s, 9 * s, 1.5 * s);
+          ctx.fillStyle = '#4ade80';
+          ctx.fillRect(px - 6.5 * s, py - 7.8 * s, 12 * s, 1.5 * s);
+          ctx.fillStyle = '#fde047';
+          ctx.fillRect(px - 6.5 * s, py - 5.2 * s, 7 * s, 1.5 * s);
+          break;
+        }
+        case 'cat_plush': {
+          // Cute perched desk cat with wagging tail
+          const tailWag = Math.sin(elapsedSecs * 3.5 + idx) * 2.5 * s;
+          // Tail
+          ctx.beginPath();
+          ctx.moveTo(px + 5 * s, py + 2 * s);
+          ctx.quadraticCurveTo(px + 10 * s, py - 3 * s + tailWag, px + 8 * s, py - 8 * s + tailWag);
+          ctx.strokeStyle = '#fb923c';
+          ctx.lineWidth = 2.4 * s;
+          ctx.lineCap = 'round';
+          ctx.stroke();
+          // Body + head
+          drawRoundedRect(ctx, px - 6 * s, py - 4 * s, 12 * s, 8 * s, 4 * s);
+          ctx.fillStyle = '#fed7aa';
+          ctx.fill();
+          ctx.strokeStyle = '#c2410c';
+          ctx.lineWidth = 1 * s;
+          ctx.stroke();
+          drawRoundedRect(ctx, px - 5.5 * s, py - 11.5 * s, 11 * s, 8.5 * s, 4 * s);
+          ctx.fillStyle = '#ffedd5';
+          ctx.fill();
+          ctx.stroke();
+          // Pointy ears
+          ctx.fillStyle = '#fb923c';
+          ctx.beginPath();
+          ctx.moveTo(px - 5 * s, py - 11 * s);
+          ctx.lineTo(px - 3.5 * s, py - 15 * s);
+          ctx.lineTo(px - 1 * s, py - 11 * s);
+          ctx.moveTo(px + 1 * s, py - 11 * s);
+          ctx.lineTo(px + 3.5 * s, py - 15 * s);
+          ctx.lineTo(px + 5 * s, py - 11 * s);
+          ctx.fill();
+          // Cozy eyes
+          ctx.fillStyle = '#431407';
+          ctx.fillRect(px - 3 * s, py - 8 * s, 1.8 * s, 1.8 * s);
+          ctx.fillRect(px + 1.2 * s, py - 8 * s, 1.8 * s, 1.8 * s);
+          break;
+        }
+        case 'gold_trophy': {
+          // Gleaming gold chalice trophy + animated shimmer
+          ctx.fillStyle = '#78350f';
+          ctx.fillRect(px - 5 * s, py + 2 * s, 10 * s, 3 * s);
+          ctx.fillStyle = '#eab308';
+          ctx.fillRect(px - 1.5 * s, py - 2 * s, 3 * s, 4.5 * s);
+          // Cup body
+          ctx.beginPath();
+          ctx.moveTo(px - 6.5 * s, py - 11.5 * s);
+          ctx.lineTo(px + 6.5 * s, py - 11.5 * s);
+          ctx.lineTo(px + 4 * s, py - 2 * s);
+          ctx.lineTo(px - 4 * s, py - 2 * s);
+          ctx.closePath();
+          ctx.fillStyle = '#facc15';
+          ctx.fill();
+          ctx.strokeStyle = '#a16207';
+          ctx.lineWidth = 1.1 * s;
+          ctx.stroke();
+          // Handles
+          ctx.beginPath();
+          ctx.arc(px - 6.5 * s, py - 7.5 * s, 2.6 * s, Math.PI * 0.5, Math.PI * 1.5);
+          ctx.strokeStyle = '#facc15';
+          ctx.lineWidth = 1.4 * s;
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(px + 6.5 * s, py - 7.5 * s, 2.6 * s, -Math.PI * 0.5, Math.PI * 0.5);
+          ctx.stroke();
+          // Shimmer star
+          const twinkle = 0.5 + 0.5 * Math.sin(elapsedSecs * 4.5 + idx);
+          ctx.fillStyle = `rgba(254, 249, 195, ${0.4 + twinkle * 0.6})`;
+          const sr = (2.2 + twinkle * 1.6) * s;
+          ctx.beginPath();
+          ctx.moveTo(px + 4 * s, py - 13 * s - sr);
+          ctx.lineTo(px + 4 * s + sr * 0.55, py - 13 * s);
+          ctx.lineTo(px + 4 * s, py - 13 * s + sr);
+          ctx.lineTo(px + 4 * s - sr * 0.55, py - 13 * s);
+          ctx.closePath();
+          ctx.fill();
+          break;
+        }
+      }
+      ctx.restore();
+    });
+  }
+
   dispose(): void {
     this.destroyed = true;
     if (this.rafId !== null) {
@@ -2660,6 +3109,7 @@ export class StageRenderer {
     }
     this.resizeObserver?.disconnect();
     this.canvas.removeEventListener('click', this.handleClick);
+    this.canvas.removeEventListener('dblclick', this.handleDoubleClick);
     this.canvas.removeEventListener('pointerdown', this.handlePointerDown);
     this.canvas.removeEventListener('pointermove', this.handlePointerMove);
     this.canvas.removeEventListener('pointerup', this.handlePointerUp);

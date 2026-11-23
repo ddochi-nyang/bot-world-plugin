@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "bot-world",
   "name": "Bot World",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Virtual office & Pocket Pet visualizer for Orca bots and live sub-workers (read-only by default, opt-in Quick Send)",
   "license": "MIT",
   "author": {
@@ -71,6 +71,9 @@
     },
     {
       "kind": "workspace:write"
+    },
+    {
+      "kind": "notifications:show"
     }
   ],
   "contributes": {
@@ -240,6 +243,13 @@
         "type": "boolean",
         "default": false,
         "description": "Opt-in: allow sending messages to Orca bots directly from Bot World's Quick Send bar (disabled by default for read-only safety)"
+      },
+      {
+        "key": "desktopNotifications",
+        "title": "OS Desktop Notifications",
+        "type": "boolean",
+        "default": false,
+        "description": "Opt-in OS alerts when a bot enters Needs You or Error state (disabled by default; Redact-safe when Redact Mode is enabled)."
       }
     ]
   }

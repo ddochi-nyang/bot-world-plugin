@@ -1,6 +1,7 @@
 import {
   type AtmosphereMode,
   type CharacterId,
+  type DeskPropId,
   type LanguageSetting,
   type SoundMode,
   type ThemeId,
@@ -429,6 +430,36 @@ export type UiDictionary = {
   quickSendSentToast: (botName: string) => string;
   quickSendChips: readonly { label: string; prompt: string }[];
   quickSendDemoReply: string;
+  quickSendRedactedBubble: string;
+  rpgSectionTitle: string;
+  rpgLevelBadge: (level: number, title: string) => string;
+  rpgXpProgress: (xp: number, nextXp: number) => string;
+  rpgLevelTitles: readonly [string, string, string, string, string, string];
+  rpgDeskPropTitle: string;
+  rpgPropLabels: Record<DeskPropId, string>;
+  rpgPropLockedHint: (unlockLevel: number) => string;
+  rpgLevelUpBubble: (level: number) => string;
+  reportSectionRpg: string;
+  reportNoRpgBots: string;
+  roamButton: string;
+  roamButtonTitle: string;
+  ownerTag: string;
+  roamHudHighFive: string;
+  roamHudCoffee: string;
+  roamReactionHighFive: string;
+  roamReactionCoffee: string;
+  shortcutToggleRoam: string;
+  shortcutHighFive: string;
+  shortcutHandCoffee: string;
+  banterPairs: readonly { a: string; b: string }[];
+  notifyNeedsYouTitle: (botName: string) => string;
+  notifyNeedsYouBody: (prompt: string | null) => string;
+  notifyNeedsYouTitleRedacted: string;
+  notifyNeedsYouBodyRedacted: (seq: number) => string;
+  notifyErrorTitle: (botName: string) => string;
+  notifyErrorBody: (message: string | null) => string;
+  notifyErrorTitleRedacted: string;
+  notifyErrorBodyRedacted: (seq: number) => string;
 };
 
 export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
@@ -784,6 +815,57 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
       { label: 'Run tests', prompt: 'Please run the test suite and report any failures.' },
     ],
     quickSendDemoReply: 'On it! Checking your request now.',
+    quickSendRedactedBubble: '✉ Quick message',
+    rpgSectionTitle: 'Bot Level & Desk Prop',
+    rpgLevelBadge: (level, title) => `Lv.${level} · ${title}`,
+    rpgXpProgress: (xp, nextXp) => `${xp} / ${nextXp} XP`,
+    rpgLevelTitles: ['Intern', 'Junior', 'Engineer', 'Senior', 'Staff', 'Archmage'],
+    rpgDeskPropTitle: 'Desk Prop',
+    rpgPropLabels: {
+      none: 'None',
+      rubber_duck: 'Rubber Duck',
+      mini_plant: 'Mini Plant',
+      mech_keyboard: 'Mech Keyboard',
+      dual_monitor: 'Dual Monitor',
+      cat_plush: 'Desk Cat',
+      gold_trophy: 'Gold Trophy',
+    },
+    rpgPropLockedHint: (unlockLevel) => `Unlocks at Lv.${unlockLevel}`,
+    rpgLevelUpBubble: (level) => `⭐ Lv.${level} UP!`,
+    reportSectionRpg: 'Bot Growth & Levels',
+    reportNoRpgBots: 'No bot XP recorded yet.',
+    roamButton: 'Roam',
+    roamButtonTitle: 'Toggle Owner Roaming mode [V]',
+    ownerTag: 'YOU',
+    roamHudHighFive: '[H] 🙌 High-Five (+8 XP)',
+    roamHudCoffee: '[K] ☕ Hand Coffee (+10 XP)',
+    roamReactionHighFive: 'Nice! 🙌',
+    roamReactionCoffee: 'Thanks for the coffee! ☕',
+    shortcutToggleRoam: 'Toggle Owner Roaming mode',
+    shortcutHighFive: 'High-Five nearby bot (Roaming)',
+    shortcutHandCoffee: 'Hand coffee to nearby bot (Roaming)',
+    banterPairs: [
+      { a: 'Did anyone see my semicolon?', b: 'Check behind the coffee mug!' },
+      { a: 'Refill break?', b: 'Oat latte please!' },
+      { a: 'Tests are all green!', b: "Don't jinx it!" },
+      { a: 'Is it Friday yet?', b: 'Almost—just two more PRs!' },
+      { a: 'How is the build looking?', b: 'Smooth sailing so far!' },
+      { a: 'Time for a quick stretch!', b: 'Shoulders back, deep breath!' },
+      { a: 'Who ordered extra pixels?', b: 'Fresh from the sprite oven!' },
+      { a: 'Cache is warm and cozy.', b: 'Best kind of afternoon!' },
+      { a: 'Zero warnings on lint!', b: 'Frame that and hang it up!' },
+      { a: 'Need a rubber duck?', b: 'Always ready to listen!' },
+      { a: 'Another clean deploy!', b: 'High-fives all around!' },
+      { a: 'Lo-fi beats on deck?', b: 'Volume set to cozy!' },
+    ],
+    notifyNeedsYouTitle: (botName) => `Bot World: ${botName} needs you`,
+    notifyNeedsYouBody: (prompt) => prompt || 'Approval or reply requested.',
+    notifyNeedsYouTitleRedacted: 'Bot World: Bot needs your attention',
+    notifyNeedsYouBodyRedacted: (seq) => `Bot #${seq} requires review.`,
+    notifyErrorTitle: (botName) => `Bot World: ${botName} error`,
+    notifyErrorBody: (message) => message || 'Bot entered an error state.',
+    notifyErrorTitleRedacted: 'Bot World: Bot encountered an error',
+    notifyErrorBodyRedacted: (seq) => `Bot #${seq} reported an error.`,
   },
   ko: {
     appTitlePanel: '봇 월드',
@@ -1134,6 +1216,57 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
       { label: '테스트 실행', prompt: '테스트를 실행하고 결과를 보고해 주세요.' },
     ],
     quickSendDemoReply: '확인했습니다! 요청하신 내용을 바로 살펴볼게요.',
+    quickSendRedactedBubble: '✉ 빠른 메시지',
+    rpgSectionTitle: '봇 레벨 & 책상 아이템',
+    rpgLevelBadge: (level, title) => `Lv.${level} · ${title}`,
+    rpgXpProgress: (xp, nextXp) => `${xp} / ${nextXp} XP`,
+    rpgLevelTitles: ['인턴', '주니어', '엔지니어', '시니어', '스태프', '아크메이지'],
+    rpgDeskPropTitle: '책상 아이템',
+    rpgPropLabels: {
+      none: '없음',
+      rubber_duck: '러버덕',
+      mini_plant: '미니 화분',
+      mech_keyboard: '기계식 키보드',
+      dual_monitor: '듀얼 모니터',
+      cat_plush: '책상 냥이',
+      gold_trophy: '황금 트로피',
+    },
+    rpgPropLockedHint: (unlockLevel) => `Lv.${unlockLevel}에 잠금 해제`,
+    rpgLevelUpBubble: (level) => `⭐ Lv.${level} 달성!`,
+    reportSectionRpg: '봇 성장 & 레벨',
+    reportNoRpgBots: '아직 기록된 봇 경험치가 없습니다.',
+    roamButton: '산책',
+    roamButtonTitle: '사장님 산책 모드 전환 [V]',
+    ownerTag: '나',
+    roamHudHighFive: '[H] 🙌 하이파이브 (+8 XP)',
+    roamHudCoffee: '[K] ☕ 커피 건네기 (+10 XP)',
+    roamReactionHighFive: '나이스! 🙌',
+    roamReactionCoffee: '커피 감사해요! ☕',
+    shortcutToggleRoam: '사장님 산책 모드 전환',
+    shortcutHighFive: '가까운 봇과 하이파이브 (산책 중)',
+    shortcutHandCoffee: '가까운 봇에게 커피 건네기 (산책 중)',
+    banterPairs: [
+      { a: '커피 한 잔 하실래요?', b: '아이스 아메리카노요!' },
+      { a: '테스트 다 통과했나요?', b: '방금 올그린 떴어요!' },
+      { a: '잠깐 스트레칭 타임!', b: '어깨 펴고 다시 달려요!' },
+      { a: '세미콜론 보신 분?', b: '머그컵 뒤에 숨어 있네요!' },
+      { a: '오늘 빌드 상태 어때요?', b: '지금까지 아주 순조로워요!' },
+      { a: '린트 경고 0건 달성!', b: '액자에 걸어 둬야겠네요!' },
+      { a: '러버덕 상담 필요하세요?', b: '언제든 들어드릴게요!' },
+      { a: '캐시가 따뜻하게 데워졌어요.', b: '오후 작업하기 딱 좋네요!' },
+      { a: '깔끔한 배포 완료!', b: '다 같이 하이파이브!' },
+      { a: '로파이 음악 틀까요?', b: '잔잔한 볼륨 좋아요!' },
+      { a: '간식 시간 다가오나요?', b: '쿠키 한 조각 어때요!' },
+      { a: '오늘도 화이팅입니다!', b: '차근차근 마무리해 봐요!' },
+    ],
+    notifyNeedsYouTitle: (botName) => `Bot World: ${botName} 결정 대기`,
+    notifyNeedsYouBody: (prompt) => prompt || '승인 또는 응답이 필요합니다.',
+    notifyNeedsYouTitleRedacted: 'Bot World: 봇 확인이 필요합니다',
+    notifyNeedsYouBodyRedacted: (seq) => `봇 #${seq}의 확인이 필요합니다.`,
+    notifyErrorTitle: (botName) => `Bot World: ${botName} 오류`,
+    notifyErrorBody: (message) => message || '봇이 오류 상태가 되었습니다.',
+    notifyErrorTitleRedacted: 'Bot World: 봇 오류가 발생했습니다',
+    notifyErrorBodyRedacted: (seq) => `봇 #${seq}에서 오류가 발생했습니다.`,
   },
 };
 
