@@ -2,8 +2,8 @@
   "manifestVersion": 2,
   "id": "bot-world",
   "name": "Bot World",
-  "version": "0.6.0",
-  "description": "Read-only virtual office visualizer for Orca bots and live sub-workers",
+  "version": "0.7.0",
+  "description": "Virtual office & Pocket Pet visualizer for Orca bots and live sub-workers (read-only by default, opt-in Quick Send)",
   "license": "MIT",
   "author": {
     "name": "ddochi-nyang",
@@ -68,6 +68,9 @@
     },
     {
       "kind": "agent:read"
+    },
+    {
+      "kind": "workspace:write"
     }
   ],
   "contributes": {
@@ -215,6 +218,28 @@
         ],
         "default": "auto",
         "description": "Ambient office weather effect (auto follows theme and time of day; clear, rain, snow, or starlight overrides weather)"
+      },
+      {
+        "key": "viewMode",
+        "title": "Default View Mode",
+        "type": "string",
+        "enum": [
+          "office",
+          "pet"
+        ],
+        "enumLabels": [
+          "Isometric Office",
+          "Pocket Pet Terrarium"
+        ],
+        "default": "office",
+        "description": "Default visualization mode (office canvas or compact Pocket Pet terrarium)"
+      },
+      {
+        "key": "allowQuickSend",
+        "title": "Allow Quick Send to Bots",
+        "type": "boolean",
+        "default": false,
+        "description": "Opt-in: allow sending messages to Orca bots directly from Bot World's Quick Send bar (disabled by default for read-only safety)"
       }
     ]
   }

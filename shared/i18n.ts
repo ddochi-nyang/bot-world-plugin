@@ -5,6 +5,7 @@ import {
   type SoundMode,
   type ThemeId,
   type UiLocale,
+  type ViewMode,
   type WeatherMode,
   type ZoneColor,
   isValidLanguageSetting,
@@ -386,6 +387,48 @@ export type UiDictionary = {
   zoneColorNames: Record<ZoneColor, string>;
   shortcutTakePhotoCard: string;
   shortcutToggleZones: string;
+  viewModeOfficeButton: string;
+  viewModePetButton: string;
+  viewModeToggleTitle: (currentMode: ViewMode) => string;
+  shortcutToggleViewMode: string;
+  petOverlayHint: string;
+  petActionCoffee: string;
+  petActionBall: string;
+  petActionTreat: string;
+  petActionCoffeeTitle: string;
+  petActionBallTitle: string;
+  petActionTreatTitle: string;
+  petKnockLabel: string;
+  petNeedsYouSign: string;
+  petReactionsHeadpat: readonly string[];
+  petReactionCoffee: string;
+  petReactionTreat: string;
+  petReactionBall: string;
+  petReactionDone: string;
+  petReactionQuickMsg: string;
+  teleportTerminalButton: string;
+  teleportTerminalTitle: string;
+  teleportWorkspaceButton: string;
+  teleportWorkspaceTitle: string;
+  teleportJumpActiveButton: string;
+  demoTeleportTerminalToast: string;
+  demoTeleportWorkspaceToast: string;
+  teleportFailedToast: (reason?: string) => string;
+  quickSendTitle: string;
+  quickSendTargetAria: string;
+  quickSendPlaceholder: string;
+  quickSendButton: string;
+  quickSendSending: string;
+  quickSendReadOnlyBadge: string;
+  quickSendDisabledTooltip: string;
+  quickSendDisabledError: string;
+  quickSendRateLimitedError: string;
+  quickSendUnknownBotError: string;
+  quickSendInvalidError: string;
+  quickSendFailedToast: (reason: string) => string;
+  quickSendSentToast: (botName: string) => string;
+  quickSendChips: readonly { label: string; prompt: string }[];
+  quickSendDemoReply: string;
 };
 
 export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
@@ -689,6 +732,58 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     },
     shortcutTakePhotoCard: 'Save PNG photo card',
     shortcutToggleZones: 'Toggle team zones overlay',
+    viewModeOfficeButton: 'Office',
+    viewModePetButton: 'Pet',
+    viewModeToggleTitle: (currentMode) =>
+      currentMode === 'pet'
+        ? 'Switch to Isometric Office [G]'
+        : 'Switch to Pocket Pet Terrarium [G]',
+    shortcutToggleViewMode: 'Toggle Office / Pocket Pet view',
+    petOverlayHint: 'Pocket Pet · Click a pet to headpat',
+    petActionCoffee: 'Coffee',
+    petActionBall: 'Ball',
+    petActionTreat: 'Treat',
+    petActionCoffeeTitle: 'Drop a steaming coffee cup into the terrarium',
+    petActionBallTitle: 'Toss a bouncy toy ball for pets to chase',
+    petActionTreatTitle: 'Drop a cookie treat for a nearby pet',
+    petKnockLabel: 'knock!',
+    petNeedsYouSign: 'Needs You',
+    petReactionsHeadpat: ['Thanks!', 'Ready to help!', 'Purr~'],
+    petReactionCoffee: 'Mmm, coffee!',
+    petReactionTreat: 'Yum!',
+    petReactionBall: 'Wheee!',
+    petReactionDone: 'All done!',
+    petReactionQuickMsg: 'Got it!',
+    teleportTerminalButton: '↗ Terminal',
+    teleportTerminalTitle: 'Focus this worker terminal in Orca',
+    teleportWorkspaceButton: '↗ Workspace',
+    teleportWorkspaceTitle: 'Open this worker workspace in Orca',
+    teleportJumpActiveButton: '↗ Jump to Active Terminal',
+    demoTeleportTerminalToast: 'Demo mode: would jump to worker terminal',
+    demoTeleportWorkspaceToast: 'Demo mode: would open worker workspace',
+    teleportFailedToast: (reason) =>
+      reason ? `Unable to jump (${reason})` : 'Unable to jump to target in Orca',
+    quickSendTitle: 'Quick Send',
+    quickSendTargetAria: 'Target bot',
+    quickSendPlaceholder: 'Message selected bot… (Enter to send)',
+    quickSendButton: '✈ Send',
+    quickSendSending: 'Sending…',
+    quickSendReadOnlyBadge: 'Read-only',
+    quickSendDisabledTooltip:
+      'Read-only by default. Enable "Allow Quick Send to Bots" in Plugin Settings (or try Demo Mode!).',
+    quickSendDisabledError:
+      'Quick Send is disabled. Enable "Allow Quick Send to Bots" in Plugin Settings.',
+    quickSendRateLimitedError: 'Please wait 2 seconds before messaging this bot again.',
+    quickSendUnknownBotError: 'Target bot was not found in the live snapshot.',
+    quickSendInvalidError: 'Message must be 1–500 characters without control characters.',
+    quickSendFailedToast: (reason) => `Quick Send failed: ${reason}`,
+    quickSendSentToast: (botName) => `Sent to ${botName}`,
+    quickSendChips: [
+      { label: 'Status check', prompt: 'Status check: please share a brief progress update.' },
+      { label: 'Review PR', prompt: 'Please review the latest PR and summarize key findings.' },
+      { label: 'Run tests', prompt: 'Please run the test suite and report any failures.' },
+    ],
+    quickSendDemoReply: 'On it! Checking your request now.',
   },
   ko: {
     appTitlePanel: '봇 월드',
@@ -987,6 +1082,58 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     },
     shortcutTakePhotoCard: 'PNG 포토 카드 저장',
     shortcutToggleZones: '팀 구역 오버레이 전환',
+    viewModeOfficeButton: '사무실',
+    viewModePetButton: '펫',
+    viewModeToggleTitle: (currentMode) =>
+      currentMode === 'pet'
+        ? '가상 사무실 보기로 전환 [G]'
+        : '포켓 펫 테라리움으로 전환 [G]',
+    shortcutToggleViewMode: '사무실 / 포켓 펫 화면 전환',
+    petOverlayHint: '포켓 펫 · 펫을 클릭해 쓰다듬기',
+    petActionCoffee: '커피',
+    petActionBall: '공 놀이',
+    petActionTreat: '간식',
+    petActionCoffeeTitle: '테라리움에 따뜻한 커피를 내려놓기',
+    petActionBallTitle: '펫들이 쫓아 노는 공 던지기',
+    petActionTreatTitle: '가까운 펫에게 쿠키 간식 주기',
+    petKnockLabel: '똑똑!',
+    petNeedsYouSign: '결정 대기',
+    petReactionsHeadpat: ['고마워요!', '힘낼게요!', '기분 좋아요!'],
+    petReactionCoffee: '향긋한 커피!',
+    petReactionTreat: '맛있어요!',
+    petReactionBall: '신난다!',
+    petReactionDone: '작업 완료!',
+    petReactionQuickMsg: '메시지 확인!',
+    teleportTerminalButton: '↗ 터미널',
+    teleportTerminalTitle: 'Orca에서 이 워커 터미널로 이동',
+    teleportWorkspaceButton: '↗ 워크스페이스',
+    teleportWorkspaceTitle: 'Orca에서 이 워커 워크스페이스 열기',
+    teleportJumpActiveButton: '↗ 활성 터미널로 이동',
+    demoTeleportTerminalToast: '데모 모드: 실제 모드에서 해당 워커 터미널로 즉시 이동합니다',
+    demoTeleportWorkspaceToast: '데모 모드: 실제 모드에서 해당 워커 워크스페이스를 엽니다',
+    teleportFailedToast: (reason) =>
+      reason ? `이동하지 못했습니다 (${reason})` : 'Orca에서 해당 대상으로 이동할 수 없습니다',
+    quickSendTitle: '빠른 전송',
+    quickSendTargetAria: '대상 봇',
+    quickSendPlaceholder: '선택한 봇에게 메시지 보내기… (Enter 전송)',
+    quickSendButton: '✈ 전송',
+    quickSendSending: '전송 중…',
+    quickSendReadOnlyBadge: '읽기 전용',
+    quickSendDisabledTooltip:
+      '기본값은 읽기 전용입니다. 플러그인 설정에서 "Allow Quick Send to Bots"를 켜거나 데모 모드에서 바로 체험해 보세요.',
+    quickSendDisabledError:
+      '빠른 전송이 비활성화되어 있습니다. 플러그인 설정에서 "Allow Quick Send to Bots"를 켜 주세요.',
+    quickSendRateLimitedError: '잠시 후 다시 전송해 주세요 (봇별 2초 제한).',
+    quickSendUnknownBotError: '대상 봇을 현재 스냅샷에서 찾을 수 없습니다.',
+    quickSendInvalidError: '메시지는 제어 문자 없이 1~500자로 입력해 주세요.',
+    quickSendFailedToast: (reason) => `빠른 전송 실패: ${reason}`,
+    quickSendSentToast: (botName) => `${botName}에게 전송됨`,
+    quickSendChips: [
+      { label: '진행 상황', prompt: '현재 작업 진행 상황을 간단히 공유해 주세요.' },
+      { label: 'PR 리뷰', prompt: '최신 PR 변경 사항을 리뷰하고 핵심 내용을 요약해 주세요.' },
+      { label: '테스트 실행', prompt: '테스트를 실행하고 결과를 보고해 주세요.' },
+    ],
+    quickSendDemoReply: '확인했습니다! 요청하신 내용을 바로 살펴볼게요.',
   },
 };
 

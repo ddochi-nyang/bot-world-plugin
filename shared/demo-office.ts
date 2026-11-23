@@ -1337,6 +1337,90 @@ export class DemoOfficeSession {
     return generated;
   }
 
+  sendQuickMessage(
+    botId: string,
+    message: string,
+    nowMs: number = Date.now()
+  ): { botId: string; botName: string; event: WorldEvent } | null {
+    if (!isSafeKey(botId) || !Object.hasOwn(this.snapshot.bots, botId)) {
+      return null;
+    }
+    const clean = message.trim().slice(0, 500);
+    if (clean.length === 0) return null;
+    const ts = Math.max(nowMs, this.lastTickMs + 1);
+    this.lastTickMs = ts;
+    this.snapshot.capturedAt = ts;
+
+    const bot = this.snapshot.bots[botId];
+    bot.status = { kind: 'Working', tool: 'execute' };
+    bot.currentTool = 'execute';
+    bot.currentTaskTitle = clean.slice(0, 120);
+    bot.lastActivityAt = ts;
+
+    const msgId = `demo-quick-${this.msgSeq}`;
+    this.pushMessage({
+      id: msgId,
+      msgType: 'handoff',
+      fromHandle: 'orca:items',
+      toHandle: bot.homeChatId ? `orca_session_id:${bot.homeChatId}` : `bot:${bot.id}`,
+      runId: null,
+      subject: clean.slice(0, 80),
+      body: clean,
+      createdAt: new Date(ts).toISOString(),
+      threadId: null,
+      payload: null,
+    });
+
+    const ev: WorldEvent = {
+      kind: 'BossReplied',
+      botId: bot.id,
+      botName: bot.name,
+      itemNumber: null,
+      subject: clean.slice(0, 80),
+    };
+    this.pushEvent(ev, ts);
+    return { botId: bot.id, botName: bot.name, event: ev };
+  }
+
+  receiveQuickMessageReply(
+    botId: string,
+    locale: UiLocale = 'en',
+    nowMs: number = Date.now()
+  ): WorldEvent | null {
+    if (!isSafeKey(botId) || !Object.hasOwn(this.snapshot.bots, botId)) {
+      return null;
+    }
+    const ts = Math.max(nowMs, this.lastTickMs + 1);
+    this.lastTickMs = ts;
+    this.snapshot.capturedAt = ts;
+
+    const bot = this.snapshot.bots[botId];
+    const replyText = tStrings(locale).quickSendDemoReply;
+    const msgId = `demo-quick-reply-${this.msgSeq}`;
+    this.pushMessage({
+      id: msgId,
+      msgType: 'status',
+      fromHandle: bot.homeChatId ? `orca_session_id:${bot.homeChatId}` : `bot:${bot.id}`,
+      toHandle: 'orca:items',
+      runId: null,
+      subject: replyText,
+      body: replyText,
+      createdAt: new Date(ts).toISOString(),
+      threadId: null,
+      payload: null,
+    });
+
+    const ev: WorldEvent = {
+      kind: 'Reply',
+      messageId: msgId,
+      from: { kind: 'Bot', botId: bot.id, botName: bot.name },
+      to: { kind: 'BossDesk' },
+      subject: replyText,
+    };
+    this.pushEvent(ev, ts);
+    return ev;
+  }
+
   getPayload(opts: {
     themeId: ThemeId;
     atmosphereMode?: AtmosphereMode;

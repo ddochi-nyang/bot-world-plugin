@@ -97,6 +97,8 @@ export function renderBotDetail(
     botCount?: number;
     onStartDemo?: () => void;
     badges?: readonly OfficeBadgeId[];
+    onFocusTerminal?: (terminalId: string) => void;
+    onOpenWorkspace?: (workspaceId: string) => void;
   }
 ): void {
   clearChildren(container);
@@ -111,6 +113,8 @@ export function renderBotDetail(
     botCount,
     onStartDemo,
     badges,
+    onFocusTerminal,
+    onOpenWorkspace,
   } = options;
   const s = tStrings(locale);
 
@@ -150,6 +154,21 @@ export function renderBotDetail(
   const statusLabel = botStatusLabel(bot.status, locale);
   const activeCharId = resolveCharacterIdWithPrefs(botAppearances, bot.id, bot.name);
 
+  const workers = Object.values(snapshot.workers)
+    .filter((w) => w.parentBotId === bot.id || w.parentBotName === bot.name)
+    .sort((a, b) => {
+      const aAct = Number(isWorkerActive(a));
+      const bAct = Number(isWorkerActive(b));
+      if (bAct !== aAct) return bAct - aAct;
+      return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
+    })
+    .slice(0, 12);
+
+  const jumpWorker =
+    workers.find((w) => isWorkerActive(w) && Boolean(w.terminalHandle)) ??
+    workers.find((w) => Boolean(w.terminalHandle));
+  const jumpTerminalHandle = jumpWorker?.terminalHandle ?? null;
+
   // Header
   const headerChildren: DomChild[] = [
     el('img', {
@@ -171,7 +190,23 @@ export function renderBotDetail(
         ? el('div', { className: 'bw-detail-specialty' }, cleanSpecialty)
         : redactMode
           ? el('div', { className: 'bw-detail-specialty' }, s.redactSpecialtyHidden)
-          : null
+          : null,
+      jumpTerminalHandle && onFocusTerminal
+        ? el(
+            'div',
+            { className: 'bw-detail-jump-row' },
+            el(
+              'button',
+              {
+                type: 'button',
+                className: 'bw-btn bw-btn-teleport',
+                title: s.teleportTerminalTitle,
+                onClick: () => onFocusTerminal(jumpTerminalHandle),
+              },
+              s.teleportJumpActiveButton
+            )
+          )
+        : null
     ),
   ];
 
@@ -404,16 +439,6 @@ export function renderBotDetail(
   );
 
   // Section 5: Workers
-  const workers = Object.values(snapshot.workers)
-    .filter((w) => w.parentBotId === bot.id || w.parentBotName === bot.name)
-    .sort((a, b) => {
-      const aAct = Number(isWorkerActive(a));
-      const bAct = Number(isWorkerActive(b));
-      if (bAct !== aAct) return bAct - aAct;
-      return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
-    })
-    .slice(0, 12);
-
   const workerContainer = el('div', { className: 'bw-list' });
   if (workers.length === 0) {
     workerContainer.appendChild(el('div', { className: 'bw-muted-note' }, s.noWorkers));
@@ -439,6 +464,10 @@ export function renderBotDetail(
               : title;
           })();
 
+      const termHandle = w.terminalHandle;
+      const wsId = w.worktreeId;
+      const hasActions = Boolean((termHandle && onFocusTerminal) || (wsId && onOpenWorkspace));
+
       workerContainer.appendChild(
         el(
           'div',
@@ -449,7 +478,37 @@ export function renderBotDetail(
             el('span', { className: 'bw-meta-dir' }, workerHeading),
             el('span', { className: 'bw-meta-time' }, `${stateLabel} · ${livenessLabel}`)
           ),
-          el('div', { className: 'bw-card-sub' }, detailLine)
+          el('div', { className: 'bw-card-sub' }, detailLine),
+          hasActions
+            ? el(
+                'div',
+                { className: 'bw-worker-actions' },
+                termHandle && onFocusTerminal
+                  ? el(
+                      'button',
+                      {
+                        type: 'button',
+                        className: 'bw-btn bw-btn-teleport',
+                        title: s.teleportTerminalTitle,
+                        onClick: () => onFocusTerminal(termHandle),
+                      },
+                      s.teleportTerminalButton
+                    )
+                  : null,
+                wsId && onOpenWorkspace
+                  ? el(
+                      'button',
+                      {
+                        type: 'button',
+                        className: 'bw-btn bw-btn-teleport',
+                        title: s.teleportWorkspaceTitle,
+                        onClick: () => onOpenWorkspace(wsId),
+                      },
+                      s.teleportWorkspaceButton
+                    )
+                  : null
+              )
+            : null
         )
       );
     });

@@ -2,10 +2,14 @@ import type {
   AtmosphereMode,
   BotWorldStatePayload,
   CharacterId,
+  FocusTerminalResponse,
   LanguageSetting,
+  OpenWorkspaceResponse,
+  QuickSendResponse,
   SoundMode,
   ThemeId,
   UiLocale,
+  ViewMode,
   WeatherMode,
 } from './types.ts';
 
@@ -35,6 +39,10 @@ declare module 'orca' {
       input: { soundMode: SoundMode };
       output: { soundMode: SoundMode };
     };
+    'botWorld.setViewMode': {
+      input: { viewMode: ViewMode };
+      output: { viewMode: ViewMode };
+    };
     'botWorld.setRedactMode': {
       input: { redactMode: boolean };
       output: { redactMode: boolean };
@@ -46,6 +54,18 @@ declare module 'orca' {
     'botWorld.setLanguage': {
       input: { language: LanguageSetting; hostLocale?: string };
       output: { languageSetting: LanguageSetting; locale: UiLocale };
+    };
+    'botWorld.sendQuickMessage': {
+      input: { botId: string; message: string };
+      output: QuickSendResponse;
+    };
+    'botWorld.focusTerminal': {
+      input: { terminalId: string };
+      output: FocusTerminalResponse;
+    };
+    'botWorld.openWorkspace': {
+      input: { workspaceId: string };
+      output: OpenWorkspaceResponse;
     };
   }
 

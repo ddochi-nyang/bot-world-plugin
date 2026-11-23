@@ -726,6 +726,30 @@ export class MotionDirector {
     this.spawnBurst('MilestoneConfetti', origin, 26);
   }
 
+  launchQuickMessageCourier(
+    botId: string,
+    snapshot: WorldSnapshot,
+    theme: ThemeConfig,
+    previewText: string,
+    redactMode = false,
+    customDeskPositions?: Readonly<Record<string, DeskCoordinate>>
+  ): boolean {
+    this.syncLayout(snapshot, theme, customDeskPositions);
+    const desk = this.layout.botDesks.get(botId);
+    if (!desk) return false;
+    const toPos: [number, number] = [desk.x, desk.y];
+    this.spawnCourier('paper_plane', this.layout.bossDesk, toPos, 0.95);
+    const cleanPreview = previewText.trim().slice(0, 44);
+    const bubbleText = redactMode
+      ? '✉ Quick message'
+      : cleanPreview.length > 0
+        ? `✉ ${cleanPreview}`
+        : '✉ Quick message';
+    this.pushBubble(`bot:${botId}`, toPos, bubbleText, '✉ Quick message', 'Boss', 2.6);
+    this.spawnBurst('Sparkle', toPos, 5);
+    return true;
+  }
+
   private assignWorkerSeq(dispatchId: string): number {
     const existing = this.workerSeqById.get(dispatchId);
     if (existing !== undefined) return existing;

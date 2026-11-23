@@ -29,6 +29,7 @@ export type ShortcutAction =
   | 'resetCamera'
   | 'focusSearch'
   | 'toggleCollabNetwork'
+  | 'toggleViewMode'
   | 'toggleHelp'
   | 'closeOrClearSelection';
 
@@ -114,6 +115,8 @@ export function mapKeyToShortcutAction(
       return 'toggleFollowCam';
     case 'c':
       return 'toggleCollabNetwork';
+    case 'g':
+      return 'toggleViewMode';
     case 'escape':
       return 'closeOrClearSelection';
     default:
@@ -216,6 +219,7 @@ export function renderShortcutsModal(
     { keyLabel: 'I', description: s.shortcutToggleReport },
     { keyLabel: 'P', description: s.shortcutTakePhotoCard },
     { keyLabel: 'Z', description: s.shortcutToggleZones },
+    { keyLabel: 'G', description: s.shortcutToggleViewMode },
   ];
   if (options.isEditor) {
     rows.push({ keyLabel: 'Space', description: s.shortcutTogglePlay });

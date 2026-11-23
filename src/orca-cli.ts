@@ -248,7 +248,9 @@ export function discoverOrcaBinary(): string | null {
 }
 
 const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
+const QUICK_MESSAGE_CONTROL_CHAR_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/;
 const SHELL_META_RE = /[;|&$`<>\\/]/;
+export const MAX_QUICK_MESSAGE_CHARS = 500;
 
 export function validateBotName(botName: string): string {
   if (typeof botName !== 'string') {
@@ -693,4 +695,124 @@ export class OrcaCli implements OrcaClient {
   async automationsRuns(): Promise<CliEnvelope<unknown>> {
     return this.runEnvelope(['automations', 'runs', '--json']);
   }
+}
+
+/**
+ * Validates an opt-in Quick Send message body.
+ * Rejects NUL and ASCII control characters (normalizing tabs/newlines cleanly) and enforces 1..500 chars.
+ */
+export function validateQuickMessageBody(rawMessage: string): string {
+  if (typeof rawMessage !== 'string') {
+    throw new OrcaCliError('invalid_argument', 'message must be a string');
+  }
+  if (rawMessage.includes('\0') || QUICK_MESSAGE_CONTROL_CHAR_RE.test(rawMessage)) {
+    throw new OrcaCliError('invalid_argument', 'message contains disallowed control characters');
+  }
+  const normalized = rawMessage
+    .replace(/\r\n?/g, '\n')
+    .replace(/\t/g, ' ')
+    .trim();
+  const charCount = Array.from(normalized).length;
+  if (charCount === 0 || charCount > MAX_QUICK_MESSAGE_CHARS) {
+    throw new OrcaCliError(
+      'invalid_argument',
+      `message must be 1..${MAX_QUICK_MESSAGE_CHARS} characters`
+    );
+  }
+  return normalized;
+}
+
+/**
+ * Builds an execFile argument vector for opt-in Quick Send.
+ * Kept strictly separate from the read-only `assertAllowedSubcommand()` allowlist.
+ */
+export function buildQuickSendArgs(botName: string, message: string): string[] {
+  const cleanBot = validateBotName(botName);
+  const cleanBody = validateQuickMessageBody(message);
+  return [
+    'orchestration',
+    'send',
+    '--to',
+    `bot:${cleanBot}`,
+    '--subject',
+    'Bot World Quick Message',
+    '--body',
+    cleanBody,
+    '--json',
+  ];
+}
+
+export async function sendQuickBotMessage(
+  botName: string,
+  message: string,
+  options?: {
+    binaryPath?: string | null;
+    timeoutMs?: number;
+    runner?: CliRunner;
+    env?: Record<string, string>;
+    signal?: AbortSignal;
+  }
+): Promise<CliEnvelope<unknown>> {
+  const args = buildQuickSendArgs(botName, message);
+  const hasCustomRunner = Boolean(options?.runner);
+  const execPath = hasCustomRunner
+    ? options?.binaryPath === undefined
+      ? TRUSTED_ORCA_PATHS[0]
+      : options.binaryPath
+    : discoverOrcaBinary();
+  if (!execPath) {
+    throw new OrcaCliError('binary_not_found', 'Trusted Orca CLI binary not found');
+  }
+
+  const runner = options?.runner ?? defaultExecFileRunner;
+  const rawTimeout = options?.timeoutMs ?? DEFAULT_CLI_TIMEOUT_MS;
+  const timeoutMs = Math.max(100, Math.min(MAX_CLI_TIMEOUT_MS, Math.trunc(rawTimeout)));
+  const env = options?.env ?? buildMinimalSafeEnv();
+
+  const res = await runner(execPath, args, {
+    timeoutMs,
+    maxBufferBytes: MAX_CLI_OUTPUT_BYTES,
+    env,
+    signal: options?.signal,
+  });
+
+  if (Buffer.byteLength(res.stdout, 'utf8') > MAX_CLI_OUTPUT_BYTES) {
+    throw new OrcaCliError('output_too_large', 'CLI stdout exceeded 2 MiB');
+  }
+
+  if (res.exitCode !== 0 && res.stdout.trim().length === 0) {
+    const stderr = res.stderr.trim();
+    if (stderr.includes('not reachable') || stderr.includes('runtime_unavailable')) {
+      throw new OrcaCliError('runtime_unavailable', stderr || 'Orca runtime unavailable');
+    }
+    throw new OrcaCliError(
+      'non_zero_exit',
+      `orca command exited with ${String(res.exitCode)}: ${stderr}`
+    );
+  }
+
+  let parsed: CliEnvelope<unknown>;
+  try {
+    parsed = safeJsonParse<CliEnvelope<unknown>>(res.stdout, MAX_CLI_OUTPUT_BYTES);
+  } catch (err) {
+    throw new OrcaCliError(
+      'json_error',
+      `Failed to parse CLI JSON: ${err instanceof Error ? err.message : 'invalid json'}`
+    );
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    throw new OrcaCliError('json_error', 'CLI returned non-object envelope');
+  }
+
+  if (!parsed.ok && parsed.error) {
+    const code = String(parsed.error.code ?? '');
+    const msg = String(parsed.error.message ?? '');
+    if (code === 'runtime_unavailable' || msg.includes('not reachable')) {
+      throw new OrcaCliError('runtime_unavailable', msg || 'Orca runtime unavailable');
+    }
+    throw new OrcaCliError('non_zero_exit', `${code}: ${msg}`);
+  }
+
+  return parsed;
 }

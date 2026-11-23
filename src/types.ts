@@ -7,6 +7,8 @@ export type AtmospherePhase = 'day' | 'sunset' | 'night';
 export type WeatherMode = 'auto' | 'clear' | 'rain' | 'snow' | 'starlight';
 export type WeatherKind = 'clear' | 'rain' | 'snow' | 'starlight';
 export type SoundMode = 'off' | 'chimes' | 'ambient';
+export type ViewMode = 'office' | 'pet';
+export type PetToyKind = 'coffee' | 'ball' | 'treat';
 
 export const VALID_ATMOSPHERE_MODES: readonly AtmosphereMode[] = [
   'auto',
@@ -39,6 +41,18 @@ export const VALID_SOUND_MODES: readonly SoundMode[] = [
 
 export function isValidSoundMode(value: unknown): value is SoundMode {
   return typeof value === 'string' && (VALID_SOUND_MODES as readonly string[]).includes(value);
+}
+
+export const VALID_VIEW_MODES: readonly ViewMode[] = ['office', 'pet'] as const;
+
+export function isValidViewMode(value: unknown): value is ViewMode {
+  return typeof value === 'string' && (VALID_VIEW_MODES as readonly string[]).includes(value);
+}
+
+export const VALID_PET_TOY_KINDS: readonly PetToyKind[] = ['coffee', 'ball', 'treat'] as const;
+
+export function isValidPetToyKind(value: unknown): value is PetToyKind {
+  return typeof value === 'string' && (VALID_PET_TOY_KINDS as readonly string[]).includes(value);
 }
 
 export const VALID_LANGUAGE_SETTINGS: readonly LanguageSetting[] = [
@@ -835,6 +849,29 @@ export type DailyTrendPoint = {
   collaborations: number;
 };
 
+export type QuickSendErrorCode =
+  | 'disabled'
+  | 'unknown_bot'
+  | 'invalid_params'
+  | 'rate_limited'
+  | 'cli_error';
+
+export type QuickSendResponse =
+  | { ok: true; botId: string; botName: string }
+  | { ok: false; code: QuickSendErrorCode; error: string };
+
+export type FocusTerminalResponse = {
+  ok: boolean;
+  focused: boolean;
+  reason?: string;
+};
+
+export type OpenWorkspaceResponse = {
+  ok: boolean;
+  opened: boolean;
+  reason?: string;
+};
+
 export type BotWorldStatePayload = {
   snapshot: WorldSnapshot;
   events: WorldEventRecord[];
@@ -843,6 +880,8 @@ export type BotWorldStatePayload = {
   atmosphereMode: AtmosphereMode;
   weatherMode?: WeatherMode;
   soundMode?: SoundMode;
+  viewMode?: ViewMode;
+  allowQuickSend?: boolean;
   redactMode: boolean;
   botAppearances: Record<string, CharacterId>;
   pollIntervalSec: number;

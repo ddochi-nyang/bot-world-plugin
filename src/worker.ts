@@ -12,7 +12,14 @@ import {
   redactWorldEvent,
   resolveHandle,
 } from './events.ts';
-import { OrcaCli, type OrcaClient } from './orca-cli.ts';
+import {
+  type CliEnvelope,
+  OrcaCli,
+  OrcaCliError,
+  type OrcaClient,
+  sendQuickBotMessage,
+  validateQuickMessageBody,
+} from './orca-cli.ts';
 import { PollerSession } from './poller.ts';
 import './protocol.ts';
 import { redactLabel, scrubAll } from './redact.ts';
@@ -22,11 +29,15 @@ import {
   type AtmosphereMode,
   type BotWorldStatePayload,
   type CharacterId,
+  type FocusTerminalResponse,
   type LanguageSetting,
   MAX_BOT_APPEARANCES,
+  type OpenWorkspaceResponse,
+  type QuickSendResponse,
   type SoundMode,
   type ThemeId,
   type UiLocale,
+  type ViewMode,
   type WeatherMode,
   type WorldEventRecord,
   type WorldSnapshot,
@@ -38,6 +49,7 @@ import {
   isValidLanguageSetting,
   isValidSoundMode,
   isValidThemeId,
+  isValidViewMode,
   isValidWeatherMode,
   isWorkerActive,
   isWorkerVisibleOnStage,
@@ -93,15 +105,31 @@ type StoredPrefs = {
   atmosphereMode: AtmosphereMode;
   weatherMode: WeatherMode;
   soundMode: SoundMode;
+  viewMode: ViewMode;
   redactMode: boolean;
   botAppearances: Record<string, CharacterId>;
   languageSetting: LanguageSetting;
   hasThemeOverride: boolean;
   hasAtmosphereOverride: boolean;
   hasWeatherOverride: boolean;
+  hasViewModeOverride: boolean;
   hasRedactOverride: boolean;
   hasLanguageOverride: boolean;
 };
+
+export type QuickSendFn = (botName: string, message: string) => Promise<CliEnvelope<unknown>>;
+export const QUICK_SEND_COOLDOWN_MS = 2_000;
+
+function validateHostTargetId(raw: unknown, fieldName: string): string {
+  if (typeof raw !== 'string') {
+    throw makeHostError('invalid_params', `Invalid ${fieldName}`);
+  }
+  const trimmed = raw.trim();
+  if (trimmed.length === 0 || trimmed.length > 128 || CONTROL_CHAR_RE.test(trimmed)) {
+    throw makeHostError('invalid_params', `Invalid ${fieldName}`);
+  }
+  return trimmed;
+}
 
 function makeHostError(code: string, message: string): Error & { code: string } {
   const err = new Error(message) as Error & { code: string };
@@ -115,6 +143,7 @@ function validatePrefs(
     theme: ThemeId;
     atmosphere: AtmosphereMode;
     weather: WeatherMode;
+    viewMode: ViewMode;
     redact: boolean;
     language: LanguageSetting;
   }
@@ -124,12 +153,14 @@ function validatePrefs(
     atmosphereMode: defaults.atmosphere,
     weatherMode: defaults.weather,
     soundMode: 'off',
+    viewMode: defaults.viewMode,
     redactMode: defaults.redact,
     botAppearances: {},
     languageSetting: defaults.language,
     hasThemeOverride: false,
     hasAtmosphereOverride: false,
     hasWeatherOverride: false,
+    hasViewModeOverride: false,
     hasRedactOverride: false,
     hasLanguageOverride: false,
   };
@@ -151,6 +182,10 @@ function validatePrefs(
   }
   if (isValidSoundMode(clean.soundMode)) {
     base.soundMode = clean.soundMode;
+  }
+  if (isValidViewMode(clean.viewMode)) {
+    base.viewMode = clean.viewMode;
+    base.hasViewModeOverride = clean.hasViewModeOverride === true;
   }
   if (typeof clean.redactMode === 'boolean') {
     base.redactMode = clean.redactMode;
@@ -498,6 +533,9 @@ export function formatStatusBarParams(
 export class BotWorldWorkerController {
   private readonly orca: OrcaWorkerApi;
   private readonly cli: OrcaClient;
+  private readonly quickSendFn: QuickSendFn;
+  private readonly nowMs: () => number;
+  private readonly quickSendCooldowns = new Map<string, number>();
   private readonly session = new PollerSession();
   private timeline = new TimelineBuffer();
   private weeklyTrendStore: WeeklyTrendStore = { days: [], seenIds: [] };
@@ -506,12 +544,14 @@ export class BotWorldWorkerController {
     atmosphereMode: 'auto',
     weatherMode: 'auto',
     soundMode: 'off',
+    viewMode: 'office',
     redactMode: false,
     botAppearances: {},
     languageSetting: 'auto',
     hasThemeOverride: false,
     hasAtmosphereOverride: false,
     hasWeatherOverride: false,
+    hasViewModeOverride: false,
     hasRedactOverride: false,
     hasLanguageOverride: false,
   };
@@ -521,6 +561,8 @@ export class BotWorldWorkerController {
     defaultTheme: ThemeId;
     atmosphereMode: AtmosphereMode;
     weatherMode: WeatherMode;
+    viewMode: ViewMode;
+    allowQuickSend: boolean;
     redactMode: boolean;
     pollIntervalSec: number;
     language: LanguageSetting;
@@ -528,6 +570,8 @@ export class BotWorldWorkerController {
     defaultTheme: 'startup_office',
     atmosphereMode: 'auto',
     weatherMode: 'auto',
+    viewMode: 'office',
+    allowQuickSend: false,
     redactMode: false,
     pollIntervalSec: 5,
     language: 'auto',
@@ -542,9 +586,16 @@ export class BotWorldWorkerController {
   private disposed = false;
   private readonly disposables: Array<{ dispose(): void }> = [];
 
-  constructor(orca: OrcaWorkerApi, cli?: OrcaClient) {
+  constructor(
+    orca: OrcaWorkerApi,
+    cli?: OrcaClient,
+    options?: { quickSend?: QuickSendFn; nowMs?: () => number }
+  ) {
     this.orca = orca;
     this.cli = cli ?? new OrcaCli();
+    this.quickSendFn =
+      options?.quickSend ?? ((botName, message) => sendQuickBotMessage(botName, message));
+    this.nowMs = options?.nowMs ?? (() => Date.now());
     try {
       this.hostLocale = Intl.DateTimeFormat().resolvedOptions().locale || 'en';
     } catch {
@@ -585,6 +636,7 @@ export class BotWorldWorkerController {
       theme: settings.defaultTheme,
       atmosphere: settings.atmosphereMode,
       weather: settings.weatherMode,
+      viewMode: settings.viewMode,
       redact: settings.redactMode,
       language: settings.language,
     });
@@ -635,6 +687,8 @@ export class BotWorldWorkerController {
     defaultTheme: ThemeId;
     atmosphereMode: AtmosphereMode;
     weatherMode: WeatherMode;
+    viewMode: ViewMode;
+    allowQuickSend: boolean;
     redactMode: boolean;
     pollIntervalSec: number;
     language: LanguageSetting;
@@ -642,6 +696,8 @@ export class BotWorldWorkerController {
     let defaultTheme: ThemeId = 'startup_office';
     let atmosphereMode: AtmosphereMode = 'auto';
     let weatherMode: WeatherMode = 'auto';
+    let viewMode: ViewMode = 'office';
+    let allowQuickSend = false;
     let redactMode = false;
     let pollIntervalSec = 5;
     let language: LanguageSetting = 'auto';
@@ -657,6 +713,12 @@ export class BotWorldWorkerController {
         if (isValidWeatherMode(all.weatherMode)) {
           weatherMode = all.weatherMode;
         }
+        if (isValidViewMode(all.viewMode)) {
+          viewMode = all.viewMode;
+        }
+        if (typeof all.allowQuickSend === 'boolean') {
+          allowQuickSend = all.allowQuickSend;
+        }
         if (typeof all.redactMode === 'boolean') {
           redactMode = all.redactMode;
         }
@@ -668,7 +730,16 @@ export class BotWorldWorkerController {
     } catch {
       // Fallback to defaults if settings cannot be read
     }
-    return { defaultTheme, atmosphereMode, weatherMode, redactMode, pollIntervalSec, language };
+    return {
+      defaultTheme,
+      atmosphereMode,
+      weatherMode,
+      viewMode,
+      allowQuickSend,
+      redactMode,
+      pollIntervalSec,
+      language,
+    };
   }
 
   private assignWorkerSeq(dispatchId: string): number {
@@ -697,6 +768,8 @@ export class BotWorldWorkerController {
       atmosphereMode: this.prefs.atmosphereMode,
       weatherMode: this.prefs.weatherMode,
       soundMode: this.prefs.soundMode,
+      viewMode: this.prefs.viewMode,
+      allowQuickSend: this.lastSettings.allowQuickSend,
       redactMode: redact,
       botAppearances: { ...this.prefs.botAppearances },
       pollIntervalSec: this.pollIntervalSec,
@@ -1112,6 +1185,121 @@ export class BotWorldWorkerController {
         return { soundMode: this.prefs.soundMode };
       }),
 
+      this.orca.panels.handle('botWorld.setViewMode', async (input) => {
+        if (!input || typeof input !== 'object' || Array.isArray(input)) {
+          throw makeHostError('invalid_params', 'input must be an object');
+        }
+        const clean = stripDangerousKeys(input as Record<string, unknown>);
+        if (!isValidViewMode(clean.viewMode)) {
+          throw makeHostError('invalid_params', 'Invalid viewMode');
+        }
+        this.prefs.viewMode = clean.viewMode;
+        this.prefs.hasViewModeOverride = true;
+        await this.persistPrefs();
+        this.postStateUpdated();
+        return { viewMode: this.prefs.viewMode };
+      }),
+
+      this.orca.panels.handle('botWorld.focusTerminal', async (input): Promise<FocusTerminalResponse> => {
+        if (!input || typeof input !== 'object' || Array.isArray(input)) {
+          throw makeHostError('invalid_params', 'input must be an object');
+        }
+        const clean = stripDangerousKeys(input as Record<string, unknown>);
+        const terminalId = validateHostTargetId(clean.terminalId, 'terminalId');
+        if (!this.orca.host.has('terminal.focus')) {
+          return { ok: false, focused: false, reason: 'unavailable' };
+        }
+        try {
+          const res = await this.orca.host.call('terminal.focus', { terminalId });
+          const focused = Boolean(res?.focused);
+          return focused ? { ok: true, focused: true } : { ok: true, focused: false, reason: 'not_focused' };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : 'refused';
+          return { ok: false, focused: false, reason: scrubAll(msg) };
+        }
+      }),
+
+      this.orca.panels.handle('botWorld.openWorkspace', async (input): Promise<OpenWorkspaceResponse> => {
+        if (!input || typeof input !== 'object' || Array.isArray(input)) {
+          throw makeHostError('invalid_params', 'input must be an object');
+        }
+        const clean = stripDangerousKeys(input as Record<string, unknown>);
+        const workspaceId = validateHostTargetId(clean.workspaceId, 'workspaceId');
+        if (!this.orca.host.has('workspace.open')) {
+          return { ok: false, opened: false, reason: 'unavailable' };
+        }
+        try {
+          const res = await this.orca.host.call('workspace.open', { workspaceId });
+          return { ok: true, opened: Boolean(res?.opened) };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : 'refused';
+          return { ok: false, opened: false, reason: scrubAll(msg) };
+        }
+      }),
+
+      this.orca.panels.handle('botWorld.sendQuickMessage', async (input): Promise<QuickSendResponse> => {
+        if (!input || typeof input !== 'object' || Array.isArray(input)) {
+          throw makeHostError('invalid_params', 'input must be an object');
+        }
+        const s = tStrings(this.currentLocale());
+        if (!this.lastSettings.allowQuickSend) {
+          return { ok: false, code: 'disabled', error: s.quickSendDisabledError };
+        }
+        const clean = stripDangerousKeys(input as Record<string, unknown>);
+        const rawBotId = clean.botId;
+        if (
+          typeof rawBotId !== 'string' ||
+          !isSafeKey(rawBotId) ||
+          rawBotId.length > 128 ||
+          CONTROL_CHAR_RE.test(rawBotId)
+        ) {
+          return { ok: false, code: 'invalid_params', error: s.quickSendUnknownBotError };
+        }
+        let cleanMessage: string;
+        try {
+          cleanMessage = validateQuickMessageBody(clean.message as string);
+        } catch (err) {
+          return {
+            ok: false,
+            code: 'invalid_params',
+            error: err instanceof OrcaCliError ? s.quickSendInvalidError : s.quickSendInvalidError,
+          };
+        }
+
+        const latestSnap = this.session.getLatestSnapshot();
+        if (!Object.hasOwn(latestSnap.bots, rawBotId)) {
+          return { ok: false, code: 'unknown_bot', error: s.quickSendUnknownBotError };
+        }
+        const bot = latestSnap.bots[rawBotId];
+
+        const now = this.nowMs();
+        const prevSentAt = this.quickSendCooldowns.get(rawBotId);
+        if (prevSentAt !== undefined && now - prevSentAt < QUICK_SEND_COOLDOWN_MS) {
+          return { ok: false, code: 'rate_limited', error: s.quickSendRateLimitedError };
+        }
+
+        if (this.quickSendCooldowns.size >= 256) {
+          const oldestKey = this.quickSendCooldowns.keys().next().value;
+          if (oldestKey !== undefined) this.quickSendCooldowns.delete(oldestKey);
+        }
+        this.quickSendCooldowns.set(rawBotId, now);
+
+        try {
+          await this.quickSendFn(bot.name, cleanMessage);
+        } catch (err) {
+          const rawMsg = err instanceof Error ? err.message : 'Quick Send failed';
+          return { ok: false, code: 'cli_error', error: scrubAll(rawMsg) };
+        }
+
+        try {
+          await this.runPollTick(true);
+        } catch {
+          // Best-effort immediate refresh after successful quick send
+        }
+
+        return { ok: true, botId: bot.id, botName: bot.name };
+      }),
+
       this.orca.panels.handle('botWorld.setRedactMode', async (input) => {
         if (!input || typeof input !== 'object' || Array.isArray(input)) {
           throw makeHostError('invalid_params', 'input must be an object');
@@ -1200,6 +1388,13 @@ export class BotWorldWorkerController {
             this.prefs.weatherMode = next.weatherMode;
             if (next.weatherMode !== prev.weatherMode) {
               this.prefs.hasWeatherOverride = false;
+            }
+            prefsChanged = true;
+          }
+          if (next.viewMode !== prev.viewMode || !this.prefs.hasViewModeOverride) {
+            this.prefs.viewMode = next.viewMode;
+            if (next.viewMode !== prev.viewMode) {
+              this.prefs.hasViewModeOverride = false;
             }
             prefsChanged = true;
           }

@@ -10,11 +10,13 @@ import {
   DEFAULT_BOTWORLD_DOCUMENT,
   type DeskCoordinate,
   type LanguageSetting,
+  type PetToyKind,
   type SoundMode,
   type TeamZone,
   type ThemeId,
   type UiLocale,
   VALID_THEME_IDS,
+  type ViewMode,
   type WeatherMode,
   type WorldSnapshot,
   type ZoneColor,
@@ -40,6 +42,7 @@ import {
   type StatusFilterPreset,
   countFilterPresets,
   filterBotIds,
+  getBotRedactedAlias,
   isFilterActive,
 } from '../shared/filter.ts';
 import { effectiveLocale, getHostLocale, resolveUiLocale, tStrings } from '../shared/i18n.ts';
@@ -56,7 +59,9 @@ import {
   formatReportMarkdown,
   renderOfficeReportModal,
 } from '../shared/office-report.ts';
+import { PetTerrariumRenderer } from '../shared/pet-terrarium.ts';
 import { capturePhotoCard } from '../shared/photo-card.ts';
+import { QuickSendBar } from '../shared/quick-send.ts';
 import {
   atmosphereIcon,
   mapKeyToShortcutAction,
@@ -111,6 +116,8 @@ const state: {
     atmosphereMode: 'auto',
     weatherMode: 'auto',
     soundMode: 'off',
+    viewMode: 'office',
+    allowQuickSend: false,
     redactMode: false,
     botAppearances: {},
     pollIntervalSec: 5,
@@ -159,6 +166,7 @@ let demoThemeId: ThemeId = 'startup_office';
 let demoAtmosphereMode: AtmosphereMode = 'auto';
 let demoWeatherMode: WeatherMode = 'auto';
 let demoSoundMode: SoundMode = 'off';
+let demoViewMode: ViewMode = 'office';
 let demoRedactMode = false;
 let demoLanguageSetting: LanguageSetting = 'auto';
 let demoAppearances: Record<string, CharacterId> = {};
@@ -166,6 +174,8 @@ let demoCustomPositions: Record<string, DeskCoordinate> = {};
 let demoZones: TeamZone[] = [];
 let demoShowZones = true;
 let demoSelectedBotId: string | null = null;
+let quickSending = false;
+const demoReplyTimers = new Set<number>();
 
 function isDemoMode(): boolean {
   return demoSession !== null;
@@ -231,6 +241,18 @@ const weatherBtn = el(
     onClick: () => void cycleWeather().catch(() => {}),
   },
   `${weatherIcon('auto')} ${initialStrings.weatherModes.auto}`
+);
+
+const viewModeBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-btn',
+    title: initialStrings.viewModeToggleTitle('office'),
+    ariaLabel: initialStrings.viewModeToggleTitle('office'),
+    onClick: () => void toggleViewMode().catch(() => {}),
+  },
+  `🐾 ${initialStrings.viewModePetButton}`
 );
 
 const soundBtn = el(
@@ -397,6 +419,7 @@ const toolbar = el(
     { className: 'bw-toolbar-group' },
     themeSelect,
     resetSeatsBtn,
+    viewModeBtn,
     atmoBtn,
     weatherBtn,
     soundBtn,
@@ -470,8 +493,46 @@ const filterBar = el(
 
 // Main 2-column area
 const canvasEl = el('canvas', { className: 'bw-stage-canvas' }) as HTMLCanvasElement;
+const petCanvasEl = el('canvas', { className: 'bw-stage-canvas bw-hidden' }) as HTMLCanvasElement;
 const stageOverlayNote = el('div', { className: 'bw-stage-overlay-note' }, initialStrings.live);
 const stageToast = el('div', { className: 'bw-stage-toast bw-hidden' });
+const petCoffeeBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-pet-action-btn',
+    title: initialStrings.petActionCoffeeTitle,
+    onClick: () => handleDropPetToy('coffee'),
+  },
+  `☕ ${initialStrings.petActionCoffee}`
+);
+const petBallBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-pet-action-btn',
+    title: initialStrings.petActionBallTitle,
+    onClick: () => handleDropPetToy('ball'),
+  },
+  `🎾 ${initialStrings.petActionBall}`
+);
+const petTreatBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-pet-action-btn',
+    title: initialStrings.petActionTreatTitle,
+    onClick: () => handleDropPetToy('treat'),
+  },
+  `🍪 ${initialStrings.petActionTreat}`
+);
+const petActionStrip = el(
+  'div',
+  { className: 'bw-pet-action-strip bw-hidden' },
+  petCoffeeBtn,
+  petBallBtn,
+  petTreatBtn
+);
 const zoomOutBtn = el(
   'button',
   {
@@ -526,12 +587,27 @@ const stageWrap = el(
   'div',
   { className: 'bw-stage-wrap-editor' },
   canvasEl,
+  petCanvasEl,
   stageOverlayNote,
   stageToast,
-  cameraHud
+  cameraHud,
+  petActionStrip
 );
+const quickSendBar = new QuickSendBar({
+  onSelectBot: (botId) => {
+    state.selectionCleared = false;
+    if (isDemoMode()) {
+      demoSelectedBotId = botId;
+    } else {
+      updateDocumentPrefs({ selectedBotId: botId });
+    }
+    renderUi();
+  },
+  onSend: (botId, message) => void handleQuickSend(botId, message).catch(() => {}),
+});
+const editorStageCol = el('div', { className: 'bw-editor-stage-col' }, stageWrap, quickSendBar.root);
 const detailSidebar = el('div', { className: 'bw-editor-sidebar' });
-const editorBody = el('div', { className: 'bw-editor-body' }, stageWrap, detailSidebar);
+const editorBody = el('div', { className: 'bw-editor-body' }, editorStageCol, detailSidebar);
 
 // Bottom 24h timeline bar
 const playBtn = el(
@@ -736,6 +812,40 @@ const renderer = new StageRenderer(canvasEl, {
   },
 });
 
+const petRenderer = new PetTerrariumRenderer(petCanvasEl, {
+  onSelectAndPet: (botId) => {
+    state.selectionCleared = false;
+    if (isDemoMode()) {
+      demoSelectedBotId = botId;
+    } else {
+      updateDocumentPrefs({ selectedBotId: botId });
+    }
+    soundscape.playCue('task_done', { suppressed: false });
+    renderUi();
+  },
+  onHoverBot: (botId) => {
+    if (state.hoveredBotId !== botId) {
+      state.hoveredBotId = botId;
+      updateStageOverlayLabel();
+    }
+  },
+});
+
+function activeViewMode(): ViewMode {
+  if (isDemoMode()) return demoViewMode;
+  return state.payload.viewMode ?? 'office';
+}
+
+function isPetMode(): boolean {
+  return activeViewMode() === 'pet';
+}
+
+function handleDropPetToy(kind: PetToyKind): void {
+  petRenderer.engine.dropToy(kind);
+  soundscape.playCue('handoff', { suppressed: false });
+  petRenderer.renderNow();
+}
+
 function activeThemeId(): ThemeId {
   if (isDemoMode()) return demoThemeId;
   return state.docData.themeId ?? state.payload.activeTheme;
@@ -854,7 +964,11 @@ function showStageToast(message: string): void {
 }
 
 async function triggerPhotoCardSnapshot(): Promise<void> {
-  renderer.renderNow();
+  if (isPetMode()) {
+    petRenderer.renderNow();
+  } else {
+    renderer.renderNow();
+  }
   const locale = currentLocale();
   const s = tStrings(locale);
   const snap = currentDisplayedSnapshot();
@@ -863,7 +977,7 @@ async function triggerPhotoCardSnapshot(): Promise<void> {
     : snap.capturedAt > 0
       ? snap.capturedAt
       : Date.now();
-  const res = await capturePhotoCard(canvasEl, {
+  const res = await capturePhotoCard(isPetMode() ? petCanvasEl : canvasEl, {
     snapshot: snap,
     events: state.payload.events,
     themeId: activeThemeId(),
@@ -894,6 +1008,7 @@ function showFollowNoMatchNotice(): void {
 function updateStageOverlayLabel(): void {
   const locale = currentLocale();
   const s = tStrings(locale);
+  const redactMode = activeRedactMode();
   if (followNoticeActive) {
     stageOverlayNote.textContent = s.followNoMatchNotice;
     return;
@@ -905,7 +1020,14 @@ function updateStageOverlayLabel(): void {
   }
   const hid = state.hoveredBotId;
   if (hid && isSafeKey(hid) && Object.hasOwn(snap.bots, hid)) {
-    stageOverlayNote.textContent = s.stageOverlayHover(scrubAll(snap.bots[hid].name));
+    const hoverName = redactMode
+      ? getBotRedactedAlias(hid, snap, locale)
+      : scrubAll(snap.bots[hid].name);
+    stageOverlayNote.textContent = s.stageOverlayHover(hoverName);
+    return;
+  }
+  if (isPetMode()) {
+    stageOverlayNote.textContent = s.petOverlayHint;
     return;
   }
   stageOverlayNote.textContent = snap.runtime.connected ? s.stageOverlayLive : s.stageOverlayOffline;
@@ -1230,6 +1352,17 @@ function syncChromeLocale(locale: UiLocale): void {
   soundBtn.textContent = `${soundIcon(sndMode)} ${sndLabel}`;
   soundBtn.title = s.soundToggleTitle(sndLabel);
   soundBtn.className = sndMode !== 'off' ? 'bw-btn bw-btn-active' : 'bw-btn';
+  const vMode = activeViewMode();
+  viewModeBtn.textContent = vMode === 'pet' ? `🏢 ${s.viewModeOfficeButton}` : `🐾 ${s.viewModePetButton}`;
+  viewModeBtn.title = s.viewModeToggleTitle(vMode);
+  viewModeBtn.setAttribute('aria-label', s.viewModeToggleTitle(vMode));
+  viewModeBtn.className = vMode === 'pet' ? 'bw-btn bw-btn-active' : 'bw-btn';
+  petCoffeeBtn.textContent = `☕ ${s.petActionCoffee}`;
+  petCoffeeBtn.title = s.petActionCoffeeTitle;
+  petBallBtn.textContent = `🎾 ${s.petActionBall}`;
+  petBallBtn.title = s.petActionBallTitle;
+  petTreatBtn.textContent = `🍪 ${s.petActionTreat}`;
+  petTreatBtn.title = s.petActionTreatTitle;
   focusBtn.textContent = `🎯 ${s.focusButton}`;
   focusBtn.title = s.focusButtonTitle;
   focusBtn.setAttribute('aria-label', s.focusButtonTitle);
@@ -1389,7 +1522,16 @@ function renderStageFrame(
   const phase = resolveAtmospherePhase(atmoMode, displayTimestampMs);
   const wKind = resolveWeatherKind(wMode, phase, themeId);
   soundscape.updateAmbientContext(wKind, phase, themeId);
-  renderer.update({
+
+  const petActive = isPetMode();
+  canvasEl.classList.toggle('bw-hidden', petActive);
+  petCanvasEl.classList.toggle('bw-hidden', !petActive);
+  cameraHud.classList.toggle('bw-hidden', petActive);
+  petActionStrip.classList.toggle('bw-hidden', !petActive);
+  stageOverlayNote.classList.toggle('bw-stage-overlay-note-pet', petActive);
+  stageWrap.classList.toggle('bw-stage-pet-mode', petActive);
+  petRenderer.setActive(petActive);
+  petRenderer.update({
     snapshot: snap,
     themeId,
     atmosphereMode: atmoMode,
@@ -1398,18 +1540,43 @@ function renderStageFrame(
     selectedBotId: selectedId,
     redactMode,
     botAppearances: appearances,
-    customDeskPositions: activeCustomPositions(),
-    motion: replay.isReplay ? replay.motion : liveMotion,
-    replay,
     locale,
     filterMatchedBotIds,
-    showCollabNetwork: state.showCollabNetwork,
-    collabEdges,
-    mvpBotId: badgeSummary.mvpBotId,
-    zones: activeZones(),
-    showZones: activeShowZones(),
-    timelapseActive: timelapse.active,
   });
+
+  quickSendBar.update({
+    snapshot: snap,
+    selectedBotId: selectedId,
+    redactMode,
+    allowQuickSend: Boolean(state.payload.allowQuickSend),
+    demoMode: isDemoMode(),
+    locale,
+    sending: quickSending,
+  });
+
+  if (!petActive) {
+    renderer.update({
+      snapshot: snap,
+      themeId,
+      atmosphereMode: atmoMode,
+      weatherMode: wMode,
+      displayTimestampMs,
+      selectedBotId: selectedId,
+      redactMode,
+      botAppearances: appearances,
+      customDeskPositions: activeCustomPositions(),
+      motion: replay.isReplay ? replay.motion : liveMotion,
+      replay,
+      locale,
+      filterMatchedBotIds,
+      showCollabNetwork: state.showCollabNetwork,
+      collabEdges,
+      mvpBotId: badgeSummary.mvpBotId,
+      zones: activeZones(),
+      showZones: activeShowZones(),
+      timelapseActive: timelapse.active,
+    });
+  }
 }
 
 let lastDetailDemoMode: boolean | null = null;
@@ -1488,6 +1655,8 @@ function renderSidePanelsIfNeeded(
       badges: selectedBot ? (badgeSummary.badgesByBot[selectedBot.id] ?? []) : [],
       onStartDemo: demoActive ? undefined : enterDemoMode,
       onSelectCharacter: (botId, charId) => void setBotAppearance(botId, charId).catch(() => {}),
+      onFocusTerminal: (terminalId) => void focusTerminal(terminalId).catch(() => {}),
+      onOpenWorkspace: (workspaceId) => void openWorkspace(workspaceId).catch(() => {}),
     });
   }
 
@@ -1639,6 +1808,7 @@ function syncDemoTick(advance: boolean, forceSidePanels = false): void {
   if (advance && generatedCount > 0 && !replay.isReplay) {
     const newEvents = nextPayload.events.slice(-generatedCount).map((r) => r.event);
     liveMotion.enqueueEvents(newEvents, nextPayload.snapshot, theme, locale, activeCustomPositions());
+    petRenderer.engine.onEvents(newEvents, locale);
     const crossed = demoMilestones.evaluateNewEvents(
       newEvents,
       nextPayload.snapshot.capturedAt || Date.now()
@@ -1669,6 +1839,7 @@ function enterDemoMode(): void {
   demoAtmosphereMode = state.docData.atmosphereMode ?? livePayload.atmosphereMode ?? 'auto';
   demoWeatherMode = state.docData.weatherMode ?? livePayload.weatherMode ?? 'auto';
   demoSoundMode = livePayload.soundMode ?? 'off';
+  demoViewMode = livePayload.viewMode ?? 'office';
   demoRedactMode = Boolean(livePayload.redactMode) || Boolean(state.docData.redactMode);
   demoLanguageSetting = livePayload.languageSetting;
   demoAppearances = {};
@@ -1699,7 +1870,15 @@ function enterDemoMode(): void {
   renderUi(true);
 }
 
+function clearDemoReplyTimers(): void {
+  for (const tid of demoReplyTimers) {
+    clearTimeout(tid);
+  }
+  demoReplyTimers.clear();
+}
+
 function exitDemoMode(): void {
+  clearDemoReplyTimers();
   if (demoTimerId !== null) {
     clearInterval(demoTimerId);
     demoTimerId = null;
@@ -1741,6 +1920,7 @@ function applyIncomingPayload(nextPayload: BotWorldStatePayload): void {
     const newEvents = diffSnapshots(prevLiveSnapshot, nextPayload.snapshot, false, locale);
     if (newEvents.length > 0) {
       liveMotion.enqueueEvents(newEvents, nextPayload.snapshot, theme, locale, activeCustomPositions());
+      petRenderer.engine.onEvents(newEvents, locale);
       const crossed = liveMilestones.evaluateNewEvents(newEvents, nowMs);
       if (crossed !== null && !replay.isReplay) {
         liveMotion.triggerMilestone(crossed, [
@@ -1846,6 +2026,144 @@ async function cycleSound(fromUserGesture = false): Promise<void> {
     renderUi();
   } catch {
     // Keep local UI sound mode even if worker RPC fails
+  }
+}
+
+async function toggleViewMode(): Promise<void> {
+  const nextMode: ViewMode = activeViewMode() === 'pet' ? 'office' : 'pet';
+  if (isDemoMode()) {
+    demoViewMode = nextMode;
+    syncDemoTick(false, false);
+    return;
+  }
+  state.payload = { ...state.payload, viewMode: nextMode };
+  livePayload = state.payload;
+  renderUi();
+  try {
+    const res = await orca.plugin.request('botWorld.setViewMode', { viewMode: nextMode });
+    state.payload = { ...state.payload, viewMode: res.viewMode };
+    livePayload = state.payload;
+    renderUi();
+  } catch {
+    // Keep local view mode even if worker RPC fails
+  }
+}
+
+async function focusTerminal(terminalId: string): Promise<void> {
+  const s = tStrings(currentLocale());
+  if (isDemoMode()) {
+    showStageToast(s.demoTeleportTerminalToast);
+    return;
+  }
+  try {
+    const res = await orca.plugin.request('botWorld.focusTerminal', { terminalId });
+    if (!res.ok || !res.focused) {
+      showStageToast(s.teleportFailedToast(res.reason));
+    }
+  } catch {
+    showStageToast(s.teleportFailedToast());
+  }
+}
+
+async function openWorkspace(workspaceId: string): Promise<void> {
+  const s = tStrings(currentLocale());
+  if (isDemoMode()) {
+    showStageToast(s.demoTeleportWorkspaceToast);
+    return;
+  }
+  try {
+    const res = await orca.plugin.request('botWorld.openWorkspace', { workspaceId });
+    if (!res.ok || !res.opened) {
+      showStageToast(s.teleportFailedToast(res.reason));
+    }
+  } catch {
+    showStageToast(s.teleportFailedToast());
+  }
+}
+
+async function handleQuickSend(botId: string, message: string): Promise<void> {
+  const locale = currentLocale();
+  const s = tStrings(locale);
+  const redactMode = activeRedactMode();
+  const theme = getThemeConfig(activeThemeId(), locale);
+
+  if (isDemoMode() && demoSession) {
+    const res = demoSession.sendQuickMessage(botId, message);
+    if (!res) return;
+    quickSendBar.clearInput();
+    const snap = currentDisplayedSnapshot();
+    liveMotion.launchQuickMessageCourier(
+      botId,
+      snap,
+      theme,
+      message,
+      redactMode,
+      activeCustomPositions()
+    );
+    petRenderer.engine.dropQuickMessageLetter(botId, locale);
+    soundscape.playCue('handoff', { suppressed: false });
+    const targetDisplay = redactMode
+      ? getBotRedactedAlias(botId, snap, locale)
+      : scrubAll(res.botName);
+    showStageToast(s.quickSendSentToast(targetDisplay));
+    syncDemoTick(false, true);
+
+    const timerId = window.setTimeout(() => {
+      demoReplyTimers.delete(timerId);
+      if (!demoSession) return;
+      const replyEv = demoSession.receiveQuickMessageReply(botId, currentLocale());
+      if (replyEv) {
+        const nextPayload = buildDemoPayload();
+        if (nextPayload) {
+          const curLocale = currentLocale();
+          const curTheme = getThemeConfig(demoThemeId, curLocale);
+          liveMotion.enqueueEvents([replyEv], nextPayload.snapshot, curTheme, curLocale, activeCustomPositions());
+          soundscape.playCue('handoff', { suppressed: false });
+          state.payload = nextPayload;
+          renderUi(true);
+        }
+      }
+    }, 1200);
+    demoReplyTimers.add(timerId);
+    return;
+  }
+
+  if (!state.payload.allowQuickSend) {
+    showStageToast(s.quickSendDisabledError);
+    return;
+  }
+
+  quickSending = true;
+  renderUi();
+  try {
+    const res = await orca.plugin.request('botWorld.sendQuickMessage', { botId, message });
+    if (res.ok) {
+      quickSendBar.clearInput();
+      const snap = currentDisplayedSnapshot();
+      liveMotion.launchQuickMessageCourier(
+        botId,
+        snap,
+        theme,
+        message,
+        redactMode,
+        activeCustomPositions()
+      );
+      petRenderer.engine.dropQuickMessageLetter(botId, locale);
+      soundscape.playCue('handoff', { suppressed: false });
+      const targetDisplay = redactMode
+        ? getBotRedactedAlias(botId, snap, locale)
+        : scrubAll(res.botName);
+      showStageToast(s.quickSendSentToast(targetDisplay));
+      const fresh = await orca.plugin.request('botWorld.getState', { locale: getHostLocale() });
+      applyIncomingPayload(fresh);
+    } else {
+      showStageToast(s.quickSendFailedToast(res.error));
+    }
+  } catch {
+    showStageToast(s.quickSendFailedToast('request failed'));
+  } finally {
+    quickSending = false;
+    renderUi();
   }
 }
 
@@ -2071,6 +2389,9 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
       state.showCollabNetwork = !state.showCollabNetwork;
       renderUi();
       break;
+    case 'toggleViewMode':
+      void toggleViewMode().catch(() => {});
+      break;
     case 'toggleHelp':
       state.shortcutsOpen = !state.shortcutsOpen;
       if (state.shortcutsOpen) {
@@ -2133,6 +2454,7 @@ let cleanedUp = false;
 function cleanup(): void {
   if (cleanedUp) return;
   cleanedUp = true;
+  clearDemoReplyTimers();
   if (demoTimerId !== null) {
     clearInterval(demoTimerId);
     demoTimerId = null;
@@ -2158,6 +2480,7 @@ function cleanup(): void {
   window.removeEventListener('pointerdown', handleGestureUnlock);
   soundscape.dispose();
   docSession?.dispose();
+  petRenderer.dispose();
   renderer.dispose();
 }
 

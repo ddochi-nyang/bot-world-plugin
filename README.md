@@ -1,18 +1,32 @@
 <div align="center">
   <img src="assets/icon.png" width="72" height="72" alt="Bot World icon" />
   <h1>Bot World</h1>
-  <p><strong>Read-only virtual office visualizer (HTML5 Canvas) for Orca bots and live sub-workers.</strong></p>
+  <p><strong>Virtual office &amp; Pocket Pet visualizer (HTML5 Canvas) for Orca bots and live sub-workers — read-only by default, with 1-click teleport and opt-in Quick Send.</strong></p>
   <p>
-    <code>Read-Only</code> · <code>4 Office Themes</code> · <code>1-Click Photo Card</code> · <code>10s Daily Timelapse</code> · <code>7-Day Weekly Trend</code> · <code>Team Zones</code> · <code>Smart Camera</code> · <code>Collab Network</code> · <code>Cozy Sound &amp; Weather</code> · <code>Bilingual EN / 한국어</code> · <code>Redact Mode</code> · <code>24h Replay</code>
+    <code>Read-Only by Default</code> · <code>Pocket Pet Terrarium</code> · <code>1-Click Teleport</code> · <code>Opt-In Quick Send</code> · <code>4 Office Themes</code> · <code>1-Click Photo Card</code> · <code>10s Daily Timelapse</code> · <code>7-Day Weekly Trend</code> · <code>Team Zones</code> · <code>Smart Camera</code> · <code>Collab Network</code> · <code>Cozy Sound &amp; Weather</code> · <code>Bilingual EN / 한국어</code> · <code>Redact Mode</code> · <code>24h Replay</code>
   </p>
   <br />
-  <img src="assets/showcase/preview.gif" alt="Bot World v0.6.0 Share &amp; Replay+ animated preview showing 4 office themes, Team Zones floor pods, 10-second daily timelapse, 7-day weekly trend in the Office Digest Report, 1-click PNG Photo Card, Cozy Sound &amp; Weather, Smart Camera, collaboration network, Redact Mode, and EN/KO toggle" />
-  <p><em>Interactive preview (v0.6.0 Share &amp; Replay+): 1-Click PNG Photo Card (<code>P</code>), 10-Second Daily Timelapse, 7-Day Weekly Activity Trend &amp; Daily MVP Badges in the Office Digest Report (<code>I</code>), translucent <code>.botworld</code> Team Zones (<code>Z</code>), 4 isometric office themes (Startup, Corporate, Cozy Cafe, Cyber Ops), Day / Sunset / Night atmosphere, Rain / Snow / Starlight weather &amp; procedural Web Audio soundscapes, Smart Camera &amp; collaboration network overlay, Redact Mode + 24h Replay, and instant EN / 한국어 toggle.</em></p>
+  <img src="assets/showcase/preview.gif" alt="Bot World v0.7.0 Pocket Pet &amp; Interaction animated preview showing Pocket Pet Terrarium mode with interactive Coffee/Ball/Treat toys and headpats, 1-click Terminal/Workspace teleport, opt-in Quick Send golden paper-plane dispatch, 4 office themes, Team Zones, 10s timelapse, 7-day weekly trend, 1-click PNG Photo Card, Cozy Sound &amp; Weather, Smart Camera, collaboration network, Redact Mode, and EN/KO toggle" />
+  <p><em>Interactive preview (v0.7.0 Pocket Pet &amp; Interaction): switch anytime between the isometric office and <strong>Pocket Pet Terrarium</strong> (<code>G</code>) with interactive <strong>Coffee / Ball / Treat</strong> toys &amp; headpats, jump straight to live sessions via <strong>1-Click Terminal/Workspace Teleport</strong>, and dispatch messages via the <strong>Opt-In Quick Send</strong> bar with a golden paper-plane flight animation — alongside 4 office themes, Team Zones (<code>Z</code>), 10s Daily Timelapse, 7-Day Weekly Trend &amp; Office Digest Report (<code>I</code>), 1-Click PNG Photo Card (<code>P</code>), Cozy Sound &amp; Weather (<code>W</code>/<code>M</code>), Smart Camera, Redact Mode, and EN / 한국어 toggle.</em></p>
 </div>
 
 ---
 
 ## Showcase Gallery
+
+### Pocket Pet & Interaction (`Pocket Pet Terrarium` · `1-Click Teleport` · `Opt-In Quick Send` — `v0.7.0`)
+
+Switch seamlessly between the full isometric office and **Pocket Pet Terrarium** mode (`G` or the `🐾 Pet` / `🏢 Office` toolbar button) in both the narrow sidebar and wide `.botworld` board. Pet any bot directly on the canvas, drop **☕ Coffee / 🎾 Ball / 🍪 Treat** toys, jump directly to any bot or sub-worker's live Orca terminal (`↗ Terminal`) or workspace (`↗ Workspace`), and optionally enable **Quick Send** (`allowQuickSend`) to dispatch messages with a golden paper-plane animation from the Owner Desk.
+
+<div align="center">
+  <img src="assets/showcase/pet-terrarium.jpg" alt="Bot World Pocket Pet Terrarium mode in Startup Office atmosphere with live status animations (knocking on glass for Needs You, typing on laptops for Working), interactive Coffee/Ball/Treat action strip, 1-click Jump to Active Terminal button, and Quick Send command bar" />
+  <p><em>Pocket Pet Terrarium (v0.7.0): status-driven pet animations (glass-knocking for <code>Needs You</code>, laptop typing for <code>Working</code>), interactive headpats + ☕ Coffee / 🎾 Ball / 🍪 Treat toys, and <code>↗ Jump to Active Terminal</code> in the inspector.</em></p>
+</div>
+
+<div align="center">
+  <img src="assets/showcase/office-quicksend.jpg" alt="Bot World Startup Office wide board showing the bottom Quick Send command bar launching a golden paper-plane courier from the Owner Desk to Ops Lead with 1-click preset chips" />
+  <p><em>Opt-In Quick Send &amp; 1-Click Teleport (v0.7.0): bottom Quick Send command bar with quick-action chips launching a golden paper-plane flight from the Owner Desk (read-only by default in Live Mode; immediately testable in Demo Mode).</em></p>
+</div>
 
 ### 4 Office Themes (`Startup` · `Corporate` · `Cozy Cafe` · `Cyber Ops`)
 
@@ -107,9 +121,18 @@ Keep a live office overview docked beside your code and terminals without leavin
 ## Key Features
 
 - **Dual Surfaces**:
-  - **Sidebar Panel (`Bot World`)**: Compact docked canvas, bot roster pills, detail inspector, 24h Report button, and recent event timeline.
+  - **Sidebar Panel (`Bot World`)**: Compact docked canvas (Isometric Office or Pocket Pet Terrarium), bot roster pills, detail inspector with 1-click teleport, 24h Report button, Quick Send command bar, and recent event timeline.
   - **Wide `.botworld` Office Board**: Create via **New File → New Bot World Board (`.botworld`)** for a full-screen 2-column stage with a **24-hour timeline scrubber** and replay controls. `.botworld` files store view preferences only (`themeId`, `atmosphereMode`, `weatherMode`, `redactMode`, `selectedBotId`, `botAppearances`, `customDeskPositions`, `zones`, `showZones`) and never persist sensitive task text.
   - **Status Bar Summary (`bot-world-status`)**: Live counts of active bots, running sub-workers, and bots awaiting owner input (anonymized in Redact Mode).
+- **Pocket Pet Terrarium Mode (`G` shortcut / `🐾 Pet` toggle — v0.7.0)**:
+  - Works in both the narrow right sidebar and wide `.botworld` board, with procedural themed backdrops synced to `Startup Office`, `Corporate Office`, `Cozy Cafe`, and `Cyber Ops`, plus `Day / Sunset / Night` lighting and `Rain / Snow / Starlight` weather.
+  - Live status animations: `Needs You` pets walk up to the front glass and knock (`knock!`), `Working` pets type on laptops with tool badges, and `Idle` pets waddle, sit, or nap (`Zzz`).
+  - Click any pet for heart particles and headpat reactions, or toss **☕ Coffee / 🎾 Ball / 🍪 Treat** toys from the stage action strip — 100% local and Redact-safe (masks bot names and hides tool labels in Redact Mode).
+- **1-Click Teleport (`↗ Terminal` / `↗ Workspace` — v0.7.0)**:
+  - Jump directly from any bot's detail panel (`↗ Jump to Active Terminal`) or active sub-worker row (`↗ Terminal` / `↗ Workspace`) to its live Orca terminal (`terminal.focus`) or workspace (`workspace.open`) via `workspace:write` (gracefully shows a preview toast in Demo Mode without host calls).
+- **Opt-In Quick Send Bar (`allowQuickSend`, default `false` — v0.7.0)**:
+  - Send messages to any bot right from the bottom command bar (with quick-prompt chips and a golden paper-plane flight animation from the Owner Desk to the target bot).
+  - **Read-only by default** in Live Mode (`Read-only` badge shown until you explicitly enable `Allow Quick Send to Bots` in Plugin Settings, enforced in the worker with `1–500` character validation, control-character rejection, and a 2-second per-bot cooldown). **Demo Mode** lets you test Quick Send immediately with simulated replies and zero CLI calls.
 - **1-Click PNG Photo Card (`P` — v0.6.0)**:
   - Press `P` or click **Photo** to composite the live stage canvas with a dark-glass KPI (`Bots`, `Working`, `Workers`, `24h Events`), theme, atmosphere/weather, timestamp, and Redact status summary banner into a locally downloaded `.png` snapshot (`bot-world-<theme>-YYYYMMDD-HHMM.png`) with zero network calls and zero sensitive filenames.
 - **10-Second Daily Timelapse (v0.6.0)**:
@@ -151,6 +174,7 @@ Keep a live office overview docked beside your code and terminals without leavin
   | `0` | Reset camera zoom & pan | Panel & `.botworld` |
   | `/` | Focus bot search input | Panel & `.botworld` |
   | `C` | Toggle 24h collaboration network overlay | Panel & `.botworld` |
+  | `G` | Toggle Office ↔ Pocket Pet mode | Panel & `.botworld` |
   | `T` | Cycle office theme (`Startup` → `Corporate` → `Cozy Cafe` → `Cyber Ops`) | Panel & `.botworld` |
   | `R` | Toggle Redact Mode (`ON` / `OFF`) | Panel & `.botworld` |
   | `L` | Switch language (`EN` / `한국어`) | Panel & `.botworld` |
@@ -208,14 +232,20 @@ orca plugin dev load .
 | `language` | `string` (`auto`, `en`, `ko`) | `auto` | Display language for Bot World (`auto` follows Orca UI locale). |
 | `atmosphereMode` | `string` (`auto`, `day`, `sunset`, `night`) | `auto` | Office time-of-day lighting atmosphere (`auto` follows live or replay timestamp; `day`, `sunset`, or `night` overrides lighting). |
 | `weatherMode` | `string` (`auto`, `clear`, `rain`, `snow`, `starlight`) | `auto` | Ambient office weather effect (`auto` follows theme and time of day; `clear`, `rain`, `snow`, or `starlight` overrides weather). |
+| `viewMode` | `string` (`office`, `pet`) | `office` | Default visualization mode (`office` Isometric Office or `pet` Pocket Pet Terrarium). |
+| `allowQuickSend` | `boolean` | `false` | Opt-in: allow sending messages to Orca bots directly from Bot World's Quick Send bar (`false` by default for read-only safety). |
 
 ---
 
 ## Security & Privacy Architecture
 
-Bot World is engineered as a strictly read-only, zero-egress observer:
+Bot World is engineered as a **read-only-by-default**, zero-egress visualizer with minimal explicit interaction privileges:
 
-- **Least-Privilege Capabilities**: Requests only `agent:read`, `storage:own`, and `settings:own` — never write, terminal-send, or command-execution capabilities.
+- **Least-Privilege Capabilities**: Requests only `storage:own`, `settings:own`, `agent:read`, and `workspace:write`:
+  - `storage:own` & `settings:own`: Persist local replay snapshots, daily integer activity rollups, avatar/view preferences, and plugin settings.
+  - `agent:read`: Read live bot, sub-worker, and automation snapshots.
+  - `workspace:write`: Used strictly for **1-click teleport** (`terminal.focus` and `workspace.open`) when you click `↗ Terminal` / `↗ Workspace` — never modifies workspace files or settings.
+  - **Quick Send Opt-In (`allowQuickSend: false` by default)**: Live message dispatch stays disabled (`read-only`) until you explicitly enable `Allow Quick Send to Bots` in Plugin Settings. When enabled, Quick Send routes through `execFile(..., { shell: false })` with strict bot-name/target verification, `1–500` character non-control validation, and a 2-second per-bot rate limit, kept strictly separate from the read-only CLI subcommand allowlist.
 - **Strict Content Security Policy & Zero Network Egress**: Isolated custom editor frame (`frame: "isolated"`) with `connect-src 'none'`. No external HTTP requests, telemetry, or analytics.
 - **XSS-Safe DOM & Safe Process Invocation**: Uses `textContent` and `createTextNode` exclusively (zero `innerHTML` or `eval`), and invokes Orca CLI reads via `execFile(..., { shell: false })` with a strict binary path allowlist, minimal environment variables, read-only subcommand allowlist, and argument validation.
 - **Automatic Secret & PII Scrubbing + Redact Mode**: Masks AWS access keys, Slack/GitHub/Bearer/API tokens, webhook URLs, PEM private key blocks, email addresses, payment card numbers, and 12-digit AWS account IDs before storage or rendering, with one-click **Redact Mode** for presentations and screenshots.
@@ -234,11 +264,15 @@ orca plugin test . --json
 
 ## 한국어 요약 (Korean Overview)
 
-**봇 월드 (Bot World)** 는 Orca 봇과 실시간 하위 워커의 협업 상태를 HTML5 Canvas 기반 가상 사무실로 시각화하는 **읽기 전용** 플러그인입니다.
+**봇 월드 (Bot World)** 는 Orca 봇과 실시간 하위 워커의 협업 상태를 HTML5 Canvas 기반 가상 사무실과 **포켓 펫 테라리움**으로 시각화하는 **기본 읽기 전용(옵트인 빠른 전송 지원)** 플러그인입니다.
 
 - **이중 화면 구성**:
-  - **우측 사이드바 패널 (`봇 월드`)**: 4가지 사무실 테마 순환, 24시간 리포트(`I`), 시간대 분위기 전환(`자동`·`낮`·`노을`·`야간`), 가림 모드(`가림 ON/OFF`), 언어 전환(`EN` / `한`), 봇별 진행 작업·요청/답변·세부 항목·하위 워커·정기 자동화 조회, 10종 동물 캐릭터 즉시 교체.
+  - **우측 사이드바 패널 (`봇 월드`)**: 아이소메트릭 사무실과 포켓 펫 테라리움(`G`) 전환, 4가지 사무실 테마 순환, 24시간 리포트(`I`), 시간대 분위기 전환(`자동`·`낮`·`노을`·`야간`), 가림 모드(`가림 ON/OFF`), 언어 전환(`EN` / `한`), 봇별 진행 작업·요청/답변·세부 항목·하위 워커·1클릭 터미널/워크스페이스 이동·정기 자동화 조회, 10종 동물 캐릭터 즉시 교체, 하단 빠른 전송 바.
   - **넓은 `.botworld` 오피스 보드**: **새 파일 → 새 봇 월드 보드 (`.botworld`)** 로 생성하면 2단 전체 오피스 뷰와 **24시간 타임라인 스크러버(`1x / 2x / 5x / 10x` 재생)**, 드래그 앤 드롭 좌석 배치를 사용할 수 있습니다. `.botworld` 파일은 화면 설정(`themeId`, `atmosphereMode`, `weatherMode`, `redactMode`, `selectedBotId`, `botAppearances`, `customDeskPositions`, `zones`, `showZones`)만 저장하며 민감한 작업 내용은 저장하지 않습니다.
+- **v0.7.0 (Pocket Pet & Interaction) 주요 기능**:
+  - **포켓 펫 테라리움 모드 (`G` 단축키 / `🐾 펫` 토글)**: 좁은 우측 사이드바와 넓은 `.botworld` 보드 모두에서 동작합니다. 활성 테마와 시간대(`낮`·`노을`·`야간`), 날씨(`비`·`눈`·`별빛`)에 맞춘 절차적 배경과 함께, 상태별 애니메이션(`결정 대기` 펫이 앞 유리를 똑똑 두드림, `작업 중` 펫이 노트북 타이핑, `대기` 펫이 뒤뚱뒤뚱 걷거나 낮잠)을 보여 줍니다. 펫을 클릭해 쓰다듬거나 **☕ 커피 / 🎾 공 놀이 / 🍪 간식** 버튼을 눌러 상호작용할 수 있으며, 100% 로컬 동작과 가림 모드(익명 별칭 및 도구 이름 숨김)를 준수합니다.
+  - **1클릭 텔레포트 (`↗ 터미널` / `↗ 워크스페이스`)**: 봇 상세 패널의 `↗ 활성 터미널로 이동` 버튼이나 실행 중인 하위 워커 행의 `↗ 터미널` / `↗ 워크스페이스` 버튼으로 Orca의 해당 터미널(`terminal.focus`) 또는 워크스페이스(`workspace.open`)로 즉시 이동합니다(`workspace:write` 권한 사용).
+  - **옵트인 빠른 전송 바 (`allowQuickSend`, 기본값 `false`)**: 하단 명령 바에서 대상 봇을 골라 메시지를 보내면 Owner Desk에서 대상 봇까지 황금 종이비행기가 날아가는 애니메이션을 재생합니다. 실시간 모드에서는 기본값으로 **읽기 전용** 잠금 상태를 유지하며, 플러그인 설정에서 `Allow Quick Send to Bots`를 직접 켠 경우에만 실제 전송이 활성화됩니다(1~500자 검증, 제어 문자 차단, 봇별 2초 재전송 제한 적용). **데모 모드**에서는 CLI 호출 없이 즉시 시뮬레이션 응답을 체험할 수 있습니다.
 - **v0.6.0 (Share & Replay+) 주요 기능**:
   - **1클릭 PNG 포토 카드 (`P`)**: 현재 캔버스 화면에 다크 글래스 KPI(`봇`, `작업 중`, `워커`, `24h 이벤트`)·테마·시간대·가림 상태 배너를 합성해 로컬 `.png` 파일로 즉시 저장합니다(외부 네트워크 전송 없음, 민감 파일명 제외).
   - **10초 일간 타임랩스**: 리플레이 도구 모음의 **타임랩스** 버튼으로 24시간 전체 이벤트 구간을 부드러운 10초 요약 애니메이션으로 재생합니다.
@@ -260,8 +294,8 @@ orca plugin test . --json
 - **살아 움직이는 사무실 분위기와 단축키**:
   - **시간대 조명 (`자동` · `낮` · `노을` · `야간`)**: `자동` 모드에서는 현재 시각과 24시간 리플레이 타임스탬프에 맞춰 조명이 전환되며, 야간에는 작업 중인 봇 책상의 조명 스포트라이트·김이 오르는 커피·대기 `Zzz` 말풍선을 표시합니다.
   - **곡선 전달 애니메이션 & 도우미 출입**: 인계 사건은 종이비행기, 질문/답변 사건은 편지봉투 곡선 비행으로 표현하고, 하위 도우미는 출입구를 통해 사무실로 들어가고 나가는 이동 애니메이션을 보여 줍니다.
-  - **키보드 단축키**: `N`(긴급·작업 봇 포커스), `F`(카메라 추적), `0`(카메라 배율·위치 초기화), `/`(봇 검색창 포커스), `C`(협업 네트워크 오버레이), `T`(4종 테마 순환), `R`(가림 모드), `L`(언어), `A`(시간대 분위기), `W`(날씨 효과 전환), `M`(사운드 모드 전환), `D`(데모 오피스), `I`(24시간 리포트), `P`(PNG 포토 카드 저장), `Z`(팀 구역 오버레이 전환), `Space`(리플레이 재생/일시정지, `.botworld` 전용), `Esc`(모달 종료/추적·필터·선택 해제), `?`(단축키 안내)를 지원합니다.
+  - **키보드 단축키**: `N`(긴급·작업 봇 포커스), `F`(카메라 추적), `0`(카메라 배율·위치 초기화), `/`(봇 검색창 포커스), `C`(협업 네트워크 오버레이), `G`(사무실 ↔ 포켓 펫 모드 전환), `T`(4종 테마 순환), `R`(가림 모드), `L`(언어), `A`(시간대 분위기), `W`(날씨 효과 전환), `M`(사운드 모드 전환), `D`(데모 오피스), `I`(24시간 리포트), `P`(PNG 포토 카드 저장), `Z`(팀 구역 오버레이 전환), `Space`(리플레이 재생/일시정지, `.botworld` 전용), `Esc`(모달 종료/추적·필터·선택 해제), `?`(단축키 안내)를 지원합니다.
 - **모든 Orca 워크스페이스 자동 대응 및 1클릭 데모 체험**:
   - **데모 오피스 체험(읽기 전용 시뮬레이션)**: 실행 중인 봇이 없을 때 표시되는 초기 안내 카드의 **데모 오피스 체험** 버튼이나 상단 도구 모음의 **데모** 버튼으로 가상 봇·하위 워커 협업, 테마 전환, 가림 모드, 24시간 타임라인 재생을 바로 체험할 수 있습니다. **데모 종료**를 누르면 `.botworld` 설정을 변경하지 않고 실시간 Orca 상태로 돌아갑니다.
   - **0개부터 15개 이상 봇까지 자동 배치**: 봇이 없는 초기 안내 상태부터 14개 전용 책상, 15개 이상 봇을 위한 확장 좌석 그리드와 축약 이름표까지 자동으로 배치합니다. 영문·한글 역할 키워드(`security`, `infra`, `cloud`, `cost`, `docs`, `cve`, `보안`, `인프라` 등)에 맞춰 부엉이·고슴도치·문어·여우·개구리·너구리·펭귄·탐정 곰·알파카·고양이 봇 캐릭터를 자동 배정하며 클릭 한 번으로 바꿀 수 있습니다.
-- **보안 및 개인정보 보호**: 최소 권한(`agent:read`, `storage:own`, `settings:own`), 외부 통신 차단 CSP(`connect-src 'none'`), `shell: false` 기반 읽기 전용 조회, `textContent` 전용 DOM, 비밀 키·토큰·이메일·카드번호·12자리 AWS 계정 ID 자동 마스킹 및 가림 모드를 제공합니다.
+- **보안 및 개인정보 보호**: 최소 권한(`storage:own`, `settings:own`, `agent:read`, `workspace:write` — `workspace:write`는 `↗ 터미널` / `↗ 워크스페이스` 1클릭 이동의 `terminal.focus` / `workspace.open` 호출에만 사용하며 파일·설정을 수정하지 않음), 기본값 `false`로 잠긴 옵트인 빠른 전송(`allowQuickSend`, 활성화 시 `shell: false` + 1~500자 검증 + 봇별 2초 제한 적용), 외부 통신 차단 CSP(`connect-src 'none'`), `shell: false` 기반 읽기 전용 조회, `textContent` 전용 DOM, 비밀 키·토큰·이메일·카드번호·12자리 AWS 계정 ID 자동 마스킹 및 가림 모드를 제공합니다.

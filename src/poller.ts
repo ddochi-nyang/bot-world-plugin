@@ -41,6 +41,10 @@ export class PollerSession {
     this.mediumIntervalMs = clamped * 1000;
   }
 
+  getLatestSnapshot(): WorldSnapshot {
+    return this.snapshot;
+  }
+
   prepareDue(): { runSlow: boolean; runFast: boolean; runMedium: boolean } {
     const runSlow = !this.slowSynced || this.elapsedMs - this.lastSlowMs >= SLOW_INTERVAL_MS;
     const runFast = !this.fastSynced || this.elapsedMs - this.lastFastMs >= FAST_INTERVAL_MS;
