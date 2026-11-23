@@ -30,6 +30,8 @@ export type ShortcutAction =
   | 'focusSearch'
   | 'toggleCollabNetwork'
   | 'toggleViewMode'
+  | 'toggleBroadcast'
+  | 'toggleCreatorStudio'
   | 'toggleRoam'
   | 'highFiveNearby'
   | 'handCoffeeNearby'
@@ -68,7 +70,7 @@ export function shouldIgnoreShortcutEvent(
     }
   }
   if (options?.modalOpen) {
-    return lowerKey !== '?' && lowerKey !== 'i';
+    return lowerKey !== '?' && lowerKey !== 'i' && lowerKey !== 'u';
   }
   return false;
 }
@@ -82,6 +84,7 @@ export function mapKeyToShortcutAction(
   if (options?.modalOpen) {
     if (key === '?') return 'toggleHelp';
     if (lower === 'i') return 'toggleReport';
+    if (lower === 'u') return 'toggleCreatorStudio';
     if (lower === 'escape') return 'closeOrClearSelection';
     return null;
   }
@@ -120,6 +123,10 @@ export function mapKeyToShortcutAction(
       return 'toggleCollabNetwork';
     case 'g':
       return 'toggleViewMode';
+    case 'b':
+      return 'toggleBroadcast';
+    case 'u':
+      return 'toggleCreatorStudio';
     case 'v':
       return 'toggleRoam';
     case 'h':
@@ -229,6 +236,8 @@ export function renderShortcutsModal(
     { keyLabel: 'P', description: s.shortcutTakePhotoCard },
     { keyLabel: 'Z', description: s.shortcutToggleZones },
     { keyLabel: 'G', description: s.shortcutToggleViewMode },
+    { keyLabel: 'B', description: s.shortcutToggleBroadcast },
+    { keyLabel: 'U', description: s.shortcutToggleCreatorStudio },
     { keyLabel: 'V', description: s.shortcutToggleRoam },
     { keyLabel: 'H', description: s.shortcutHighFive },
     { keyLabel: 'K', description: s.shortcutHandCoffee },

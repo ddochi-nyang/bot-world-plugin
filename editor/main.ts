@@ -7,7 +7,9 @@ import {
   type BotRpgProfile,
   type BotWorldDocumentData,
   type BotWorldStatePayload,
+  type BroadcastChromaKey,
   type CharacterId,
+  type CreatorAssetsState,
   DEFAULT_BOTWORLD_DOCUMENT,
   type DeskCoordinate,
   type DeskPropId,
@@ -32,12 +34,25 @@ import {
   renderBotDetail,
   renderEventTimelineList,
 } from '../shared/bot-detail-view.ts';
+import { BroadcastBarController } from '../shared/broadcast-bar.ts';
 import {
   CAMERA_ZOOM_STEP,
   pickNextFocusBotId,
   resolveFollowTargetBotId,
 } from '../shared/camera.ts';
 import { buildCollabNetwork } from '../shared/collab-network.ts';
+import {
+  type CreatorStudioTab,
+  buildCreatorPackFromState,
+  createEmptyCreatorAssetsState,
+  creatorModalRenderKey,
+  downloadCreatorPack,
+  parseAndValidateCreatorPack,
+  renderCreatorStudioModal,
+  resolveImportedPackAvatars,
+  sanitizeUploadedImage,
+  validateCustomAssetDataUrl,
+} from '../shared/creator-studio.ts';
 import { type DemoOfficeSession, createDemoOfficeSession } from '../shared/demo-office.ts';
 import { clearChildren, el } from '../shared/dom.ts';
 import {
@@ -47,8 +62,16 @@ import {
   filterBotIds,
   getBotRedactedAlias,
   isFilterActive,
+  orderedSnapshotBotIds,
 } from '../shared/filter.ts';
 import { effectiveLocale, getHostLocale, resolveUiLocale, tStrings } from '../shared/i18n.ts';
+import {
+  atmosphereIconName,
+  setButtonContent,
+  soundIconName,
+  svgIcon,
+  weatherIconName,
+} from '../shared/icons.ts';
 import {
   MilestoneTracker,
   MotionDirector,
@@ -67,7 +90,6 @@ import { PetTerrariumRenderer } from '../shared/pet-terrarium.ts';
 import { capturePhotoCard } from '../shared/photo-card.ts';
 import { QuickSendBar } from '../shared/quick-send.ts';
 import {
-  atmosphereIcon,
   mapKeyToShortcutAction,
   nextAtmosphereMode,
   nextSoundMode,
@@ -75,12 +97,11 @@ import {
   nextWeatherMode,
   renderShortcutsModal,
   shouldIgnoreShortcutEvent,
-  soundIcon,
-  weatherIcon,
 } from '../shared/shortcuts.ts';
 import { SoundscapeEngine } from '../shared/soundscape.ts';
 import { StageRenderer, resolveAtmospherePhase } from '../shared/stage-renderer.ts';
 import { TimelapseController } from '../shared/timelapse.ts';
+import { attachTooltips, setTooltip } from '../shared/tooltip.ts';
 import { resolveWeatherKind } from '../shared/weather.ts';
 import {
   cloneStarterTeamZones,
@@ -106,6 +127,13 @@ const state: {
   shortcutsOpen: boolean;
   reportOpen: boolean;
   zonesOpen: boolean;
+  creatorOpen: boolean;
+  creatorTab: CreatorStudioTab;
+  creatorTargetBotId: string | null;
+  creatorStatusMessage: string | null;
+  creatorStatusIsError: boolean;
+  broadcastChromaKey: BroadcastChromaKey;
+  lastNonBroadcastViewMode: 'office' | 'pet';
   reportCopied: boolean;
   selectionCleared: boolean;
   filterPreset: StatusFilterPreset;
@@ -142,6 +170,13 @@ const state: {
   shortcutsOpen: false,
   reportOpen: false,
   zonesOpen: false,
+  creatorOpen: false,
+  creatorTab: 'avatars',
+  creatorTargetBotId: null,
+  creatorStatusMessage: null,
+  creatorStatusIsError: false,
+  broadcastChromaKey: 'green',
+  lastNonBroadcastViewMode: 'office',
   reportCopied: false,
   selectionCleared: false,
   filterPreset: 'all',
@@ -183,8 +218,13 @@ let demoCustomPositions: Record<string, DeskCoordinate> = {};
 let demoZones: TeamZone[] = [];
 let demoShowZones = true;
 let demoSelectedBotId: string | null = null;
+let liveCreatorAssets: CreatorAssetsState = createEmptyCreatorAssetsState();
+let demoCreatorAssets: CreatorAssetsState = createEmptyCreatorAssetsState();
+let lastCreatorFetchedAtMs = -1;
+let creatorAssetsFetching = false;
 let quickSending = false;
 const demoReplyTimers = new Set<number>();
+const tooltipController = attachTooltips(root);
 
 function isDemoMode(): boolean {
   return demoSession !== null;
@@ -201,7 +241,8 @@ const themeOptions = new Map<ThemeId, HTMLOptionElement>();
 const themeSelect = el('select', {
   className: 'bw-select',
   ariaLabel: initialStrings.themeAriaLabel,
-  title: initialStrings.themeToggleTitle,
+  tooltip: initialStrings.tipThemeSelect,
+  tooltipKbd: 'T',
   onChange: () => {
     const val = themeSelect.value;
     if (isValidThemeId(val)) {
@@ -224,7 +265,7 @@ const resetSeatsBtn = el(
   {
     type: 'button',
     className: 'bw-btn bw-hidden',
-    title: initialStrings.resetSeatsTitle,
+    tooltip: initialStrings.tipResetSeats,
     onClick: () => resetCustomSeats(),
   },
   initialStrings.resetSeats
@@ -236,10 +277,13 @@ const atmoBtn = el(
     type: 'button',
     className: 'bw-btn',
     ariaLabel: initialStrings.atmosphereAriaLabel,
+    tooltip: initialStrings.tipAtmosphere(initialStrings.atmosphereModes.auto),
+    tooltipKbd: 'A',
     onClick: () => void cycleAtmosphere().catch(() => {}),
   },
-  `${atmosphereIcon('auto')} ${initialStrings.atmosphereModes.auto}`
-);
+  svgIcon(atmosphereIconName('auto')),
+  el('span', { className: 'bw-btn-label' }, initialStrings.atmosphereModes.auto)
+) as HTMLButtonElement;
 
 const weatherBtn = el(
   'button',
@@ -247,34 +291,55 @@ const weatherBtn = el(
     type: 'button',
     className: 'bw-btn',
     ariaLabel: initialStrings.weatherAriaLabel,
+    tooltip: initialStrings.tipWeather(initialStrings.weatherModes.auto),
+    tooltipKbd: 'W',
     onClick: () => void cycleWeather().catch(() => {}),
   },
-  `${weatherIcon('auto')} ${initialStrings.weatherModes.auto}`
-);
+  svgIcon(weatherIconName('auto')),
+  el('span', { className: 'bw-btn-label' }, initialStrings.weatherModes.auto)
+) as HTMLButtonElement;
 
 const viewModeBtn = el(
   'button',
   {
     type: 'button',
     className: 'bw-btn',
-    title: initialStrings.viewModeToggleTitle('office'),
-    ariaLabel: initialStrings.viewModeToggleTitle('office'),
+    tooltip: initialStrings.tipPetMode,
+    tooltipKbd: 'G',
+    ariaLabel: initialStrings.tipPetMode,
     onClick: () => void toggleViewMode().catch(() => {}),
   },
-  `🐾 ${initialStrings.viewModePetButton}`
-);
+  svgIcon('paw'),
+  el('span', { className: 'bw-btn-label' }, initialStrings.viewModePetButton)
+) as HTMLButtonElement;
 
 const roamBtn = el(
   'button',
   {
     type: 'button',
     className: 'bw-btn',
-    title: initialStrings.roamButtonTitle,
-    ariaLabel: initialStrings.roamButtonTitle,
+    tooltip: initialStrings.tipRoam,
+    tooltipKbd: 'V',
+    ariaLabel: initialStrings.tipRoam,
     onClick: () => void toggleRoamMode().catch(() => {}),
   },
-  `🚶 ${initialStrings.roamButton}`
-);
+  svgIcon('walk'),
+  el('span', { className: 'bw-btn-label' }, initialStrings.roamButton)
+) as HTMLButtonElement;
+
+const broadcastBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-btn',
+    tooltip: initialStrings.tipStream,
+    tooltipKbd: 'B',
+    ariaLabel: initialStrings.tipStream,
+    onClick: () => void toggleBroadcastMode().catch(() => {}),
+  },
+  svgIcon('tv'),
+  el('span', { className: 'bw-btn-label' }, initialStrings.broadcastButton)
+) as HTMLButtonElement;
 
 const soundBtn = el(
   'button',
@@ -282,65 +347,79 @@ const soundBtn = el(
     type: 'button',
     className: 'bw-btn',
     ariaLabel: initialStrings.soundAriaLabel,
+    tooltip: initialStrings.tipSound(initialStrings.soundModes.off),
+    tooltipKbd: 'M',
     onClick: () => void cycleSound(true).catch(() => {}),
   },
-  `${soundIcon('off')} ${initialStrings.soundModes.off}`
-);
+  svgIcon(soundIconName('off')),
+  el('span', { className: 'bw-btn-label' }, initialStrings.soundModes.off)
+) as HTMLButtonElement;
 
 const focusBtn = el(
   'button',
   {
     type: 'button',
     className: 'bw-btn',
-    title: initialStrings.focusButtonTitle,
-    ariaLabel: initialStrings.focusButtonTitle,
+    tooltip: initialStrings.tipFocus,
+    tooltipKbd: 'N',
+    ariaLabel: initialStrings.tipFocus,
     onClick: () => cycleFocusSpotlight(),
   },
-  `🎯 ${initialStrings.focusButton}`
-);
+  svgIcon('crosshair'),
+  el('span', { className: 'bw-btn-label' }, initialStrings.focusButton)
+) as HTMLButtonElement;
 
 const collabBtn = el(
   'button',
   {
     type: 'button',
     className: 'bw-btn',
-    title: initialStrings.collabButtonTitle,
-    ariaLabel: initialStrings.collabButtonTitle,
+    tooltip: initialStrings.tipCollab,
+    tooltipKbd: 'C',
+    ariaLabel: initialStrings.tipCollab,
     onClick: () => {
       state.showCollabNetwork = !state.showCollabNetwork;
       renderUi();
     },
   },
-  `🕸 ${initialStrings.collabButton}`
-);
+  svgIcon('network'),
+  el('span', { className: 'bw-btn-label' }, initialStrings.collabButton)
+) as HTMLButtonElement;
 
 const redactBtn = el(
   'button',
   {
     type: 'button',
     className: 'bw-btn',
+    tooltip: initialStrings.tipRedact,
+    tooltipKbd: 'R',
     onClick: () => void toggleRedact().catch(() => {}),
   },
-  initialStrings.redactOff
-);
+  svgIcon('eye'),
+  el('span', { className: 'bw-btn-label' }, initialStrings.redactOff)
+) as HTMLButtonElement;
 
 const langBtn = el(
   'button',
   {
     type: 'button',
     className: 'bw-btn',
-    title: `${initialStrings.langToggleTitle} [L]`,
+    tooltip: initialStrings.tipLanguage,
+    tooltipKbd: 'L',
     ariaLabel: initialStrings.langToggleTitle,
     onClick: () => void toggleLanguage().catch(() => {}),
   },
-  initialStrings.langToggleText
-);
+  svgIcon('globe'),
+  el('span', { className: 'bw-btn-label' }, initialStrings.langToggleText)
+) as HTMLButtonElement;
 
 const demoBtn = el(
   'button',
   {
     type: 'button',
     className: 'bw-btn',
+    tooltip: initialStrings.tipDemo,
+    tooltipKbd: 'D',
     onClick: () => {
       if (isDemoMode()) {
         exitDemoMode();
@@ -349,76 +428,103 @@ const demoBtn = el(
       }
     },
   },
-  initialStrings.demoButton
-);
+  svgIcon('play-circle'),
+  el('span', { className: 'bw-btn-label' }, initialStrings.demoButton)
+) as HTMLButtonElement;
 
 const reportBtn = el(
   'button',
   {
     type: 'button',
     className: 'bw-btn',
-    title: initialStrings.reportButtonTitle,
-    ariaLabel: initialStrings.reportButtonTitle,
+    tooltip: initialStrings.tipReport,
+    tooltipKbd: 'I',
+    ariaLabel: initialStrings.tipReport,
     onClick: () => toggleReportModal(),
   },
-  initialStrings.reportButton
-);
+  svgIcon('bar-chart'),
+  el('span', { className: 'bw-btn-label' }, initialStrings.reportButton)
+) as HTMLButtonElement;
 
 const zonesBtn = el(
   'button',
   {
     type: 'button',
     className: 'bw-btn',
-    title: initialStrings.zonesButtonTitle,
-    ariaLabel: initialStrings.zonesButtonTitle,
+    tooltip: initialStrings.tipZones,
+    tooltipKbd: 'Z',
+    ariaLabel: initialStrings.tipZones,
     onClick: () => toggleZonesModal(),
   },
-  `🗺 ${initialStrings.zonesButton}`
-);
+  svgIcon('map'),
+  el('span', { className: 'bw-btn-label' }, initialStrings.zonesButton)
+) as HTMLButtonElement;
+
+const studioBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-btn',
+    tooltip: initialStrings.tipStudio,
+    tooltipKbd: 'U',
+    ariaLabel: initialStrings.tipStudio,
+    onClick: () => toggleCreatorStudioModal(),
+  },
+  svgIcon('palette'),
+  el('span', { className: 'bw-btn-label' }, initialStrings.studioButton)
+) as HTMLButtonElement;
 
 const photoBtn = el(
   'button',
   {
     type: 'button',
     className: 'bw-btn',
-    title: initialStrings.photoButtonTitle,
-    ariaLabel: initialStrings.photoButtonTitle,
+    tooltip: initialStrings.tipPhoto,
+    tooltipKbd: 'P',
+    ariaLabel: initialStrings.tipPhoto,
     onClick: () => void triggerPhotoCardSnapshot().catch(() => {}),
   },
-  `📸 ${initialStrings.photoButton}`
-);
+  svgIcon('camera'),
+  el('span', { className: 'bw-btn-label' }, initialStrings.photoButton)
+) as HTMLButtonElement;
 
 const helpBtn = el(
   'button',
   {
     type: 'button',
-    className: 'bw-btn',
-    title: initialStrings.shortcutsButtonTitle,
-    ariaLabel: initialStrings.shortcutsButtonTitle,
+    className: 'bw-btn bw-icon-btn',
+    tooltip: initialStrings.tipShortcuts,
+    tooltipKbd: '?',
+    ariaLabel: initialStrings.tipShortcuts,
     onClick: () => {
       state.shortcutsOpen = !state.shortcutsOpen;
       if (state.shortcutsOpen) {
+        ownerAvatar.clearKeys();
         state.reportOpen = false;
         state.zonesOpen = false;
+        state.creatorOpen = false;
         renderReportModal();
         renderZonesManager();
+        renderCreatorStudio();
       }
       renderShortcutsHelp();
       syncChromeLocale(currentLocale());
     },
   },
-  '?'
-);
+  svgIcon('help-circle')
+) as HTMLButtonElement;
 
 const refreshBtn = el(
   'button',
   {
     type: 'button',
     className: 'bw-btn',
+    tooltip: initialStrings.tipRefresh,
     onClick: () => void triggerRefresh().catch(() => {}),
   },
-  initialStrings.refresh
-);
+  svgIcon('refresh-cw'),
+  el('span', { className: 'bw-btn-label' }, initialStrings.refresh)
+) as HTMLButtonElement;
 
 const connPill = el('span', { className: 'bw-status-pill' }, initialStrings.connecting);
 const docSyncPill = el('span', { className: 'bw-chip' }, initialStrings.docSynced);
@@ -442,17 +548,22 @@ const toolbar = el(
     resetSeatsBtn,
     viewModeBtn,
     roamBtn,
+    broadcastBtn,
+    el('span', { className: 'bw-toolbar-sep' }),
     atmoBtn,
     weatherBtn,
     soundBtn,
+    el('span', { className: 'bw-toolbar-sep' }),
     focusBtn,
     collabBtn,
     zonesBtn,
+    studioBtn,
     photoBtn,
+    reportBtn,
+    el('span', { className: 'bw-toolbar-sep' }),
     redactBtn,
     langBtn,
     demoBtn,
-    reportBtn,
     helpBtn,
     refreshBtn
   )
@@ -523,38 +634,63 @@ const petCoffeeBtn = el(
   {
     type: 'button',
     className: 'bw-pet-action-btn',
-    title: initialStrings.petActionCoffeeTitle,
+    tooltip: initialStrings.petActionCoffeeTitle,
     onClick: () => handleDropPetToy('coffee'),
   },
-  `☕ ${initialStrings.petActionCoffee}`
-);
+  svgIcon('coffee', 12),
+  el('span', { className: 'bw-btn-label' }, initialStrings.petActionCoffee)
+) as HTMLButtonElement;
 const petBallBtn = el(
   'button',
   {
     type: 'button',
     className: 'bw-pet-action-btn',
-    title: initialStrings.petActionBallTitle,
+    tooltip: initialStrings.petActionBallTitle,
     onClick: () => handleDropPetToy('ball'),
   },
-  `🎾 ${initialStrings.petActionBall}`
-);
+  svgIcon('ball', 12),
+  el('span', { className: 'bw-btn-label' }, initialStrings.petActionBall)
+) as HTMLButtonElement;
 const petTreatBtn = el(
   'button',
   {
     type: 'button',
     className: 'bw-pet-action-btn',
-    title: initialStrings.petActionTreatTitle,
+    tooltip: initialStrings.petActionTreatTitle,
     onClick: () => handleDropPetToy('treat'),
   },
-  `🍪 ${initialStrings.petActionTreat}`
-);
+  svgIcon('cookie', 12),
+  el('span', { className: 'bw-btn-label' }, initialStrings.petActionTreat)
+) as HTMLButtonElement;
+const petExitBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-pet-action-btn',
+    tooltip: initialStrings.petExitTip,
+    tooltipKbd: 'G',
+    onClick: () => void toggleViewMode().catch(() => {}),
+  },
+  svgIcon('building', 12),
+  el('span', { className: 'bw-btn-label' }, initialStrings.petExitButton)
+) as HTMLButtonElement;
 const petActionStrip = el(
   'div',
   { className: 'bw-pet-action-strip bw-hidden' },
   petCoffeeBtn,
   petBallBtn,
-  petTreatBtn
+  petTreatBtn,
+  petExitBtn
 );
+const broadcastBar = new BroadcastBarController({
+  onSelectChroma: (key) => {
+    state.broadcastChromaKey = key;
+    renderUi();
+  },
+  onToggleRedact: () => void toggleRedact().catch(() => {}),
+  onDropToy: (kind) => handleDropPetToy(kind),
+  onExit: () => void exitBroadcastMode().catch(() => {}),
+});
 const zoomOutBtn = el(
   'button',
   {
@@ -640,8 +776,16 @@ const stageWrap = el(
   stageToast,
   cameraHud,
   roamHud,
-  petActionStrip
+  petActionStrip,
+  broadcastBar.root
 );
+stageWrap.addEventListener('pointermove', (ev) => {
+  if (!isBroadcastMode()) return;
+  const rect = stageWrap.getBoundingClientRect();
+  if (ev.clientX - rect.left >= rect.width - 340 && ev.clientY - rect.top <= 96) {
+    broadcastBar.revealTemporarily();
+  }
+});
 const quickSendBar = new QuickSendBar({
   onSelectBot: (botId) => {
     state.selectionCleared = false;
@@ -688,12 +832,13 @@ const timelapseBtn = el(
   {
     type: 'button',
     className: 'bw-btn',
-    title: initialStrings.timelapseButtonTitle,
+    tooltip: initialStrings.timelapseButtonTitle,
     ariaLabel: initialStrings.timelapseButtonTitle,
     onClick: () => toggleTimelapse(),
   },
-  `⏱ ${initialStrings.timelapseButton}`
-);
+  svgIcon('clock'),
+  el('span', { className: 'bw-btn-label' }, initialStrings.timelapseButton)
+) as HTMLButtonElement;
 
 const liveBtn = el(
   'button',
@@ -811,6 +956,14 @@ const zonesBackdrop = el('div', {
     syncChromeLocale(currentLocale());
   },
 });
+const creatorBackdrop = el('div', {
+  className: 'bw-modal-backdrop bw-hidden',
+  onClick: () => {
+    state.creatorOpen = false;
+    renderCreatorStudio();
+    syncChromeLocale(currentLocale());
+  },
+});
 
 root.appendChild(toolbar);
 root.appendChild(filterBar);
@@ -820,6 +973,7 @@ root.appendChild(timelineBar);
 root.appendChild(shortcutsBackdrop);
 root.appendChild(reportBackdrop);
 root.appendChild(zonesBackdrop);
+root.appendChild(creatorBackdrop);
 
 const renderer = new StageRenderer(canvasEl, {
   onSelectBot: (botId) => {
@@ -892,8 +1046,17 @@ function activeViewMode(): ViewMode {
   return state.payload.viewMode ?? 'office';
 }
 
+function isBroadcastMode(): boolean {
+  return activeViewMode() === 'broadcast';
+}
+
 function isPetMode(): boolean {
-  return activeViewMode() === 'pet';
+  const vm = activeViewMode();
+  return vm === 'pet' || vm === 'broadcast';
+}
+
+function activeCreatorAssets(): CreatorAssetsState {
+  return isDemoMode() ? demoCreatorAssets : liveCreatorAssets;
 }
 
 function handleDropPetToy(kind: PetToyKind): void {
@@ -1133,6 +1296,8 @@ function syncOwnerRoamLoop(): void {
             zones: activeZones(),
             showZones: activeShowZones(),
             timelapseActive: timelapse.active,
+            customBackground: activeCreatorAssets().customBackground,
+            customAvatars: activeCreatorAssets().customAvatars,
           });
         }
         if (ownerAvatar.roaming && !isPetMode()) {
@@ -1151,7 +1316,7 @@ function syncOwnerRoamLoop(): void {
 
 async function toggleRoamMode(): Promise<void> {
   if (isPetMode()) {
-    await toggleViewMode();
+    await setViewModeValue('office');
   }
   const locale = currentLocale();
   const { bossDeskNorm } = normalizedBotPositions(
@@ -1160,6 +1325,7 @@ async function toggleRoamMode(): Promise<void> {
     locale
   );
   ownerAvatar.toggleRoaming(bossDeskNorm);
+  ownerAvatar.clearKeys();
   syncOwnerRoamLoop();
   renderUi();
 }
@@ -1457,11 +1623,14 @@ function renderReportModal(): void {
 function toggleReportModal(): void {
   state.reportOpen = !state.reportOpen;
   if (state.reportOpen) {
+    ownerAvatar.clearKeys();
     state.shortcutsOpen = false;
     state.zonesOpen = false;
+    state.creatorOpen = false;
     state.reportCopied = false;
     renderShortcutsHelp();
     renderZonesManager();
+    renderCreatorStudio();
   }
   renderReportModal();
   syncChromeLocale(currentLocale());
@@ -1520,12 +1689,332 @@ function renderZonesManager(): void {
 function toggleZonesModal(): void {
   state.zonesOpen = !state.zonesOpen;
   if (state.zonesOpen) {
+    ownerAvatar.clearKeys();
     state.shortcutsOpen = false;
     state.reportOpen = false;
+    state.creatorOpen = false;
     renderShortcutsHelp();
     renderReportModal();
+    renderCreatorStudio();
   }
   renderZonesManager();
+  syncChromeLocale(currentLocale());
+}
+
+let lastCreatorModalKey: string | null = null;
+
+function setCreatorStatus(message: string | null, isError = false): void {
+  state.creatorStatusMessage = message;
+  state.creatorStatusIsError = isError;
+  renderCreatorStudio();
+}
+
+async function fetchLiveCreatorAssets(): Promise<void> {
+  if (creatorAssetsFetching) return;
+  creatorAssetsFetching = true;
+  try {
+    const assets = await orca.plugin.request('botWorld.getCreatorAssets');
+    liveCreatorAssets = assets;
+    lastCreatorFetchedAtMs = assets.updatedAtMs;
+    renderUi(true);
+  } catch {
+    // Ignore transient fetch failure
+  } finally {
+    creatorAssetsFetching = false;
+  }
+}
+
+async function handleUploadCustomAvatar(botId: string, file: File): Promise<void> {
+  if (!isSafeKey(botId)) return;
+  const s = tStrings(currentLocale());
+  const sanitized = await sanitizeUploadedImage(file, 'avatar');
+  if (!sanitized.ok) {
+    const errMsg =
+      sanitized.reason === 'unsupported_type'
+        ? s.creatorErrorType
+        : sanitized.reason === 'too_large' || sanitized.reason === 'output_too_large'
+          ? s.creatorErrorSize
+          : s.creatorErrorDecode;
+    setCreatorStatus(errMsg, true);
+    showStageToast(errMsg);
+    return;
+  }
+  if (isDemoMode()) {
+    const nextAvatars = { ...demoCreatorAssets.customAvatars };
+    Object.defineProperty(nextAvatars, botId, {
+      value: sanitized.dataUrl,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+    demoCreatorAssets = {
+      ...demoCreatorAssets,
+      customAvatars: nextAvatars,
+      updatedAtMs: Date.now(),
+    };
+    setCreatorStatus(s.creatorStatusSaved, false);
+    showStageToast(s.creatorStatusSaved);
+    renderUi(true);
+    return;
+  }
+  try {
+    const res = await orca.plugin.request('botWorld.setCustomAvatar', {
+      botId,
+      dataUrl: sanitized.dataUrl,
+    });
+    liveCreatorAssets = res;
+    lastCreatorFetchedAtMs = res.updatedAtMs;
+    setCreatorStatus(s.creatorStatusSaved, false);
+    showStageToast(s.creatorStatusSaved);
+    renderUi(true);
+  } catch {
+    setCreatorStatus(s.creatorErrorSize, true);
+    showStageToast(s.creatorErrorSize);
+  }
+}
+
+async function handleResetCustomAvatar(botId: string): Promise<void> {
+  if (!isSafeKey(botId)) return;
+  const s = tStrings(currentLocale());
+  if (isDemoMode()) {
+    const nextAvatars = { ...demoCreatorAssets.customAvatars };
+    delete nextAvatars[botId];
+    demoCreatorAssets = {
+      ...demoCreatorAssets,
+      customAvatars: nextAvatars,
+      updatedAtMs: Date.now(),
+    };
+    setCreatorStatus(s.creatorStatusReset, false);
+    renderUi(true);
+    return;
+  }
+  try {
+    const res = await orca.plugin.request('botWorld.setCustomAvatar', {
+      botId,
+      dataUrl: null,
+    });
+    liveCreatorAssets = res;
+    lastCreatorFetchedAtMs = res.updatedAtMs;
+    setCreatorStatus(s.creatorStatusReset, false);
+    renderUi(true);
+  } catch {
+    // Ignore
+  }
+}
+
+async function handleUploadCustomBackground(file: File): Promise<void> {
+  const s = tStrings(currentLocale());
+  const sanitized = await sanitizeUploadedImage(file, 'background');
+  if (!sanitized.ok) {
+    const errMsg =
+      sanitized.reason === 'unsupported_type'
+        ? s.creatorErrorType
+        : sanitized.reason === 'too_large' || sanitized.reason === 'output_too_large'
+          ? s.creatorErrorSize
+          : s.creatorErrorDecode;
+    setCreatorStatus(errMsg, true);
+    showStageToast(errMsg);
+    return;
+  }
+  if (isDemoMode()) {
+    demoCreatorAssets = {
+      ...demoCreatorAssets,
+      customBackground: sanitized.dataUrl,
+      updatedAtMs: Date.now(),
+    };
+    setCreatorStatus(s.creatorStatusSaved, false);
+    renderUi(true);
+    return;
+  }
+  try {
+    const res = await orca.plugin.request('botWorld.setCustomBackground', {
+      dataUrl: sanitized.dataUrl,
+    });
+    liveCreatorAssets = res;
+    lastCreatorFetchedAtMs = res.updatedAtMs;
+    setCreatorStatus(s.creatorStatusSaved, false);
+    renderUi(true);
+  } catch {
+    setCreatorStatus(s.creatorErrorSize, true);
+  }
+}
+
+async function handleResetCustomBackground(): Promise<void> {
+  const s = tStrings(currentLocale());
+  if (isDemoMode()) {
+    demoCreatorAssets = {
+      ...demoCreatorAssets,
+      customBackground: null,
+      updatedAtMs: Date.now(),
+    };
+    setCreatorStatus(s.creatorStatusReset, false);
+    renderUi(true);
+    return;
+  }
+  try {
+    const res = await orca.plugin.request('botWorld.setCustomBackground', { dataUrl: null });
+    liveCreatorAssets = res;
+    lastCreatorFetchedAtMs = res.updatedAtMs;
+    setCreatorStatus(s.creatorStatusReset, false);
+    renderUi(true);
+  } catch {
+    // Ignore
+  }
+}
+
+async function handleResetAllCreatorAssets(): Promise<void> {
+  const s = tStrings(currentLocale());
+  if (isDemoMode()) {
+    demoCreatorAssets = createEmptyCreatorAssetsState(Date.now());
+    setCreatorStatus(s.creatorStatusReset, false);
+    renderUi(true);
+    return;
+  }
+  try {
+    const res = await orca.plugin.request('botWorld.resetCustomAssets', { target: 'all' });
+    liveCreatorAssets = res;
+    lastCreatorFetchedAtMs = res.updatedAtMs;
+    setCreatorStatus(s.creatorStatusReset, false);
+    renderUi(true);
+  } catch {
+    // Ignore
+  }
+}
+
+function handleExportCreatorPack(): void {
+  const s = tStrings(currentLocale());
+  const snap = currentDisplayedSnapshot();
+  const pack = buildCreatorPackFromState(activeCreatorAssets(), {
+    botOrder: orderedSnapshotBotIds(snap),
+  });
+  const res = downloadCreatorPack(pack);
+  if (res.ok) {
+    setCreatorStatus(s.creatorStatusPackExported, false);
+  }
+}
+
+async function handleImportCreatorPackFile(file: File): Promise<void> {
+  const s = tStrings(currentLocale());
+  let text = '';
+  try {
+    text = await file.text();
+  } catch {
+    setCreatorStatus(s.creatorErrorPack, true);
+    return;
+  }
+  const parsed = parseAndValidateCreatorPack(text);
+  if (!parsed.ok) {
+    setCreatorStatus(s.creatorErrorPack, true);
+    return;
+  }
+  const snap = currentDisplayedSnapshot();
+  const botOrder = orderedSnapshotBotIds(snap);
+  const resolvedAvatars = resolveImportedPackAvatars(parsed.pack, botOrder);
+  const resolvedPack = {
+    ...parsed.pack,
+    customAvatars: resolvedAvatars,
+  };
+  const count = Object.keys(resolvedAvatars).length;
+  if (isDemoMode()) {
+    demoCreatorAssets = {
+      packName: resolvedPack.packName,
+      customBackground: resolvedPack.customBackground ?? null,
+      customAvatars: resolvedAvatars,
+      updatedAtMs: Date.now(),
+    };
+    setCreatorStatus(s.creatorStatusPackImported(count), false);
+    renderUi(true);
+    return;
+  }
+  try {
+    const res = await orca.plugin.request('botWorld.importCreatorPack', { pack: resolvedPack });
+    liveCreatorAssets = res;
+    lastCreatorFetchedAtMs = res.updatedAtMs;
+    setCreatorStatus(s.creatorStatusPackImported(count), false);
+    renderUi(true);
+  } catch {
+    setCreatorStatus(s.creatorErrorPack, true);
+  }
+}
+
+function renderCreatorStudio(): void {
+  const open = state.creatorOpen;
+  const snap = currentDisplayedSnapshot();
+  const ordered = orderedSnapshotBotIds(snap);
+  const targetBotId =
+    state.creatorTargetBotId && ordered.includes(state.creatorTargetBotId)
+      ? state.creatorTargetBotId
+      : resolveSelectedBotId(snap);
+  const redactMode = activeRedactMode();
+  const locale = currentLocale();
+  const assets = activeCreatorAssets();
+  const nextKey = creatorModalRenderKey({
+    open,
+    tab: state.creatorTab,
+    selectedBotId: targetBotId,
+    redactMode,
+    locale,
+    demoMode: isDemoMode(),
+    creatorAssets: assets,
+    statusMessage: state.creatorStatusMessage,
+  });
+  if (nextKey === lastCreatorModalKey) {
+    return;
+  }
+  lastCreatorModalKey = nextKey;
+  renderCreatorStudioModal(creatorBackdrop, {
+    open,
+    tab: state.creatorTab,
+    onChangeTab: (tab) => {
+      state.creatorTab = tab;
+      state.creatorStatusMessage = null;
+      renderCreatorStudio();
+    },
+    snapshot: snap,
+    selectedBotId: targetBotId,
+    onChangeTargetBot: (botId) => {
+      state.creatorTargetBotId = botId;
+      state.creatorStatusMessage = null;
+      renderCreatorStudio();
+    },
+    creatorAssets: assets,
+    redactMode,
+    locale,
+    statusMessage: state.creatorStatusMessage,
+    statusIsError: state.creatorStatusIsError,
+    onUploadAvatar: (botId, file) => void handleUploadCustomAvatar(botId, file).catch(() => {}),
+    onResetAvatar: (botId) => void handleResetCustomAvatar(botId).catch(() => {}),
+    onUploadBackground: (file) => void handleUploadCustomBackground(file).catch(() => {}),
+    onResetBackground: () => void handleResetCustomBackground().catch(() => {}),
+    onExportPack: () => handleExportCreatorPack(),
+    onImportPackFile: (file) => void handleImportCreatorPackFile(file).catch(() => {}),
+    onResetAll: () => void handleResetAllCreatorAssets().catch(() => {}),
+    onClose: () => {
+      state.creatorOpen = false;
+      state.creatorStatusMessage = null;
+      renderCreatorStudio();
+      syncChromeLocale(currentLocale());
+    },
+  });
+}
+
+function toggleCreatorStudioModal(forceTab?: CreatorStudioTab): void {
+  if (forceTab && !state.creatorOpen) {
+    state.creatorTab = forceTab;
+  }
+  state.creatorOpen = !state.creatorOpen;
+  if (state.creatorOpen) {
+    ownerAvatar.clearKeys();
+    state.shortcutsOpen = false;
+    state.reportOpen = false;
+    state.zonesOpen = false;
+    state.creatorStatusMessage = null;
+    state.creatorTargetBotId = resolveSelectedBotId(currentDisplayedSnapshot());
+    renderShortcutsHelp();
+    renderReportModal();
+    renderZonesManager();
+  }
+  renderCreatorStudio();
   syncChromeLocale(currentLocale());
 }
 
@@ -1560,15 +2049,15 @@ function updateCameraHud(locale: UiLocale): void {
   const s = tStrings(locale);
   const pct = renderer.camera.zoomPercent();
   zoomResetBtn.textContent = `${pct}%`;
-  zoomResetBtn.title = s.zoomResetTitle(pct);
+  setTooltip(zoomResetBtn, s.tipZoomReset(pct), '0');
   zoomResetBtn.className = renderer.camera.isZoomed() ? 'bw-hud-btn bw-hud-btn-active' : 'bw-hud-btn';
-  zoomOutBtn.title = s.zoomOutTitle;
+  setTooltip(zoomOutBtn, s.tipZoomOut);
   zoomOutBtn.setAttribute('aria-label', s.zoomOutTitle);
-  zoomInBtn.title = s.zoomInTitle;
+  setTooltip(zoomInBtn, s.tipZoomIn);
   zoomInBtn.setAttribute('aria-label', s.zoomInTitle);
   const following = renderer.camera.followBotId !== null;
   followHudBtn.textContent = `📌 ${following ? s.followButtonActive : s.followButton}`;
-  followHudBtn.title = s.followButtonTitle;
+  setTooltip(followHudBtn, s.tipFollowCam, 'F');
   followHudBtn.className = following ? 'bw-hud-btn bw-hud-btn-active' : 'bw-hud-btn';
 }
 
@@ -1659,77 +2148,103 @@ function syncChromeLocale(locale: UiLocale): void {
     opt.textContent = s.themeFull[tid];
   }
   themeSelect.setAttribute('aria-label', s.themeAriaLabel);
-  themeSelect.title = s.themeToggleTitle;
+  setTooltip(themeSelect, s.tipThemeSelect, 'T');
   resetSeatsBtn.textContent = s.resetSeats;
-  resetSeatsBtn.title = s.resetSeatsTitle;
-  atmoBtn.textContent = `${atmosphereIcon(atmoMode)} ${atmoLabel}`;
-  atmoBtn.title = s.atmosphereToggleTitle(atmoLabel);
+  setTooltip(resetSeatsBtn, s.tipResetSeats);
+  setButtonContent(atmoBtn, atmosphereIconName(atmoMode), atmoLabel);
+  setTooltip(atmoBtn, s.tipAtmosphere(atmoLabel), 'A');
   atmoBtn.className = atmoMode !== 'auto' ? 'bw-btn bw-btn-active' : 'bw-btn';
-  weatherBtn.textContent = `${weatherIcon(wMode)} ${wLabel}`;
-  weatherBtn.title = s.weatherToggleTitle(wLabel);
+  setButtonContent(weatherBtn, weatherIconName(wMode), wLabel);
+  setTooltip(weatherBtn, s.tipWeather(wLabel), 'W');
   weatherBtn.className = wMode !== 'auto' ? 'bw-btn bw-btn-active' : 'bw-btn';
-  soundBtn.textContent = `${soundIcon(sndMode)} ${sndLabel}`;
-  soundBtn.title = s.soundToggleTitle(sndLabel);
+  setButtonContent(soundBtn, soundIconName(sndMode), sndLabel);
+  setTooltip(soundBtn, s.tipSound(sndLabel), 'M');
   soundBtn.className = sndMode !== 'off' ? 'bw-btn bw-btn-active' : 'bw-btn';
   const vMode = activeViewMode();
-  viewModeBtn.textContent = vMode === 'pet' ? `🏢 ${s.viewModeOfficeButton}` : `🐾 ${s.viewModePetButton}`;
-  viewModeBtn.title = s.viewModeToggleTitle(vMode);
+  setButtonContent(
+    viewModeBtn,
+    vMode === 'pet' ? 'building' : 'paw',
+    vMode === 'pet' ? s.viewModeOfficeButton : s.viewModePetButton
+  );
+  setTooltip(viewModeBtn, vMode === 'pet' ? s.tipOfficeMode : s.tipPetMode, 'G');
   viewModeBtn.setAttribute('aria-label', s.viewModeToggleTitle(vMode));
   viewModeBtn.className = vMode === 'pet' ? 'bw-btn bw-btn-active' : 'bw-btn';
-  roamBtn.textContent = `🚶 ${s.roamButton}`;
-  roamBtn.title = s.roamButtonTitle;
+  setButtonContent(roamBtn, 'walk', s.roamButton);
+  setTooltip(roamBtn, s.tipRoam, 'V');
   roamBtn.setAttribute('aria-label', s.roamButtonTitle);
-  roamBtn.className = ownerAvatar.roaming && vMode !== 'pet' ? 'bw-btn bw-btn-active' : 'bw-btn';
-  petCoffeeBtn.textContent = `☕ ${s.petActionCoffee}`;
-  petCoffeeBtn.title = s.petActionCoffeeTitle;
-  petBallBtn.textContent = `🎾 ${s.petActionBall}`;
-  petBallBtn.title = s.petActionBallTitle;
-  petTreatBtn.textContent = `🍪 ${s.petActionTreat}`;
-  petTreatBtn.title = s.petActionTreatTitle;
-  focusBtn.textContent = `🎯 ${s.focusButton}`;
-  focusBtn.title = s.focusButtonTitle;
+  roamBtn.className = ownerAvatar.roaming && vMode === 'office' ? 'bw-btn bw-btn-active' : 'bw-btn';
+  setButtonContent(broadcastBtn, 'tv', s.broadcastButton);
+  setTooltip(broadcastBtn, s.tipStream, 'B');
+  broadcastBtn.setAttribute('aria-label', s.broadcastButtonTitle);
+  broadcastBtn.className = vMode === 'broadcast' ? 'bw-btn bw-btn-active' : 'bw-btn';
+  setTooltip(roamHighFiveBtn, s.tipRoamHighFive, 'H');
+  setTooltip(roamCoffeeBtn, s.tipRoamCoffee, 'K');
+  setButtonContent(petCoffeeBtn, 'coffee', s.petActionCoffee);
+  setTooltip(petCoffeeBtn, s.petActionCoffeeTitle);
+  setButtonContent(petBallBtn, 'ball', s.petActionBall);
+  setTooltip(petBallBtn, s.petActionBallTitle);
+  setButtonContent(petTreatBtn, 'cookie', s.petActionTreat);
+  setTooltip(petTreatBtn, s.petActionTreatTitle);
+  setButtonContent(petExitBtn, 'building', s.petExitButton);
+  setTooltip(petExitBtn, s.petExitTip, 'G');
+  setButtonContent(focusBtn, 'crosshair', s.focusButton);
+  setTooltip(focusBtn, s.tipFocus, 'N');
   focusBtn.setAttribute('aria-label', s.focusButtonTitle);
-  collabBtn.textContent = `🕸 ${s.collabButton}`;
-  collabBtn.title = s.collabButtonTitle;
+  setButtonContent(collabBtn, 'network', s.collabButton);
+  setTooltip(collabBtn, s.tipCollab, 'C');
   collabBtn.setAttribute('aria-label', s.collabButtonTitle);
   collabBtn.className = state.showCollabNetwork ? 'bw-btn bw-btn-active' : 'bw-btn';
-  zonesBtn.textContent = `🗺 ${s.zonesButton}`;
-  zonesBtn.title = s.zonesButtonTitle;
+  setButtonContent(zonesBtn, 'map', s.zonesButton);
+  setTooltip(zonesBtn, s.tipZones, 'Z');
   zonesBtn.setAttribute('aria-label', s.zonesButtonTitle);
   zonesBtn.className =
     state.zonesOpen || (activeShowZones() && activeZones().length > 0)
       ? 'bw-btn bw-btn-active'
       : 'bw-btn';
-  photoBtn.textContent = `📸 ${s.photoButton}`;
-  photoBtn.title = s.photoButtonTitle;
+  setButtonContent(studioBtn, 'palette', s.studioButton);
+  setTooltip(studioBtn, s.tipStudio, 'U');
+  studioBtn.setAttribute('aria-label', s.studioButtonTitle);
+  studioBtn.className = state.creatorOpen ? 'bw-btn bw-btn-active' : 'bw-btn';
+  setButtonContent(photoBtn, 'camera', s.photoButton);
+  setTooltip(photoBtn, s.tipPhoto, 'P');
   photoBtn.setAttribute('aria-label', s.photoButtonTitle);
-  redactBtn.title = s.redactToggleTitle;
-  langBtn.textContent = s.langToggleText;
-  langBtn.title = `${s.langToggleTitle} [L]`;
+  setTooltip(redactBtn, s.tipRedact, 'R');
+  setButtonContent(langBtn, 'globe', s.langToggleText);
+  setTooltip(langBtn, s.tipLanguage, 'L');
   langBtn.setAttribute('aria-label', s.langToggleTitle);
-  demoBtn.textContent = isDemoMode() ? s.exitDemoOffice : s.demoButton;
-  demoBtn.title = s.demoToggleTitle;
+  setButtonContent(demoBtn, 'play-circle', isDemoMode() ? s.exitDemoOffice : s.demoButton);
+  setTooltip(demoBtn, s.tipDemo, 'D');
   demoBtn.className = isDemoMode() ? 'bw-btn bw-btn-active' : 'bw-btn';
-  reportBtn.textContent = s.reportButton;
-  reportBtn.title = s.reportButtonTitle;
+  setButtonContent(reportBtn, 'bar-chart', s.reportButton);
+  setTooltip(reportBtn, s.tipReport, 'I');
   reportBtn.setAttribute('aria-label', s.reportButtonTitle);
   reportBtn.className = state.reportOpen ? 'bw-btn bw-btn-active' : 'bw-btn';
-  helpBtn.title = s.shortcutsButtonTitle;
+  setButtonContent(helpBtn, 'help-circle');
+  setTooltip(helpBtn, s.tipShortcuts, '?');
   helpBtn.setAttribute('aria-label', s.shortcutsButtonTitle);
-  helpBtn.className = state.shortcutsOpen ? 'bw-btn bw-btn-active' : 'bw-btn';
+  helpBtn.className = state.shortcutsOpen
+    ? 'bw-btn bw-icon-btn bw-btn-active'
+    : 'bw-btn bw-icon-btn';
   searchInput.placeholder = s.searchPlaceholder;
   searchInput.setAttribute('aria-label', s.searchPlaceholder);
-  searchClearBtn.title = s.searchClearTitle;
+  setTooltip(searchInput, s.tipSearchInput, '/');
+  setTooltip(searchClearBtn, s.tipSearchClear, 'Esc');
   searchClearBtn.setAttribute('aria-label', s.searchClearTitle);
   updateCameraHud(locale);
   demoHintText.textContent = s.demoModeHint;
   demoHintBanner.classList.toggle('bw-hidden', !isDemoMode());
-  refreshBtn.textContent = s.refresh;
+  setButtonContent(refreshBtn, 'refresh-cw', s.refresh);
+  setTooltip(refreshBtn, s.tipRefresh);
   liveBtn.textContent = s.live;
-  playBtn.title = s.playToggleTitle;
+  setTooltip(liveBtn, s.tipTimelineLive);
+  setTooltip(playBtn, s.tipTimelinePlay, 'Space');
   speedSeg.setAttribute('aria-label', s.speedAriaLabel);
+  for (const [spd, btn] of speedButtons.entries()) {
+    setTooltip(btn, s.tipTimelineSpeed(spd));
+  }
   scrubber.setAttribute('aria-label', s.scrubberAriaLabel);
   drawerToggleBtn.textContent = s.eventLog;
+  setTooltip(drawerToggleBtn, s.tipTimelineDrawer);
 }
 
 function renderToolbarOnly(
@@ -1744,7 +2259,11 @@ function renderToolbarOnly(
   const hasCustomSeats = Object.keys(activeCustomPositions()).length > 0;
   resetSeatsBtn.classList.toggle('bw-hidden', !hasCustomSeats);
 
-  redactBtn.textContent = redactMode ? s.redactOn : s.redactOff;
+  setButtonContent(
+    redactBtn,
+    redactMode ? 'eye-off' : 'eye',
+    redactMode ? s.redactOn : s.redactOff
+  );
   redactBtn.className = redactMode ? 'bw-btn bw-btn-warn' : 'bw-btn';
 
   if (isDemoMode()) {
@@ -1768,10 +2287,12 @@ function renderTimelineControlsOnly(snap: WorldSnapshot, locale: UiLocale): void
   const s = tStrings(locale);
   liveBtn.className = !replay.isReplay ? 'bw-btn bw-btn-active' : 'bw-btn';
   playBtn.textContent = replay.isReplay && replay.isPlaying ? s.pause : s.play;
-  timelapseBtn.textContent = timelapse.active
-    ? `⏱ ${timelapse.formatProgress()}`
-    : `⏱ ${s.timelapseButton}`;
-  timelapseBtn.title = s.timelapseButtonTitle;
+  setButtonContent(
+    timelapseBtn,
+    'clock',
+    timelapse.active ? timelapse.formatProgress() : s.timelapseButton
+  );
+  setTooltip(timelapseBtn, s.tipTimelineTimelapse);
   timelapseBtn.setAttribute('aria-label', s.timelapseButtonTitle);
   timelapseBtn.className = timelapse.active ? 'bw-btn bw-btn-active' : 'bw-btn';
   for (const [spd, btn] of speedButtons.entries()) {
@@ -1800,6 +2321,7 @@ function renderFilterBarOnly(
     btn.textContent = `${s.filterPresetLabels[preset]} (${counts[preset]})`;
     btn.className =
       state.filterPreset === preset ? 'bw-filter-chip bw-filter-chip-active' : 'bw-filter-chip';
+    setTooltip(btn, s.tipFilterPreset(preset));
   }
   searchClearBtn.classList.toggle('bw-hidden', state.searchQuery.length === 0);
   if (isFilterActive(state.filterPreset, state.searchQuery)) {
@@ -1846,13 +2368,22 @@ function renderStageFrame(
   const wKind = resolveWeatherKind(wMode, phase, themeId);
   soundscape.updateAmbientContext(wKind, phase, themeId);
 
+  const broadcastActive = isBroadcastMode();
   const petActive = isPetMode();
+  const creatorAssets = activeCreatorAssets();
+  root.classList.toggle('bw-broadcast-active', broadcastActive);
   canvasEl.classList.toggle('bw-hidden', petActive);
   petCanvasEl.classList.toggle('bw-hidden', !petActive);
   cameraHud.classList.toggle('bw-hidden', petActive);
-  petActionStrip.classList.toggle('bw-hidden', !petActive);
+  petActionStrip.classList.toggle('bw-hidden', !petActive || broadcastActive);
   stageOverlayNote.classList.toggle('bw-stage-overlay-note-pet', petActive);
   stageWrap.classList.toggle('bw-stage-pet-mode', petActive);
+  broadcastBar.update({
+    active: broadcastActive,
+    chromaKey: state.broadcastChromaKey,
+    redactMode,
+    locale,
+  });
   petRenderer.setActive(petActive);
   if (petActive) {
     petRenderer.update({
@@ -1866,6 +2397,10 @@ function renderStageFrame(
       botAppearances: appearances,
       locale,
       filterMatchedBotIds,
+      customAvatars: creatorAssets.customAvatars,
+      rpgProfiles: activeRpgProfiles(),
+      broadcastMode: broadcastActive,
+      broadcastChromaKey: state.broadcastChromaKey,
     });
   }
 
@@ -1915,6 +2450,8 @@ function renderStageFrame(
       zones: activeZones(),
       showZones: activeShowZones(),
       timelapseActive: timelapse.active,
+      customBackground: creatorAssets.customBackground,
+      customAvatars: creatorAssets.customAvatars,
     });
   } else {
     roamHud.classList.add('bw-hidden');
@@ -1934,6 +2471,7 @@ let lastDetailRedact: boolean | null = null;
 let lastDetailLocale: UiLocale | null = null;
 let lastDetailAppearancesJson = '';
 let lastDetailRpgJson = '';
+let lastDetailCreatorTs = -1;
 
 let lastEventsRef: BotWorldStatePayload['events'] | null = null;
 let lastEventsRedact: boolean | null = null;
@@ -1951,6 +2489,7 @@ function renderSidePanelsIfNeeded(
   const appearancesJson = JSON.stringify(appearances);
   const rpgProfiles = activeRpgProfiles();
   const rpgJson = JSON.stringify(rpgProfiles);
+  const creatorAssets = activeCreatorAssets();
   const demoActive = isDemoMode();
   const detailChanged =
     force ||
@@ -1966,7 +2505,8 @@ function renderSidePanelsIfNeeded(
     redactMode !== lastDetailRedact ||
     locale !== lastDetailLocale ||
     appearancesJson !== lastDetailAppearancesJson ||
-    rpgJson !== lastDetailRpgJson;
+    rpgJson !== lastDetailRpgJson ||
+    creatorAssets.updatedAtMs !== lastDetailCreatorTs;
 
   if (detailChanged) {
     lastDetailDemoMode = demoActive;
@@ -1982,6 +2522,7 @@ function renderSidePanelsIfNeeded(
     lastDetailLocale = locale;
     lastDetailAppearancesJson = appearancesJson;
     lastDetailRpgJson = rpgJson;
+    lastDetailCreatorTs = creatorAssets.updatedAtMs;
 
     const selectedBot =
       selectedId && isSafeKey(selectedId) && Object.hasOwn(snap.bots, selectedId)
@@ -1991,6 +2532,10 @@ function renderSidePanelsIfNeeded(
       redactMode,
       locale,
     });
+    const customAvatarUrl =
+      selectedBot && Object.hasOwn(creatorAssets.customAvatars, selectedBot.id)
+        ? validateCustomAssetDataUrl(creatorAssets.customAvatars[selectedBot.id], 'avatar')
+        : null;
 
     renderBotDetail(detailSidebar, {
       snapshot: snap,
@@ -2006,6 +2551,10 @@ function renderSidePanelsIfNeeded(
       onSelectCharacter: (botId, charId) => void setBotAppearance(botId, charId).catch(() => {}),
       onFocusTerminal: (terminalId) => void focusTerminal(terminalId).catch(() => {}),
       onOpenWorkspace: (workspaceId) => void openWorkspace(workspaceId).catch(() => {}),
+      customAvatarUrl,
+      onUploadCustomAvatar: (botId, file) => void handleUploadCustomAvatar(botId, file).catch(() => {}),
+      onResetCustomAvatar: (botId) => void handleResetCustomAvatar(botId).catch(() => {}),
+      onOpenCreatorStudio: () => toggleCreatorStudioModal('avatars'),
     });
   }
 
@@ -2131,6 +2680,7 @@ function renderUi(forceSidePanels = false): void {
   renderShortcutsHelp();
   renderReportModal();
   renderZonesManager();
+  renderCreatorStudio();
 }
 
 function buildDemoPayload(): BotWorldStatePayload | null {
@@ -2193,6 +2743,7 @@ function enterDemoMode(): void {
   demoRedactMode = Boolean(livePayload.redactMode) || Boolean(state.docData.redactMode);
   demoLanguageSetting = livePayload.languageSetting;
   demoAppearances = {};
+  demoCreatorAssets = createEmptyCreatorAssetsState();
   demoCustomPositions = {};
   demoZones = (state.docData.zones ?? []).map((z) => ({ ...z }));
   demoShowZones = state.docData.showZones !== false;
@@ -2237,6 +2788,7 @@ function exitDemoMode(): void {
   }
   state.selectionCleared = false;
   demoSession = null;
+  demoCreatorAssets = createEmptyCreatorAssetsState();
   demoCustomPositions = {};
   demoZones = [];
   demoShowZones = true;
@@ -2289,6 +2841,12 @@ function applyIncomingPayload(nextPayload: BotWorldStatePayload): void {
   }
   prevLiveSnapshot = nextPayload.snapshot;
   state.payload = nextPayload;
+  if (
+    typeof nextPayload.creatorUpdatedAtMs === 'number' &&
+    nextPayload.creatorUpdatedAtMs !== lastCreatorFetchedAtMs
+  ) {
+    void fetchLiveCreatorAssets().catch(() => {});
+  }
   if (replay.isReplay) {
     replay.resyncSnapshot(
       nextPayload.keyframes,
@@ -2384,8 +2942,13 @@ async function cycleSound(fromUserGesture = false): Promise<void> {
   }
 }
 
-async function toggleViewMode(): Promise<void> {
-  const nextMode: ViewMode = activeViewMode() === 'pet' ? 'office' : 'pet';
+async function setViewModeValue(nextMode: ViewMode): Promise<void> {
+  if (nextMode !== 'broadcast') {
+    state.lastNonBroadcastViewMode = nextMode;
+  }
+  if (nextMode === 'pet' || nextMode === 'broadcast') {
+    ownerAvatar.clearKeys();
+  }
   if (isDemoMode()) {
     demoViewMode = nextMode;
     syncDemoTick(false, false);
@@ -2402,6 +2965,27 @@ async function toggleViewMode(): Promise<void> {
   } catch {
     // Keep local view mode even if worker RPC fails
   }
+}
+
+async function toggleViewMode(): Promise<void> {
+  const cur = activeViewMode();
+  const nextMode: ViewMode = cur === 'pet' ? 'office' : 'pet';
+  await setViewModeValue(nextMode);
+}
+
+async function toggleBroadcastMode(): Promise<void> {
+  const cur = activeViewMode();
+  if (cur === 'broadcast') {
+    await setViewModeValue(state.lastNonBroadcastViewMode);
+  } else {
+    state.lastNonBroadcastViewMode = cur === 'pet' ? 'pet' : 'office';
+    await setViewModeValue('broadcast');
+  }
+}
+
+async function exitBroadcastMode(): Promise<void> {
+  if (!isBroadcastMode()) return;
+  await setViewModeValue(state.lastNonBroadcastViewMode);
 }
 
 async function focusTerminal(terminalId: string): Promise<void> {
@@ -2625,6 +3209,7 @@ async function boot(): Promise<void> {
   try {
     orca.on('theme', ({ colorScheme }) => {
       document.documentElement.classList.toggle('light', colorScheme === 'light');
+      document.documentElement.classList.toggle('dark', colorScheme === 'dark');
     });
 
     docSession = await startBotWorldDocSession();
@@ -2640,6 +3225,10 @@ async function boot(): Promise<void> {
       await orca.plugin.request('botWorld.setRedactMode', { redactMode: true });
       initial = await orca.plugin.request('botWorld.getState', { locale: getHostLocale() });
     }
+    if (initial.viewMode === 'pet' || initial.viewMode === 'office') {
+      state.lastNonBroadcastViewMode = initial.viewMode;
+    }
+    void fetchLiveCreatorAssets().catch(() => {});
 
     orca.plugin.on('botWorld.stateUpdated', (payload) => {
       applyIncomingPayload(payload);
@@ -2668,9 +3257,9 @@ const handleGestureUnlock = (): void => {
 
 const handleKeyDown = (ev: KeyboardEvent): void => {
   handleGestureUnlock();
-  const modalOpen = state.shortcutsOpen || state.reportOpen || state.zonesOpen;
+  const modalOpen = state.shortcutsOpen || state.reportOpen || state.zonesOpen || state.creatorOpen;
   if (shouldIgnoreShortcutEvent(ev, { modalOpen })) return;
-  if (!modalOpen && ownerAvatar.roaming && !isPetMode()) {
+  if (!modalOpen && ownerAvatar.roaming && activeViewMode() === 'office') {
     if (ownerAvatar.setMoveKey(ev.key, true)) {
       ev.preventDefault();
       syncOwnerRoamLoop();
@@ -2756,6 +3345,12 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
     case 'toggleViewMode':
       void toggleViewMode().catch(() => {});
       break;
+    case 'toggleBroadcast':
+      void toggleBroadcastMode().catch(() => {});
+      break;
+    case 'toggleCreatorStudio':
+      toggleCreatorStudioModal();
+      break;
     case 'toggleRoam':
       void toggleRoamMode().catch(() => {});
       break;
@@ -2768,10 +3363,13 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
     case 'toggleHelp':
       state.shortcutsOpen = !state.shortcutsOpen;
       if (state.shortcutsOpen) {
+        ownerAvatar.clearKeys();
         state.reportOpen = false;
         state.zonesOpen = false;
+        state.creatorOpen = false;
         renderReportModal();
         renderZonesManager();
+        renderCreatorStudio();
       }
       renderShortcutsHelp();
       syncChromeLocale(currentLocale());
@@ -2782,6 +3380,11 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
         searchInput.value = '';
         searchInput.blur();
         renderUi();
+      } else if (state.creatorOpen) {
+        state.creatorOpen = false;
+        state.creatorStatusMessage = null;
+        renderCreatorStudio();
+        syncChromeLocale(currentLocale());
       } else if (state.zonesOpen) {
         state.zonesOpen = false;
         renderZonesManager();
@@ -2794,6 +3397,8 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
         state.shortcutsOpen = false;
         renderShortcutsHelp();
         syncChromeLocale(currentLocale());
+      } else if (isBroadcastMode()) {
+        void exitBroadcastMode().catch(() => {});
       } else if (timelapse.active) {
         timelapse.stop();
         syncReplayLoop();
@@ -2869,6 +3474,8 @@ function cleanup(): void {
   window.removeEventListener('blur', handleWindowBlur);
   window.removeEventListener('pointerdown', handleGestureUnlock);
   soundscape.dispose();
+  tooltipController.dispose();
+  broadcastBar.dispose();
   docSession?.dispose();
   petRenderer.dispose();
   renderer.dispose();

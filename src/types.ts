@@ -7,7 +7,8 @@ export type AtmospherePhase = 'day' | 'sunset' | 'night';
 export type WeatherMode = 'auto' | 'clear' | 'rain' | 'snow' | 'starlight';
 export type WeatherKind = 'clear' | 'rain' | 'snow' | 'starlight';
 export type SoundMode = 'off' | 'chimes' | 'ambient';
-export type ViewMode = 'office' | 'pet';
+export type ViewMode = 'office' | 'pet' | 'broadcast';
+export type BroadcastChromaKey = 'green' | 'blue' | 'black' | 'charcoal';
 export type PetToyKind = 'coffee' | 'ball' | 'treat';
 export type DeskPropId =
   | 'none'
@@ -52,10 +53,24 @@ export function isValidSoundMode(value: unknown): value is SoundMode {
   return typeof value === 'string' && (VALID_SOUND_MODES as readonly string[]).includes(value);
 }
 
-export const VALID_VIEW_MODES: readonly ViewMode[] = ['office', 'pet'] as const;
+export const VALID_VIEW_MODES: readonly ViewMode[] = ['office', 'pet', 'broadcast'] as const;
 
 export function isValidViewMode(value: unknown): value is ViewMode {
   return typeof value === 'string' && (VALID_VIEW_MODES as readonly string[]).includes(value);
+}
+
+export const VALID_BROADCAST_CHROMA_KEYS: readonly BroadcastChromaKey[] = [
+  'green',
+  'blue',
+  'black',
+  'charcoal',
+] as const;
+
+export function isValidBroadcastChromaKey(value: unknown): value is BroadcastChromaKey {
+  return (
+    typeof value === 'string' &&
+    (VALID_BROADCAST_CHROMA_KEYS as readonly string[]).includes(value)
+  );
 }
 
 export const VALID_PET_TOY_KINDS: readonly PetToyKind[] = ['coffee', 'ball', 'treat'] as const;
@@ -937,6 +952,20 @@ export type OpenWorkspaceResponse = {
   reason?: string;
 };
 
+export type CreatorAssetsState = {
+  packName: string;
+  customBackground: string | null;
+  customAvatars: Record<string, string>;
+  updatedAtMs: number;
+};
+
+export type BotWorldCreatorPack = {
+  version: 1;
+  packName: string;
+  customBackground?: string | null;
+  customAvatars: Record<string, string>;
+};
+
 export type BotWorldStatePayload = {
   snapshot: WorldSnapshot;
   events: WorldEventRecord[];
@@ -955,4 +984,5 @@ export type BotWorldStatePayload = {
   locale: UiLocale;
   languageSetting: LanguageSetting;
   weeklyTrend?: DailyTrendPoint[];
+  creatorUpdatedAtMs?: number;
 };

@@ -2,13 +2,13 @@
 
 # Bot World for Orca
 
-**Turn your Orca bots and live sub-workers into a living isometric office, Pocket Pet terrarium, and local Bot RPG — read-only by default, with zero external network calls.**
+**Turn your Orca bots and live sub-workers into a living isometric office, Pocket Pet terrarium, Broadcast Chroma Bar, and local Bot RPG — read-only by default, with zero external network calls.**
 
-![Version 0.8.0](https://img.shields.io/badge/version-0.8.0-2563eb) ![Orca >= 1.4.265](https://img.shields.io/badge/Orca-%3E%3D1.4.265-0f766e) ![License MIT](https://img.shields.io/badge/license-MIT-475569) ![Privacy First](https://img.shields.io/badge/privacy--first-zero%20external%20network-16a34a)
+![Version 0.9.0](https://img.shields.io/badge/version-0.9.0-2563eb) ![Orca >= 1.4.265](https://img.shields.io/badge/Orca-%3E%3D1.4.265-0f766e) ![License MIT](https://img.shields.io/badge/license-MIT-475569) ![Privacy First](https://img.shields.io/badge/privacy--first-zero%20external%20network-16a34a)
 
 ![Bot World live preview](assets/showcase/preview.gif)
 
-*Virtual Office, Pocket Pet Terrarium (`G`), Bot RPG & Owner Roaming (`V`/`H`/`K`), Opt-In Quick Send, and 24h Office Digest (`I`) — all running locally inside Orca.*
+*Virtual Office, Pocket Pet Terrarium (`G`), Broadcast Chroma Bar (`B`), Creator Studio (`U`), Bot RPG (`V`/`H`/`K`), Quick Send, and 24h Digest (`I`) — all running locally inside Orca.*
 
 ## Quick Start
 
@@ -20,7 +20,7 @@
    git clone https://github.com/ddochi-nyang/bot-world-plugin.git && cd bot-world-plugin && orca plugin dev load .
    ```
 2. **Open a view**: Click **Bot World** in the Orca status bar (Sidebar Panel) or create **New File → New Bot World Board (`.botworld`)** for the full-screen 2-column stage and 24h timeline.
-3. **Preview instantly**: Click **Try Demo Office** on an empty workspace (or **Demo** in the toolbar) to test live animations, RPG props, Pocket Pet toys, and Quick Send with zero CLI writes.
+3. **Preview instantly**: Click **Try Demo Office** on an empty workspace (or **Demo** in the toolbar) to test live animations, RPG props, Pocket Pet toys, Broadcast Chroma Bar, and Creator Studio with zero CLI writes.
 
 ## Highlights
 
@@ -30,14 +30,15 @@
 - **Pocket Pet & Quick Send**
   - Switch to Pocket Pet Terrarium (`G`) in either the sidebar or `.botworld` board — pet bots for heart reactions or toss **☕ Coffee / 🎾 Ball / 🍪 Treat** toys.
   - Opt-in **Quick Send** paper planes from the Owner Desk (`allowQuickSend`, default `false`) plus 1-click **↗ Terminal** and **↗ Workspace** teleport.
+- **Creator Studio & Broadcast Bar**
+  - Open **Creator Studio** (`U`) to drag-and-drop custom bot avatars and office backgrounds (canvas-sanitized raster PNG/JPEG, SVG/HTML blocked) and share portable `.botworld-pack.json` asset packs.
+  - Switch to the OBS/streaming **Broadcast Chroma-Key Pet Bar** (`B`) with Green/Blue/Black/Charcoal chroma keys, hover-reveal exit pill, and universal native hover tooltips across every control.
 - **Bot RPG & Owner Roaming**
   - Privacy-safe local XP & leveling (`Lv.1 Intern` → `Lv.6+ Archmage`) unlocks 6 pixel desk props (`🦆`, `🪴`, `⌨️`, `🖥️`, `🐱`, `🏆`) displayed right on each bot's desk.
   - Toggle **Owner Avatar Roaming** (`V`), walk with `WASD` / Arrow keys / canvas double-click, press `H` for **High-Five** (`+8 XP`) or `K` for **Hand Coffee** (`+10 XP`), and enjoy idle watercooler banter.
-- **Replay, Digest & Sharing**
-  - Scrub 24 hours of recorded snapshots, play a **10-second Daily Timelapse**, and inspect the **24h Office Digest** (`I`) with KPIs, Daily MVP badges, Bot Growth & Levels, a **7-Day Weekly Trend**, and 1-click **Copy Markdown**.
-  - Export a clean **PNG Photo Card** (`P`) with dark-glass KPIs and Redact status locally.
-- **Privacy-First by Design**
-  - Read-only by default, one-click **Redact Mode** (`R`), strict `connect-src 'none'` CSP with zero telemetry/external network, and opt-in guards for Quick Send (`allowQuickSend: false`) and OS Desktop Notifications (`desktopNotifications: false`).
+- **Replay, Digest & Privacy-First Design**
+  - Scrub 24h snapshots, play a **10s Daily Timelapse**, inspect the **24h Office Digest** (`I`) with Daily MVP, Bot Growth, and **7-Day Weekly Trend**, or save a **PNG Photo Card** (`P`).
+  - Read-only by default, one-click **Redact Mode** (`R`), strict `connect-src 'none'` CSP with zero external network, and opt-in guards for Quick Send and OS Desktop Notifications.
 
 ## Showcase
 
@@ -45,7 +46,7 @@
   <tr>
     <td width="50%" align="center" valign="top">
       <img src="assets/showcase/office-rpg-roam.jpg" alt="Bot World Owner Avatar Roaming, High-Five proximity HUD, and RPG desk props" />
-      <br /><strong>Owner Roaming &amp; RPG Desk Props (v0.8.0)</strong><br />
+      <br /><strong>Owner Roaming &amp; RPG Desk Props</strong><br />
       <sub>Walk the floor (<code>V</code>), trigger proximity <code>H</code> High-Five / <code>K</code> Coffee, and unlock desk props.</sub>
     </td>
     <td width="50%" align="center" valign="top">
@@ -56,21 +57,21 @@
   </tr>
   <tr>
     <td width="50%" align="center" valign="top">
-      <img src="assets/showcase/office-quicksend.jpg" alt="Bot World opt-in Quick Send bar launching a golden paper-plane courier" />
-      <br /><strong>Opt-In Quick Send Paper Planes</strong><br />
-      <sub>Golden paper-plane dispatch from the Owner Desk (opt-in in Live Mode, active in Demo).</sub>
+      <img src="assets/showcase/broadcast-chroma.jpg" alt="Bot World Broadcast Chroma-Key Pet Bar with Green chroma background and hover-reveal toolbar" />
+      <br /><strong>Broadcast Chroma-Key Pet Bar (v0.9.0)</strong><br />
+      <sub>OBS-ready Green/Blue/Black/Charcoal chroma bar with hover-reveal exit pill (<code>B</code>).</sub>
     </td>
     <td width="50%" align="center" valign="top">
-      <img src="assets/showcase/rpg-detail-props.jpg" alt="Bot World detail inspector showing Bot Level, XP progress bar, and desk prop selector" />
-      <br /><strong>Bot Level, XP Bar &amp; Prop Selector (v0.8.0)</strong><br />
-      <sub>Inspect XP progress, interaction counts, and equip unlocked pixel desk props.</sub>
+      <img src="assets/showcase/creator-studio.jpg" alt="Bot World Creator Studio modal for custom avatars, backgrounds, and .botworld-pack.json export" />
+      <br /><strong>Creator Studio &amp; Asset Packs (v0.9.0)</strong><br />
+      <sub>Drag-and-drop canvas-sanitized avatars &amp; backgrounds and export <code>.botworld-pack.json</code> (<code>U</code>).</sub>
     </td>
   </tr>
   <tr>
     <td width="50%" align="center" valign="top">
-      <img src="assets/showcase/cozy-rain.jpg" alt="Bot World Cozy Cafe Sunset theme with Rain weather particles and Ambient soundscape" />
-      <br /><strong>Cozy Cafe Sunset + Rain &amp; Soundscape</strong><br />
-      <sub>Themed ambient weather (<code>W</code>), Web Audio soundbed (<code>M</code>), and flying couriers.</sub>
+      <img src="assets/showcase/office-quicksend.jpg" alt="Bot World opt-in Quick Send bar launching a golden paper-plane courier" />
+      <br /><strong>Opt-In Quick Send Paper Planes</strong><br />
+      <sub>Golden paper-plane dispatch from the Owner Desk (opt-in in Live Mode, active in Demo).</sub>
     </td>
     <td width="50%" align="center" valign="top">
       <img src="assets/showcase/office-report.jpg" alt="Bot World 24h Office Digest modal with Bot Growth and Levels and 7-Day Weekly Trend" />
@@ -81,12 +82,13 @@
 </table>
 
 <details>
-<summary>More screenshots (8 additional views)</summary>
+<summary>More screenshots (10 additional views)</summary>
 
 | View | Preview | View | Preview |
 | :--- | :---: | :--- | :---: |
 | **Startup Office** | ![Startup Office](assets/showcase/startup-office.jpg) | **Corporate Office** | ![Corporate Office](assets/showcase/corporate-office.jpg) |
 | **Cyber Ops** | ![Cyber Ops](assets/showcase/cyber-ops.jpg) | **Night Atmosphere** | ![Night Office](assets/showcase/night-office.jpg) |
+| **Cozy Cafe + Rain (`W`)** | ![Cozy Cafe Rain](assets/showcase/cozy-rain.jpg) | **RPG Level & Desk Props** | ![RPG Detail Props](assets/showcase/rpg-detail-props.jpg) |
 | **Team Zones (`Z`)** | ![Team Zones](assets/showcase/team-zones.jpg) | **Redact & 24h Replay (`R`)** | ![Redact & Replay](assets/showcase/redact-replay.jpg) |
 | **Collab Network (`C`)** | ![Collab Network](assets/showcase/command-collab.jpg) | **Compact Sidebar Panel** | ![Compact Sidebar Panel](assets/showcase/sidebar-panel.jpg) |
 
@@ -96,7 +98,8 @@
 
 | Key | Action | Key | Action |
 | :---: | :--- | :---: | :--- |
-| `G` | Toggle Office ↔ Pocket Pet | `M` | Cycle sound (`Off` / `Chimes` / `Ambient`) |
+| `G` | Toggle Office ↔ Pocket Pet | `B` | Toggle Broadcast Chroma-Key Pet Bar |
+| `U` | Open / close Creator Studio | `M` | Cycle sound (`Off` / `Chimes` / `Ambient`) |
 | `V` | Toggle Owner Avatar Roaming (`WASD`/Arrows) | `I` | Open / close 24h Office Digest |
 | `H` / `K` | High-Five / Hand Coffee to nearby bot | `P` | Save 1-click PNG Photo Card |
 | `T` | Cycle 4 office themes | `R` | Toggle Redact Mode (`ON` / `OFF`) |
@@ -107,8 +110,8 @@ See [Full Shortcuts, Settings & Security Reference](./docs/REFERENCE.md) for all
 ## Security & Privacy Summary
 
 - **Read-Only & Opt-In Writes**: CLI polling uses a strict `assertAllowedSubcommand()` allowlist (`execFile`, `shell: false`). Both `allowQuickSend` and `desktopNotifications` default to `false`, and `workspace:write` is used solely for 1-click `terminal.focus` / `workspace.open` teleport.
-- **Zero External Network**: Isolated custom editor frame (`frame: "isolated"`) with `connect-src 'none'`; all audio, particles, PNG photo cards, and XP storage run 100% locally.
-- **PII Scrubbing & Redact Mode**: Secrets, tokens, emails, cards, and 12-digit AWS account IDs are masked before storage or rendering; `botWorld.weeklyTrend` and `botWorld.rpg.v1` store numeric rollups only.
+- **Zero External Network**: Isolated custom editor frame (`frame: "isolated"`) with `connect-src 'none'`; all audio, particles, PNG photo cards, Creator Studio re-encoding, and XP storage run 100% locally.
+- **PII Scrubbing & Redact Mode**: Secrets, tokens, emails, cards, and 12-digit AWS account IDs are masked before storage or rendering; `botWorld.weeklyTrend`, `botWorld.rpg.v1`, and `botWorld.creator.v1` enforce strict schemas with zero PII.
 - **XSS-Safe DOM**: Built exclusively with `textContent` and `createTextNode` (zero `innerHTML` or `eval`).
 
 Full details: [Security & Permissions Reference](./docs/REFERENCE.md#security--permissions).

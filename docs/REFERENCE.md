@@ -1,6 +1,6 @@
 [English README](../README.md) · [한국어 README](../README.ko.md) · **Full Reference**
 
-# Bot World Technical Reference (`v0.8.0`)
+# Bot World Technical Reference (`v0.9.0`)
 
 Complete reference for plugin settings, keyboard shortcuts, Bot RPG mechanics, security architecture, verification commands, and release history.
 
@@ -18,13 +18,14 @@ Complete reference for plugin settings, keyboard shortcuts, Bot RPG mechanics, s
 | `language` | `string` | `auto`, `en`, `ko` | `auto` | Display language (`auto` follows Orca UI locale). |
 | `atmosphereMode` | `string` | `auto`, `day`, `sunset`, `night` | `auto` | Time-of-day lighting (`auto` follows live or replay timestamp; `day` 07:00–16:59, `sunset` 17:00–19:59, `night` 20:00–06:59). |
 | `weatherMode` | `string` | `auto`, `clear`, `rain`, `snow`, `starlight` | `auto` | Ambient weather effect (`auto` matches active theme and time of day). |
-| `viewMode` | `string` | `office`, `pet` | `office` | Default visualization mode (`Isometric Office` or `Pocket Pet Terrarium`). |
+| `viewMode` | `string` | `office`, `pet`, `broadcast` | `office` | Default visualization mode (`Isometric Office`, `Pocket Pet Terrarium`, or `Broadcast Chroma Bar`). |
 | `allowQuickSend` | `boolean` | `true` / `false` | `false` | Opt-in: allow sending messages to Orca bots from the Quick Send bar (disabled by default for read-only safety). |
 | `desktopNotifications` | `boolean` | `true` / `false` | `false` | Opt-in: OS desktop alerts when a bot enters `Needs You` or `Error` state (disabled by default; Redact-safe). |
 
 ### Workspace & UI Preferences
 
 - **`soundMode`** (`off` | `chimes` | `ambient`, default `off`): Toggled via `M` or the toolbar button and persisted locally in `botWorld.prefs`. Only synthesizes Web Audio cues after an explicit user gesture.
+- **`broadcastChroma`** (`green` | `blue` | `black` | `charcoal`, default `green`): Chroma-key backdrop color for the Broadcast Chroma Bar (`B`), persisted locally in `botWorld.prefs`.
 - **`.botworld` Document Fields**: Custom board files store view preferences only (`themeId`, `atmosphereMode`, `weatherMode`, `redactMode`, `selectedBotId`, `botAppearances`, `customDeskPositions`, `zones`, `showZones`) and never persist sensitive task text.
 - **24h Replay Timeline**: Automatically records sanitized snapshots into `botWorld.timeline` for 24h scrubbing (`1x`, `2x`, `5x`, `10x`) and 10-second Daily Timelapse playback.
 
@@ -41,6 +42,8 @@ All shortcuts work outside text inputs in both the Sidebar Panel and `.botworld`
 | `W` | Cycle weather (`Auto` → `Clear` → `Rain` → `Snow` → `Starlight`) | Panel & `.botworld` |
 | `M` | Cycle sound mode (`Off` → `Chimes` → `Ambient`) | Panel & `.botworld` |
 | `G` | Toggle visualization mode (`Office` ↔ `Pocket Pet Terrarium`) | Panel & `.botworld` |
+| `B` | Toggle Broadcast Chroma-Key Pet Bar (`ON` / `OFF`) | Panel & `.botworld` |
+| `U` | Open / close Creator Studio | Panel & `.botworld` |
 | `V` | Toggle Owner Avatar Roaming (`ON` / `OFF`) | Panel & `.botworld` |
 | `WASD` / `Arrow` / Double-click | Walk Owner Avatar across the office floor (when Roaming is `ON`) | Stage Canvas |
 | `H` | High-Five nearby bot (`+8 XP`, 3s cooldown) | Panel & `.botworld` |
@@ -91,7 +94,7 @@ Bot World is built as a **read-only-by-default**, zero-egress plugin with strict
 
 | Capability | Purpose & Strict Scope |
 | --- | --- |
-| `storage:own` | Persists `botWorld.prefs`, `botWorld.timeline`, `botWorld.weeklyTrend`, and `botWorld.rpg.v1` locally inside plugin storage. |
+| `storage:own` | Persists `botWorld.prefs`, `botWorld.timeline`, `botWorld.weeklyTrend`, `botWorld.rpg.v1`, and `botWorld.creator.v1` locally inside plugin storage. |
 | `settings:own` | Reads and reacts to user-configured plugin settings in Orca. |
 | `agent:read` | Reads live bot, chat, worktree, orchestration, and automation snapshots. |
 | `workspace:write` | Used exclusively for 1-click teleport (`terminal.focus` and `workspace.open`) on `↗ Terminal` / `↗ Workspace` clicks — never writes files or workspace config. |
@@ -99,7 +102,7 @@ Bot World is built as a **read-only-by-default**, zero-egress plugin with strict
 
 ### Runtime & Storage Guards
 
-- **Zero External Network (`connect-src 'none'`)**: Both `panel/index.html` and `editor/index.html` enforce `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none';`, and the `.botworld` editor runs with `"frame": "isolated"`.
+- **Zero External Network (`connect-src 'none'`)**: Both `panel/index.html` and `editor/index.html` enforce `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none';`, and the `.botworld` editor runs with `"frame": "isolated"`.
 - **XSS-Safe DOM**: Renders UI solely via `textContent` and `createTextNode` (`shared/dom.ts`), with zero `innerHTML` or `eval`.
 - **CLI Subcommand Allowlist & Safe Spawn**: Read-only polling runs via `execFile(..., { shell: false })` with `TRUSTED_ORCA_PATHS`, symlink/ownership checks, `buildMinimalSafeEnv()`, and `assertAllowedSubcommand()` permitting only:
   - `status --json`
@@ -114,7 +117,8 @@ Bot World is built as a **read-only-by-default**, zero-egress plugin with strict
   - `scrubAll()` masks AWS access keys, Slack/GitHub/Bearer/API tokens, webhook URLs, PEM private key blocks, email addresses, payment card numbers, and 12-digit AWS account IDs before storage or rendering.
   - `botWorld.weeklyTrend` stores daily integer rollups only (`date`, `events`, `tasksDone`, `workerRuns`, `collaborations`).
   - `botWorld.rpg.v1` stores numeric counters and `equippedProp` IDs only (capped at `MAX_RPG_PROFILES = 256`, zero task text or PII).
-  - **Redact Mode (`R`)** masks bot names (`Bot #1` / `봇 #1`), task titles, tool labels, banter/pet details, Team Zone labels (`Zone #1` / `구역 #1`), 24h Digest text, and OS desktop notifications.
+  - `botWorld.creator.v1` stores user-uploaded custom avatars and office backgrounds via canvas-reencoded raster PNG/JPEG only (raw uploads capped at `4 MiB`; SVG, HTML, and non-raster payloads blocked; avatars cropped/re-encoded to `128×128` or `96×96` PNG `<= 120 KiB` up to `24` entries; backgrounds scaled up to `1600×1000` JPEG `<= 450 KiB`; stored payload capped at `900 KiB`; `.botworld-pack.json` export/import capped at `1,200 KiB` with `slot-N` keys, path stripping, and `scrubAll()` on pack names for zero PII).
+  - **Redact Mode (`R`)** masks bot names as `Bot #N` / `봇 #N` across Pet mode, Broadcast mode, Quick Send, sidebar quick pills, filters, hover HUD, 24h Digest & Markdown export, and OS desktop notifications, while scrubbing secrets (`scrubAll()`) on stage labels/detail headers and masking all task titles, tool badges, and Team Zones (`Zone #N` / `구역 #N`).
 
 ---
 
@@ -130,8 +134,9 @@ orca plugin test . --json
 
 ---
 
-## Release History (`v0.1.0` → `v0.8.0`)
+## Release History (`v0.1.0` → `v0.9.0`)
 
+- **`v0.9.0`**: Creator Studio (`U`) for canvas-sanitized custom avatars, office backgrounds, and `.botworld-pack.json` sharing (`botWorld.creator.v1`); Broadcast Chroma-Key Pet Bar (`B`) with Green/Blue/Black/Charcoal keys & hover-reveal exit pill; universal native hover tooltips across every control; and Redact Mode (`R`) alias coverage across Pet/Broadcast/Quick Send/pills/filters/hover HUD/notifications.
 - **`v0.8.0`**: Bot RPG XP/leveling (`Lv.1 Intern` → `Lv.6+ Archmage`) with 6 desk props, Owner Avatar Roaming (`V`, `H` High-Five, `K` Hand Coffee), idle watercooler banter, opt-in OS desktop notifications (`desktopNotifications`), and RPG growth in the 24h Digest.
 - **`v0.7.0`**: Pocket Pet Terrarium mode (`G`) with headpats & toys (`☕`/`🎾`/`🍪`), 1-click Terminal/Workspace teleport (`↗ Terminal`/`↗ Workspace`), and opt-in Quick Send paper planes (`allowQuickSend`).
 - **`v0.6.0`**: 1-click PNG Photo Card (`P`), 10-second Daily Timelapse, PII-free 7-Day Weekly Activity Trend, and `.botworld` Team Zones (`Z`).

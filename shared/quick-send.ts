@@ -3,6 +3,7 @@ import { type UiLocale, type WorldSnapshot, isSafeKey } from '../src/types.ts';
 import { clearChildren, el } from './dom.ts';
 import { getBotRedactedAlias, orderedSnapshotBotIds } from './filter.ts';
 import { tStrings } from './i18n.ts';
+import { clearTooltip, setTooltip } from './tooltip.ts';
 
 export type QuickSendBarState = {
   snapshot: WorldSnapshot;
@@ -154,6 +155,7 @@ export class QuickSendBar {
     if (this.lastLocale !== state.locale) {
       this.lastLocale = state.locale;
       this.targetSelect.setAttribute('aria-label', s.quickSendTargetAria);
+      setTooltip(this.targetSelect, s.tipQuickSendTarget);
       this.input.placeholder = s.quickSendPlaceholder;
       this.input.setAttribute('aria-label', s.quickSendTitle);
 
@@ -165,7 +167,7 @@ export class QuickSendBar {
             {
               type: 'button',
               className: 'bw-quicksend-chip',
-              title: chip.prompt,
+              tooltip: chip.prompt,
               onClick: () => {
                 this.input.value = chip.prompt;
                 this.input.focus();
@@ -185,14 +187,15 @@ export class QuickSendBar {
 
     if (!state.demoMode && !state.allowQuickSend) {
       this.readOnlyBadge.textContent = s.quickSendReadOnlyBadge;
-      this.readOnlyBadge.title = s.quickSendDisabledTooltip;
+      setTooltip(this.readOnlyBadge, s.quickSendDisabledTooltip);
       this.readOnlyBadge.classList.remove('bw-hidden');
-      this.sendBtn.title = s.quickSendDisabledTooltip;
-      this.input.title = s.quickSendDisabledTooltip;
+      setTooltip(this.sendBtn, s.quickSendDisabledTooltip);
+      setTooltip(this.input, s.quickSendDisabledTooltip);
     } else {
       this.readOnlyBadge.classList.add('bw-hidden');
-      this.sendBtn.title = canSend ? s.quickSendButton : '';
-      this.input.title = '';
+      clearTooltip(this.readOnlyBadge);
+      setTooltip(this.sendBtn, canSend ? s.tipQuickSendSend : s.quickSendButton);
+      clearTooltip(this.input);
     }
   }
 }

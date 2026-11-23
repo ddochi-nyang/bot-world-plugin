@@ -112,7 +112,7 @@ describe('Prototype pollution, document validation, and static XSS checks', () =
             content.includes('Content-Security-Policy') &&
               content.includes("connect-src 'none'") &&
               content.includes("style-src 'self';") &&
-              content.includes("img-src 'self';"),
+              content.includes("img-src 'self' data:;"),
             `Strict CSP missing in ${file}`
           );
         }

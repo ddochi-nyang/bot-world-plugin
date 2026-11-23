@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "bot-world",
   "name": "Bot World",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Virtual office & Pocket Pet visualizer for Orca bots and live sub-workers (read-only by default, opt-in Quick Send)",
   "license": "MIT",
   "author": {
@@ -228,14 +228,16 @@
         "type": "string",
         "enum": [
           "office",
-          "pet"
+          "pet",
+          "broadcast"
         ],
         "enumLabels": [
           "Isometric Office",
-          "Pocket Pet Terrarium"
+          "Pocket Pet Terrarium",
+          "Broadcast Chroma Bar"
         ],
         "default": "office",
-        "description": "Default visualization mode (office canvas or compact Pocket Pet terrarium)"
+        "description": "Default visualization mode (office canvas, compact Pocket Pet terrarium, or chroma-key Broadcast bar)"
       },
       {
         "key": "allowQuickSend",

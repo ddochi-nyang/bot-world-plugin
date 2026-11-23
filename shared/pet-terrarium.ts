@@ -3,7 +3,9 @@ import {
   type AtmosphereMode,
   type AtmospherePhase,
   type BotActivityStatus,
+  type BotRpgProfile,
   type BotState,
+  type BroadcastChromaKey,
   type CharacterId,
   type PetToyKind,
   type ThemeId,
@@ -19,6 +21,8 @@ import {
   resolveCharacterIdWithPrefs,
   resolveCharacterSpritePath,
 } from './assets-catalog.ts';
+import { getBroadcastChromaColor } from './broadcast-bar.ts';
+import { validateCustomAssetDataUrl } from './creator-studio.ts';
 import { getBotRedactedAlias, orderedSnapshotBotIds } from './filter.ts';
 import { tStrings } from './i18n.ts';
 import { resolveAtmospherePhase } from './stage-renderer.ts';
@@ -45,7 +49,207 @@ type PlacedBadgeRect = {
   left: number;
   right: number;
   cy: number;
+  halfH: number;
 };
+
+export type NameplateItemInput = {
+  botId: string;
+  label: string;
+  anchorCx: number;
+  pillW: number;
+  baseY: number;
+  statusDotColor: string;
+  selected: boolean;
+  dimmed: boolean;
+};
+
+export type NameplateBox = NameplateItemInput & {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  tier: number;
+};
+
+const RPG_LEVEL_SUFFIX_RE = /^(.*?)( · Lv\.\d+)$/;
+
+export function truncateCanvasLabel(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidthPx: number
+): string {
+  if (!text || maxWidthPx <= 0) return '';
+  if (ctx.measureText(text).width <= maxWidthPx) return text;
+
+  const lvMatch = RPG_LEVEL_SUFFIX_RE.exec(text);
+  if (lvMatch) {
+    const prefix = lvMatch[1] ?? '';
+    const suffix = lvMatch[2] ?? '';
+    const minNeeded = ctx.measureText(`…${suffix}`).width;
+    if (minNeeded < maxWidthPx - 8 && prefix.length > 1) {
+      let lo = 1;
+      let hi = prefix.length;
+      let best = '';
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        const cand = `${prefix.slice(0, mid).trimEnd()}…${suffix}`;
+        if (ctx.measureText(cand).width <= maxWidthPx) {
+          best = cand;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
+      }
+      if (best) return best;
+    }
+  }
+
+  let lo = 1;
+  let hi = text.length;
+  let best = `${text.slice(0, 1)}…`;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const cand = `${text.slice(0, mid).trimEnd()}…`;
+    if (ctx.measureText(cand).width <= maxWidthPx) {
+      best = cand;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return best;
+}
+
+export function resolveNameplateBoxes(
+  items: readonly NameplateItemInput[],
+  options: {
+    canvasWidth: number;
+    canvasHeight: number;
+    railBaseY: number;
+    pillH: number;
+    tierStepY: number;
+    minGapX?: number;
+    maxNudgeX?: number;
+    marginX?: number;
+    maxTiers?: number;
+  }
+): NameplateBox[] {
+  if (items.length === 0) return [];
+  const marginX = options.marginX ?? 6;
+  const minGapX = options.minGapX ?? 6;
+  const maxNudgeX = options.maxNudgeX ?? 34;
+  const maxTiers = Math.max(2, options.maxTiers ?? 3);
+
+  const sorted = [...items].sort((a, b) => a.anchorCx - b.anchorCx || a.botId.localeCompare(b.botId));
+  const tierBoxes: Array<Array<{ left: number; right: number }>> = [];
+  const placed: NameplateBox[] = [];
+
+  const collidesInTier = (tier: number, left: number, right: number): boolean => {
+    const list = tierBoxes[tier];
+    if (!list) return false;
+    return list.some((b) => !(right + minGapX <= b.left || left - minGapX >= b.right));
+  };
+
+  const findNudgedX = (
+    tier: number,
+    idealLeft: number,
+    pillW: number,
+    maxAllowedNudge: number
+  ): number | null => {
+    const minLeft = marginX;
+    const maxLeft = Math.max(marginX, options.canvasWidth - marginX - pillW);
+    const list = tierBoxes[tier] ?? [];
+    const candidates: number[] = [idealLeft];
+    for (const b of list) {
+      candidates.push(b.right + minGapX);
+      candidates.push(b.left - minGapX - pillW);
+    }
+    let bestLeft: number | null = null;
+    let bestDist = Infinity;
+    for (const rawCand of candidates) {
+      const cand = Math.max(minLeft, Math.min(maxLeft, rawCand));
+      const dist = Math.abs(cand - idealLeft);
+      if (dist > maxAllowedNudge) continue;
+      if (!collidesInTier(tier, cand, cand + pillW) && dist < bestDist) {
+        bestDist = dist;
+        bestLeft = cand;
+      }
+    }
+    return bestLeft;
+  };
+
+  for (const item of sorted) {
+    const minLeft = marginX;
+    const maxLeft = Math.max(marginX, options.canvasWidth - marginX - item.pillW);
+    const idealLeft = Math.max(minLeft, Math.min(maxLeft, item.anchorCx - item.pillW * 0.5));
+
+    let chosenTier = -1;
+    let chosenLeft = idealLeft;
+
+    // 1. Prefer centered placement (0 nudge) across primary tiers 0 and 1
+    for (let t = 0; t < Math.min(2, maxTiers); t++) {
+      if (!collidesInTier(t, idealLeft, idealLeft + item.pillW)) {
+        chosenTier = t;
+        chosenLeft = idealLeft;
+        break;
+      }
+    }
+
+    // 2. Otherwise try modest horizontal nudging within maxNudgeX across tiers 0..maxTiers-1
+    if (chosenTier === -1) {
+      for (let t = 0; t < maxTiers; t++) {
+        const nudged = findNudgedX(t, idealLeft, item.pillW, maxNudgeX);
+        if (nudged !== null) {
+          chosenTier = t;
+          chosenLeft = nudged;
+          break;
+        }
+      }
+    }
+
+    // 3. Guaranteed fallback if severely crowded: expand search to full canvas width or extra tier
+    if (chosenTier === -1) {
+      for (let t = 0; t < maxTiers + 6; t++) {
+        const nudged = findNudgedX(t, idealLeft, item.pillW, options.canvasWidth);
+        if (nudged !== null) {
+          chosenTier = t;
+          chosenLeft = nudged;
+          break;
+        }
+      }
+    }
+
+    if (chosenTier === -1) {
+      chosenTier = maxTiers;
+    }
+
+    const right = chosenLeft + item.pillW;
+    if (!tierBoxes[chosenTier]) tierBoxes[chosenTier] = [];
+    tierBoxes[chosenTier].push({ left: chosenLeft, right });
+
+    placed.push({
+      ...item,
+      left: chosenLeft,
+      right,
+      top: 0,
+      bottom: 0,
+      tier: chosenTier,
+    });
+  }
+
+  const maxTierUsed = placed.reduce((acc, box) => Math.max(acc, box.tier), 0);
+  const totalStackH = maxTierUsed * options.tierStepY + options.pillH;
+  const maxStartY = Math.max(4, options.canvasHeight - 4 - totalStackH);
+  const railStartY = Math.max(4, Math.min(options.railBaseY, maxStartY));
+
+  for (const box of placed) {
+    const top = Math.round(railStartY + box.tier * options.tierStepY);
+    box.top = top;
+    box.bottom = top + options.pillH;
+  }
+
+  return placed.sort((a, b) => Number(a.selected) - Number(b.selected));
+}
 
 const CANVAS_FONT_FAMILY =
   '"Pretendard", "Apple SD Gothic Neo", "Inter", system-ui, sans-serif';
@@ -804,6 +1008,10 @@ export type PetRenderInput = {
   botAppearances: Record<string, CharacterId>;
   locale: UiLocale;
   filterMatchedBotIds?: ReadonlySet<string> | null;
+  customAvatars?: Readonly<Record<string, string>>;
+  rpgProfiles?: Readonly<Record<string, BotRpgProfile>>;
+  broadcastMode?: boolean;
+  broadcastChromaKey?: BroadcastChromaKey;
 };
 
 function drawRoundedRect(
@@ -846,6 +1054,7 @@ export class PetTerrariumRenderer {
   private logicalW = 640;
   private logicalH = 280;
   private cssW = 640;
+  private cssH = 280;
   private scale = 1;
 
   constructor(
@@ -879,9 +1088,21 @@ export class PetTerrariumRenderer {
   }
 
   private loadImage(safePath: string): HTMLImageElement | null {
+    if (!safePath.startsWith('../assets/')) {
+      const validCustom = validateCustomAssetDataUrl(safePath, 'avatar');
+      if (!validCustom) return null;
+    }
     const cached = this.imageCache.get(safePath);
     if (cached) {
       return cached.complete && cached.naturalWidth > 0 ? cached : null;
+    }
+    if (this.imageCache.size >= 64) {
+      for (const key of this.imageCache.keys()) {
+        if (key.startsWith('data:')) {
+          this.imageCache.delete(key);
+          if (this.imageCache.size < 48) break;
+        }
+      }
     }
     const img = new Image();
     img.onload = () => {
@@ -908,6 +1129,7 @@ export class PetTerrariumRenderer {
     // Keep logical height comfortably scaled so sprites stay crisp in both narrow sidebar and wide editor
     const baseH = cssH >= 360 ? 320 : 240;
     this.cssW = cssW;
+    this.cssH = cssH;
     this.scale = cssH / baseH;
     this.logicalH = baseH;
     this.logicalW = Math.max(280, Math.round(cssW / Math.max(0.4, this.scale)));
@@ -1032,14 +1254,27 @@ export class PetTerrariumRenderer {
     ctx.setTransform(dpr * s, 0, 0, dpr * s, 0, 0);
     ctx.clearRect(0, 0, w, h);
 
-    // 1. Terrarium Sky / Atmosphere Backdrop
-    this.paintTerrariumBackdrop(ctx, w, h, floor, input.themeId, phase);
+    const broadcastMode = Boolean(input.broadcastMode);
+    if (broadcastMode) {
+      const chromaHex = getBroadcastChromaColor(input.broadcastChromaKey ?? 'green');
+      ctx.fillStyle = chromaHex;
+      ctx.fillRect(0, 0, w, h);
 
-    // 2. Weather particles inside habitat glass
-    this.paintTerrariumWeather(ctx, w, h, weatherKind, phase);
+      // Subtle grounded strip line for OBS / screen-recording clarity without green halo
+      ctx.fillStyle = 'rgba(11, 15, 23, 0.35)';
+      ctx.fillRect(0, floor - 2, w, 4);
+      ctx.fillStyle = 'rgba(248, 250, 252, 0.22)';
+      ctx.fillRect(0, floor - 2, w, 1);
+    } else {
+      // 1. Terrarium Sky / Atmosphere Backdrop
+      this.paintTerrariumBackdrop(ctx, w, h, floor, input.themeId, phase);
 
-    // 3. Shelf / Habitat Floor
-    this.paintShelfFloor(ctx, w, h, floor, input.themeId, phase);
+      // 2. Weather particles inside habitat glass
+      this.paintTerrariumWeather(ctx, w, h, weatherKind, phase);
+
+      // 3. Shelf / Habitat Floor
+      this.paintShelfFloor(ctx, w, h, floor, input.themeId, phase);
+    }
 
     // 4. Dropped Toys (coffee, ball, treat)
     for (const toy of this.engine.toys) {
@@ -1052,16 +1287,52 @@ export class PetTerrariumRenderer {
     const filterSet = input.filterMatchedBotIds ?? null;
     const isNarrow = this.cssW < PET_NARROW_WIDTH_PX || w < PET_NARROW_WIDTH_PX;
     const placedBadges: PlacedBadgeRect[] = [];
+    const nameplateCandidates: Array<{
+      pet: PetEntity;
+      px: number;
+      baseY: number;
+      selected: boolean;
+      dimmed: boolean;
+      plateLabel: string;
+      statusDotColor: string;
+    }> = [];
 
     for (const pet of sortedPets) {
       const dimmed = filterSet !== null && !filterSet.has(pet.botId);
       const selected = input.selectedBotId === pet.botId;
-      this.paintPet(ctx, pet, floor, selected, dimmed, input.redactMode, phase, loc, {
+      const customAvatarUrl =
+        input.customAvatars && isSafeKey(pet.botId) && Object.hasOwn(input.customAvatars, pet.botId)
+          ? validateCustomAssetDataUrl(input.customAvatars[pet.botId], 'avatar')
+          : null;
+      const rpgLevel =
+        input.rpgProfiles && isSafeKey(pet.botId) && Object.hasOwn(input.rpgProfiles, pet.botId)
+          ? input.rpgProfiles[pet.botId].level
+          : null;
+      const plateInfo = this.paintPet(ctx, pet, floor, selected, dimmed, input.redactMode, phase, loc, {
         narrow: isNarrow,
         maxW: w,
         placedBadges,
+        customAvatarUrl,
+        rpgLevel,
+        broadcastMode,
+        dpr,
+      });
+      nameplateCandidates.push({
+        pet,
+        px: plateInfo.px,
+        baseY: plateInfo.baseY,
+        selected,
+        dimmed,
+        plateLabel: plateInfo.plateLabel,
+        statusDotColor: plateInfo.statusDotColor,
       });
     }
+
+    // 5b. Screen-calibrated ground nameplates (crisp CSS-pixel sizing + overlap resolution)
+    this.paintNameplateRail(ctx, dpr, s, floor, nameplateCandidates, {
+      broadcastMode,
+      narrow: isNarrow,
+    });
 
     // 6. Front glass knock ripples
     for (const r of this.engine.ripples) {
@@ -1081,8 +1352,10 @@ export class PetTerrariumRenderer {
       this.paintParticle(ctx, p);
     }
 
-    // 8. Front Terrarium Glass Frame & Specular Highlight
-    this.paintGlassFrame(ctx, w, h, input.themeId);
+    // 8. Front Terrarium Glass Frame & Specular Highlight (omitted in Broadcast chroma mode)
+    if (!broadcastMode) {
+      this.paintGlassFrame(ctx, w, h, input.themeId);
+    }
 
     ctx.restore();
   }
@@ -1730,8 +2003,16 @@ export class PetTerrariumRenderer {
     redactMode: boolean,
     phase: AtmospherePhase,
     loc: ReturnType<typeof tStrings>,
-    layout: { narrow: boolean; maxW: number; placedBadges: PlacedBadgeRect[] }
-  ): void {
+    layout: {
+      narrow: boolean;
+      maxW: number;
+      placedBadges: PlacedBadgeRect[];
+      customAvatarUrl?: string | null;
+      rpgLevel?: number | null;
+      broadcastMode?: boolean;
+      dpr: number;
+    }
+  ): { px: number; baseY: number; plateLabel: string; statusDotColor: string } {
     const spriteSize = 52;
     const baseY = floor + pet.depthOffset * 8;
     const walkBob =
@@ -1796,33 +2077,59 @@ export class PetTerrariumRenderer {
       ctx.restore();
     }
 
-    // Character sprite
+    // Character sprite (or custom uploaded raster avatar)
+    const customImg = layout.customAvatarUrl ? this.loadImage(layout.customAvatarUrl) : null;
     const spritePath = resolveCharacterSpritePath(pet.characterId);
-    const img = this.loadImage(spritePath);
+    const img = customImg ?? this.loadImage(spritePath);
     const spec = CHARACTER_SPECS[pet.characterId];
-    const drawW = spriteSize * spec.scale;
-    const drawH = spriteSize * spec.scale;
+    const drawW = customImg ? spriteSize * 0.88 : spriteSize * spec.scale;
+    const drawH = customImg ? spriteSize * 0.88 : spriteSize * spec.scale;
 
     ctx.save();
     if (pet.status.kind === 'Paused') {
       ctx.filter = 'grayscale(85%) opacity(78%)';
     }
     ctx.translate(px, py);
-    if (pet.facing === 'left') {
-      ctx.scale(-1, 1);
-    }
-    if (img) {
-      ctx.drawImage(img, -drawW * 0.5, -drawH * 0.92, drawW, drawH);
-    } else {
-      drawRoundedRect(ctx, -18, -38, 36, 36, 10);
-      ctx.fillStyle = '#475569';
+    if (customImg) {
+      const ax = -drawW * 0.5;
+      const ay = -drawH * 0.96;
+      const rad = Math.max(8, drawW * 0.28);
+      ctx.save();
+      drawRoundedRect(ctx, ax, ay, drawW, drawH, rad);
+      ctx.fillStyle = '#0f141e';
       ctx.fill();
+      ctx.clip();
+      if (pet.facing === 'left') {
+        ctx.scale(-1, 1);
+      }
+      ctx.drawImage(customImg, ax, ay, drawW, drawH);
+      ctx.restore();
+      drawRoundedRect(ctx, ax, ay, drawW, drawH, rad);
+      ctx.lineWidth = layout.broadcastMode ? 2.2 : 1.6;
+      ctx.strokeStyle = selected ? '#38bdf8' : '#0b0f17';
+      ctx.stroke();
+    } else {
+      if (pet.facing === 'left') {
+        ctx.scale(-1, 1);
+      }
+      if (img) {
+        if (layout.broadcastMode) {
+          ctx.shadowColor = '#0b0f17';
+          ctx.shadowBlur = 2.5;
+        }
+        ctx.drawImage(img, -drawW * 0.5, -drawH * 0.92, drawW, drawH);
+      } else {
+        drawRoundedRect(ctx, -18, -38, 36, 36, 10);
+        ctx.fillStyle = '#475569';
+        ctx.fill();
+      }
     }
     ctx.restore();
 
     // Status indicators above pet
     const topY = py - drawH * 0.92;
     let statusPillY = topY - 10;
+    const s = Math.max(0.4, this.scale);
     if (pet.aiState === 'knocking') {
       statusPillY = this.paintBadgePill(
         ctx,
@@ -1834,10 +2141,16 @@ export class PetTerrariumRenderer {
         layout
       );
       ctx.save();
-      ctx.font = `700 10px ${CANVAS_FONT_FAMILY}`;
+      ctx.setTransform(layout.dpr, 0, 0, layout.dpr, 0, 0);
+      ctx.font = `700 11px ${CANVAS_FONT_FAMILY}`;
       ctx.fillStyle = '#fef08a';
       ctx.textAlign = 'center';
-      ctx.fillText(loc.petKnockLabel, px, statusPillY - 14);
+      ctx.textBaseline = 'middle';
+      ctx.fillText(
+        loc.petKnockLabel,
+        Math.max(24, Math.min(this.cssW - 24, px * s)),
+        Math.max(10, statusPillY * s - 16)
+      );
       ctx.restore();
     } else if (pet.aiState === 'flustered') {
       statusPillY = this.paintBadgePill(ctx, px, topY - 10, '!', '#dc2626', '#ffffff', layout);
@@ -1871,7 +2184,8 @@ export class PetTerrariumRenderer {
       const alpha = Math.min(1, pet.reactionTtl / 0.35);
       ctx.save();
       ctx.globalAlpha *= alpha;
-      const reactionTargetY = Math.min(topY - 26, statusPillY - 18);
+      const reactionGapLogical = (this.cssW >= 900 ? 25 : 21) / s;
+      const reactionTargetY = Math.min(topY - 26, statusPillY - reactionGapLogical);
       this.paintBadgePill(
         ctx,
         px,
@@ -1884,27 +2198,149 @@ export class PetTerrariumRenderer {
       ctx.restore();
     }
 
-    // Nameplate below floor edge (strictly masked in Redact Mode)
-    const plateLabel = redactMode ? pet.redactedAlias : pet.name;
-    ctx.save();
-    ctx.font = `700 10px ${CANVAS_FONT_FAMILY}`;
-    const textW = Math.min(86, ctx.measureText(plateLabel).width);
-    const pillW = textW + 12;
-    const pillH = 16;
-    const pillX = px - pillW * 0.5;
-    const pillY = baseY + 8;
-    drawRoundedRect(ctx, pillX, pillY, pillW, pillH, 6);
-    ctx.fillStyle = selected ? 'rgba(14, 165, 233, 0.9)' : 'rgba(15, 23, 42, 0.82)';
-    ctx.fill();
-    ctx.strokeStyle = selected ? '#7dd3fc' : 'rgba(148, 163, 184, 0.35)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
+    // Compute nameplate metadata for global rail layout
+    const rawPlateLabel = redactMode ? pet.redactedAlias : pet.name;
+    const plateLabel =
+      layout.broadcastMode && layout.rpgLevel && layout.rpgLevel >= 1
+        ? `${rawPlateLabel} · Lv.${layout.rpgLevel}`
+        : rawPlateLabel;
+    const statusDotColor =
+      pet.status.kind === 'Working'
+        ? '#38bdf8'
+        : pet.status.kind === 'NeedsOwner'
+          ? '#facc15'
+          : pet.status.kind === 'Error'
+            ? '#ef4444'
+            : pet.status.kind === 'Blocked' || pet.status.kind === 'WaitingAnswer'
+              ? '#fb923c'
+              : pet.status.kind === 'Paused'
+                ? '#64748b'
+                : '#4ade80';
 
-    ctx.fillStyle = '#f8fafc';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(plateLabel, px, pillY + pillH * 0.52, 84);
     ctx.restore();
+    return { px, baseY, plateLabel, statusDotColor };
+  }
+
+  private paintNameplateRail(
+    ctx: CanvasRenderingContext2D,
+    dpr: number,
+    scale: number,
+    floorLogicalY: number,
+    candidates: ReadonlyArray<{
+      pet: PetEntity;
+      px: number;
+      baseY: number;
+      selected: boolean;
+      dimmed: boolean;
+      plateLabel: string;
+      statusDotColor: string;
+    }>,
+    options: { broadcastMode: boolean; narrow: boolean }
+  ): void {
+    if (candidates.length === 0) return;
+
+    const cssW = this.cssW;
+    const cssH = this.cssH;
+    const isWide = cssW >= 900;
+    const fontSize = options.broadcastMode
+      ? isWide
+        ? 13.5
+        : options.narrow
+          ? 10.5
+          : 12
+      : isWide
+        ? 12
+        : 10.5;
+    const pillH = isWide ? 24 : 19;
+    const dotPad = options.broadcastMode ? 17 : 8;
+    const padRight = options.broadcastMode ? 9 : 8;
+    const chromePad = dotPad + padRight;
+    const count = Math.max(1, candidates.length);
+    const maxPillW = options.broadcastMode
+      ? isWide
+        ? Math.max(96, Math.min(168, Math.floor(((cssW - 24) / count) * 1.32)))
+        : Math.max(76, Math.min(136, Math.floor(((cssW - 16) / count) * 1.4)))
+      : isWide
+        ? 136
+        : 98;
+    const maxTextW = Math.max(36, maxPillW - chromePad);
+
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.font = `700 ${fontSize}px ${CANVAS_FONT_FAMILY}`;
+
+    const floorCss = floorLogicalY * scale;
+    const railGap = options.broadcastMode
+      ? Math.min(28, Math.max(14, (cssH - floorCss) * 0.25))
+      : Math.min(22, Math.max(10, (cssH - floorCss) * 0.24));
+    const railBaseY = Math.round(floorCss + railGap);
+
+    const inputs: NameplateItemInput[] = candidates.map((c) => {
+      const label = truncateCanvasLabel(ctx, c.plateLabel, maxTextW);
+      const measuredW = Math.min(maxTextW, ctx.measureText(label).width);
+      const pillW = Math.min(maxPillW, Math.ceil(measuredW + chromePad));
+      return {
+        botId: c.pet.botId,
+        label,
+        anchorCx: c.px * scale,
+        pillW,
+        baseY: c.baseY * scale,
+        statusDotColor: c.statusDotColor,
+        selected: c.selected,
+        dimmed: c.dimmed,
+      };
+    });
+
+    const boxes = resolveNameplateBoxes(inputs, {
+      canvasWidth: cssW,
+      canvasHeight: cssH,
+      railBaseY,
+      pillH,
+      tierStepY: pillH + 5,
+      minGapX: 6,
+      maxNudgeX: options.broadcastMode ? 36 : 24,
+      marginX: 6,
+      maxTiers: 3,
+    });
+
+    for (const box of boxes) {
+      ctx.save();
+      if (box.dimmed) {
+        ctx.globalAlpha = 0.28;
+      }
+      const radius = options.broadcastMode ? 8 : 6;
+      drawRoundedRect(ctx, box.left, box.top, box.pillW, pillH, radius);
+      ctx.fillStyle = options.broadcastMode
+        ? '#0b0f17'
+        : box.selected
+          ? 'rgba(14, 165, 233, 0.92)'
+          : 'rgba(15, 23, 42, 0.84)';
+      ctx.fill();
+      ctx.strokeStyle = box.selected
+        ? '#7dd3fc'
+        : options.broadcastMode
+          ? '#020617'
+          : 'rgba(148, 163, 184, 0.35)';
+      ctx.lineWidth = options.broadcastMode ? 1.5 : 1;
+      ctx.stroke();
+
+      if (options.broadcastMode) {
+        ctx.fillStyle = box.statusDotColor;
+        ctx.beginPath();
+        ctx.arc(box.left + 9, box.top + pillH * 0.5, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.fillStyle = '#f8fafc';
+      ctx.textAlign = options.broadcastMode ? 'left' : 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(
+        box.label,
+        options.broadcastMode ? box.left + dotPad : box.left + box.pillW * 0.5,
+        box.top + pillH * 0.52
+      );
+      ctx.restore();
+    }
 
     ctx.restore();
   }
@@ -1916,36 +2352,81 @@ export class PetTerrariumRenderer {
     text: string,
     bg: string,
     fg: string,
-    layout?: { narrow: boolean; maxW: number; placedBadges: PlacedBadgeRect[] }
+    layout?: { narrow: boolean; maxW: number; placedBadges: PlacedBadgeRect[]; dpr?: number }
   ): number {
     const narrow = layout?.narrow ?? false;
-    const fontSize = narrow ? 10 : 10.5;
-    const padX = 7;
-    const maxTextW = narrow ? 74 : 112;
-    const pillH = 16;
+    const cssW = this.cssW;
+    const s = Math.max(0.4, this.scale);
+    const dpr = layout?.dpr ?? (typeof window !== 'undefined' ? Math.max(1, Math.min(3, window.devicePixelRatio || 1)) : 1);
+    const isWide = cssW >= 900;
+    const fontSize = narrow ? 10 : isWide ? 12.5 : 11;
+    const padX = isWide ? 9 : 7;
+    const maxTextW = narrow ? 92 : isWide ? 156 : 124;
+    const pillH = isWide ? 21 : 17;
 
     ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.font = `700 ${fontSize}px ${CANVAS_FONT_FAMILY}`;
-    const textW = Math.min(maxTextW, ctx.measureText(text).width);
+    const displayText = truncateCanvasLabel(ctx, text, maxTextW);
+    const textW = Math.min(maxTextW, ctx.measureText(displayText).width);
     const pillW = textW + padX * 2;
-    const maxW = layout?.maxW ?? this.logicalW;
-    const clampedCx = Math.max(pillW * 0.5 + 4, Math.min(maxW - pillW * 0.5 - 4, cx));
+    const cxCss = cx * s;
+    const cyCss = cy * s;
+    const clampedCx = Math.max(pillW * 0.5 + 6, Math.min(cssW - pillW * 0.5 - 6, cxCss));
 
-    let resolvedCy = cy;
-    const left = clampedCx - pillW * 0.5;
-    const right = clampedCx + pillW * 0.5;
+    let resolvedCx = clampedCx;
+    let resolvedCy = Math.max(pillH * 0.5 + 4, cyCss);
+    const halfH = pillH * 0.5;
+
     if (layout?.placedBadges) {
-      for (let attempt = 0; attempt < 4; attempt++) {
-        const collides = layout.placedBadges.some(
-          (b) => Math.abs(b.cy - resolvedCy) < pillH + 2 && !(right + 3 <= b.left || left - 3 >= b.right)
+      const collidesAt = (candCx: number, candCy: number): boolean => {
+        const left = candCx - pillW * 0.5;
+        const right = candCx + pillW * 0.5;
+        return layout.placedBadges.some(
+          (b) =>
+            Math.abs(b.cy - candCy) < halfH + b.halfH + 3 &&
+            !(right + 4 <= b.left || left - 4 >= b.right)
         );
-        if (!collides) break;
-        resolvedCy = Math.max(14, resolvedCy - (pillH + 3));
+      };
+
+      let found = false;
+      // 1. Prefer straight vertical stacking above pet first (keeps horizontal alignment & narrow badge spacing clear)
+      for (let attempt = 0; attempt < 7; attempt++) {
+        const candCy = Math.max(pillH * 0.5 + 4, cyCss - attempt * (pillH + 4));
+        if (!collidesAt(clampedCx, candCy)) {
+          resolvedCx = clampedCx;
+          resolvedCy = candCy;
+          found = true;
+          break;
+        }
       }
-      layout.placedBadges.push({ left, right, cy: resolvedCy });
+
+      // 2. If vertical ceiling reached on crowded canvas, nudge horizontally across tiers
+      if (!found) {
+        const nudges = [-28, 28, -56, 56, -84, 84];
+        outer: for (let attempt = 0; attempt < 7; attempt++) {
+          const candCy = Math.max(pillH * 0.5 + 4, cyCss - attempt * (pillH + 4));
+          for (const dx of nudges) {
+            const candCx = Math.max(pillW * 0.5 + 6, Math.min(cssW - pillW * 0.5 - 6, clampedCx + dx));
+            if (!collidesAt(candCx, candCy)) {
+              resolvedCx = candCx;
+              resolvedCy = candCy;
+              found = true;
+              break outer;
+            }
+          }
+        }
+      }
+
+      layout.placedBadges.push({
+        left: resolvedCx - pillW * 0.5,
+        right: resolvedCx + pillW * 0.5,
+        cy: resolvedCy,
+        halfH,
+      });
     }
 
-    drawRoundedRect(ctx, clampedCx - pillW * 0.5, resolvedCy - pillH * 0.5, pillW, pillH, 999);
+    drawRoundedRect(ctx, resolvedCx - pillW * 0.5, resolvedCy - halfH, pillW, pillH, 999);
     ctx.fillStyle = bg;
     ctx.fill();
     ctx.strokeStyle = 'rgba(15, 23, 42, 0.45)';
@@ -1955,9 +2436,9 @@ export class PetTerrariumRenderer {
     ctx.fillStyle = fg;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(text, clampedCx, resolvedCy + 0.5, maxTextW);
+    ctx.fillText(displayText, resolvedCx, resolvedCy + 0.5);
     ctx.restore();
-    return resolvedCy;
+    return resolvedCy / s;
   }
 
   private paintParticle(ctx: CanvasRenderingContext2D, p: PetParticle): void {
@@ -2040,5 +2521,6 @@ export class PetTerrariumRenderer {
     this.canvas.removeEventListener('click', this.handleClick);
     this.canvas.removeEventListener('pointermove', this.handlePointerMove);
     this.canvas.removeEventListener('pointerleave', this.handlePointerLeave);
+    this.imageCache.clear();
   }
 }

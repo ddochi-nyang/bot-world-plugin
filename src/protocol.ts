@@ -1,8 +1,10 @@
 import type {
   AtmosphereMode,
   BotRpgProfile,
+  BotWorldCreatorPack,
   BotWorldStatePayload,
   CharacterId,
+  CreatorAssetsState,
   DeskPropId,
   FocusTerminalResponse,
   LanguageSetting,
@@ -90,6 +92,26 @@ declare module 'orca' {
         profile?: BotRpgProfile;
         rpgProfiles: Record<string, BotRpgProfile>;
       };
+    };
+    'botWorld.getCreatorAssets': {
+      input?: undefined;
+      output: CreatorAssetsState;
+    };
+    'botWorld.setCustomAvatar': {
+      input: { botId: string; dataUrl: string | null };
+      output: CreatorAssetsState;
+    };
+    'botWorld.setCustomBackground': {
+      input: { dataUrl: string | null };
+      output: CreatorAssetsState;
+    };
+    'botWorld.importCreatorPack': {
+      input: { pack: BotWorldCreatorPack };
+      output: CreatorAssetsState;
+    };
+    'botWorld.resetCustomAssets': {
+      input?: { target?: 'all' | 'background' | 'avatars' };
+      output: CreatorAssetsState;
     };
   }
 

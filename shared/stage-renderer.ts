@@ -38,6 +38,7 @@ import {
   createStageViewport,
 } from './camera.ts';
 import type { CollabEdge } from './collab-network.ts';
+import { validateCustomAssetDataUrl } from './creator-studio.ts';
 import { tStrings } from './i18n.ts';
 import {
   type BubbleKind,
@@ -351,6 +352,8 @@ export type StageRenderInput = {
   zones?: readonly TeamZone[];
   showZones?: boolean;
   timelapseActive?: boolean;
+  customBackground?: string | null;
+  customAvatars?: Readonly<Record<string, string>>;
 };
 
 type HitBox = {
@@ -446,9 +449,23 @@ export class StageRenderer {
   }
 
   private loadImage(safePath: string): HTMLImageElement | null {
+    if (!safePath.startsWith('../assets/')) {
+      const validCustom =
+        validateCustomAssetDataUrl(safePath, 'background') ??
+        validateCustomAssetDataUrl(safePath, 'avatar');
+      if (!validCustom) return null;
+    }
     const cached = this.imageCache.get(safePath);
     if (cached) {
       return cached.complete && cached.naturalWidth > 0 ? cached : null;
+    }
+    if (this.imageCache.size >= 64) {
+      for (const key of this.imageCache.keys()) {
+        if (key.startsWith('data:')) {
+          this.imageCache.delete(key);
+          if (this.imageCache.size < 48) break;
+        }
+      }
     }
     const img = new Image();
     img.onload = () => {
@@ -950,9 +967,29 @@ export class StageRenderer {
     this.lastViewport = vt;
     const bgW = vt.designW * vt.scale;
     const bgH = vt.designH * vt.scale;
-    const bgImg = this.loadImage(resolveThemeAssetPath(input.themeId));
+    const customBgUrl = input.customBackground
+      ? validateCustomAssetDataUrl(input.customBackground, 'background')
+      : null;
+    const customBgImg = customBgUrl ? this.loadImage(customBgUrl) : null;
+    const bgImg = customBgImg ?? this.loadImage(resolveThemeAssetPath(input.themeId));
     if (bgImg) {
-      ctx.drawImage(bgImg, vt.originX, vt.originY, bgW, bgH);
+      if (customBgImg) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(vt.originX, vt.originY, bgW, bgH);
+        ctx.clip();
+        const iw = bgImg.naturalWidth || bgW;
+        const ih = bgImg.naturalHeight || bgH;
+        const coverScale = Math.max(bgW / Math.max(1, iw), bgH / Math.max(1, ih));
+        const dw = iw * coverScale;
+        const dh = ih * coverScale;
+        const dx = vt.originX + (bgW - dw) * 0.5;
+        const dy = vt.originY + (bgH - dh) * 0.5;
+        ctx.drawImage(bgImg, dx, dy, dw, dh);
+        ctx.restore();
+      } else {
+        ctx.drawImage(bgImg, vt.originX, vt.originY, bgW, bgH);
+      }
     } else {
       ctx.fillStyle = '#292524';
       ctx.fillRect(vt.originX, vt.originY, bgW, bgH);
@@ -986,6 +1023,7 @@ export class StageRenderer {
       footY: number;
       zBias: number;
       spritePath: string;
+      isCustomAvatar?: boolean;
       scale: number;
       anchor: [number, number];
       basePx: number;
@@ -1096,13 +1134,19 @@ export class StageRenderer {
         input.ownerAvatar?.roaming && input.ownerAvatar.nearbyBotId === bot.id
       );
 
+      const customAvatarUrl =
+        input.customAvatars && isSafeKey(bot.id) && Object.hasOwn(input.customAvatars, bot.id)
+          ? validateCustomAssetDataUrl(input.customAvatars[bot.id], 'avatar')
+          : null;
+
       actors.push({
         botId: bot.id,
         footX: pose.footX + xShakePx,
         footY: pose.footY,
         zBias: isDraggingBot ? 10 : 0,
-        spritePath: resolveCharacterSpritePath(charId),
-        scale: spec.scale,
+        spritePath: customAvatarUrl ?? resolveCharacterSpritePath(charId),
+        isCustomAvatar: Boolean(customAvatarUrl),
+        scale: customAvatarUrl ? 0.92 : spec.scale,
         anchor: spec.anchor,
         basePx: BOT_SPRITE_DESIGN_PX,
         yBobPx,
@@ -1468,7 +1512,35 @@ export class StageRenderer {
         ctx.filter = 'grayscale(90%) opacity(75%)';
       }
       if (spriteImg) {
-        ctx.drawImage(spriteImg, sb[0], sb[1], sb[2], sb[3]);
+        if (actor.isCustomAvatar) {
+          const pad = Math.min(sb[2], sb[3]) * 0.08;
+          const bx = sb[0] + pad;
+          const by = sb[1] + pad;
+          const bw = Math.max(8, sb[2] - pad * 2);
+          const bh = Math.max(8, sb[3] - pad * 2);
+          const rad = Math.max(6, Math.min(bw, bh) * 0.28);
+          ctx.save();
+          ctx.shadowColor = 'rgba(15, 23, 42, 0.45)';
+          ctx.shadowBlur = 6 * vt.scale;
+          ctx.shadowOffsetY = 2 * vt.scale;
+          drawRoundedRect(ctx, bx, by, bw, bh, rad);
+          ctx.fillStyle = '#181c26';
+          ctx.fill();
+          ctx.restore();
+
+          ctx.save();
+          drawRoundedRect(ctx, bx, by, bw, bh, rad);
+          ctx.clip();
+          ctx.drawImage(spriteImg, bx, by, bw, bh);
+          ctx.restore();
+
+          drawRoundedRect(ctx, bx, by, bw, bh, rad);
+          ctx.lineWidth = Math.max(1.2, 1.8 * vt.scale);
+          ctx.strokeStyle = actor.selected ? '#38bdf8' : 'rgba(248, 250, 252, 0.85)';
+          ctx.stroke();
+        } else {
+          ctx.drawImage(spriteImg, sb[0], sb[1], sb[2], sb[3]);
+        }
       } else {
         drawRoundedRect(ctx, sb[0], sb[1], sb[2], sb[3], 10);
         ctx.fillStyle = '#334155';
@@ -3116,5 +3188,6 @@ export class StageRenderer {
     this.canvas.removeEventListener('pointercancel', this.handlePointerCancel);
     this.canvas.removeEventListener('pointerleave', this.handlePointerLeave);
     this.canvas.removeEventListener('wheel', this.handleWheel);
+    this.imageCache.clear();
   }
 }

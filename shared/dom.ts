@@ -9,7 +9,10 @@ export type DomAttrs = {
   className?: string;
   id?: string;
   title?: string;
+  tooltip?: string;
+  tooltipKbd?: string;
   type?: string;
+  accept?: string;
   disabled?: boolean;
   min?: string;
   max?: string;
@@ -27,9 +30,19 @@ export type DomAttrs = {
   onInput?: (ev: Event) => void;
   onChange?: (ev: Event) => void;
   onKeyDown?: (ev: KeyboardEvent) => void;
+  onDragOver?: (ev: DragEvent) => void;
+  onDragLeave?: (ev: DragEvent) => void;
+  onDrop?: (ev: DragEvent) => void;
 };
 
+const SAFE_RASTER_DATA_URL_RE =
+  /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
+const MAX_DOM_DATA_URL_CHARS = 512 * 1024;
+
 function isSafeLocalAssetSrc(src: string): boolean {
+  if (src.startsWith('data:')) {
+    return src.length <= MAX_DOM_DATA_URL_CHARS && SAFE_RASTER_DATA_URL_RE.test(src);
+  }
   if (!src.startsWith('../assets/')) return false;
   const rest = src.slice('../assets/'.length);
   if (rest.length === 0) return false;
@@ -54,12 +67,22 @@ export function el<K extends keyof HTMLElementTagNameMap>(
   if (attrs) {
     if (attrs.className !== undefined) node.className = attrs.className;
     if (attrs.id !== undefined) node.id = attrs.id;
-    if (attrs.title !== undefined) node.title = attrs.title;
+    if (attrs.tooltip !== undefined) {
+      node.setAttribute('data-bw-tip', attrs.tooltip);
+      if (attrs.tooltipKbd) {
+        node.setAttribute('data-bw-kbd', attrs.tooltipKbd);
+      }
+    } else if (attrs.title !== undefined) {
+      node.title = attrs.title;
+    }
     if (attrs.role !== undefined) node.setAttribute('role', attrs.role);
     if (attrs.ariaLabel !== undefined) node.setAttribute('aria-label', attrs.ariaLabel);
     if (attrs.ariaPressed !== undefined) node.setAttribute('aria-pressed', attrs.ariaPressed);
     if (attrs.type !== undefined && 'type' in node) {
       (node as HTMLInputElement).type = attrs.type;
+    }
+    if (attrs.accept !== undefined && node instanceof HTMLInputElement) {
+      node.accept = attrs.accept;
     }
     if (attrs.disabled !== undefined && 'disabled' in node) {
       (node as HTMLButtonElement).disabled = attrs.disabled;
@@ -106,6 +129,15 @@ export function el<K extends keyof HTMLElementTagNameMap>(
     }
     if (attrs.onKeyDown) {
       node.addEventListener('keydown', (ev) => attrs.onKeyDown!(ev as KeyboardEvent));
+    }
+    if (attrs.onDragOver) {
+      node.addEventListener('dragover', (ev) => attrs.onDragOver!(ev as DragEvent));
+    }
+    if (attrs.onDragLeave) {
+      node.addEventListener('dragleave', (ev) => attrs.onDragLeave!(ev as DragEvent));
+    }
+    if (attrs.onDrop) {
+      node.addEventListener('drop', (ev) => attrs.onDrop!(ev as DragEvent));
     }
   }
   for (const child of children) {

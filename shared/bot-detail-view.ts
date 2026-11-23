@@ -33,7 +33,9 @@ import {
   rpgTitleForLevel,
   xpFloorForLevel,
 } from './bot-rpg.ts';
+import { validateCustomAssetDataUrl } from './creator-studio.ts';
 import { type DomChild, clearChildren, el } from './dom.ts';
+import { getBotRedactedAlias, orderedSnapshotBotIds } from './filter.ts';
 import { localizeBotErrorMessage, tStrings } from './i18n.ts';
 import { type OfficeBadgeId, badgeDisplayMeta } from './office-badges.ts';
 
@@ -115,6 +117,10 @@ export function renderBotDetail(
     onEquipProp?: (botId: string, propId: DeskPropId) => void;
     onFocusTerminal?: (terminalId: string) => void;
     onOpenWorkspace?: (workspaceId: string) => void;
+    customAvatarUrl?: string | null;
+    onUploadCustomAvatar?: (botId: string, file: File) => void;
+    onResetCustomAvatar?: (botId: string) => void;
+    onOpenCreatorStudio?: () => void;
   }
 ): void {
   clearChildren(container);
@@ -133,6 +139,10 @@ export function renderBotDetail(
     onEquipProp,
     onFocusTerminal,
     onOpenWorkspace,
+    customAvatarUrl,
+    onUploadCustomAvatar,
+    onResetCustomAvatar,
+    onOpenCreatorStudio,
   } = options;
   const s = tStrings(locale);
 
@@ -187,13 +197,51 @@ export function renderBotDetail(
     workers.find((w) => Boolean(w.terminalHandle));
   const jumpTerminalHandle = jumpWorker?.terminalHandle ?? null;
 
+  const validatedCustomAvatar = customAvatarUrl
+    ? validateCustomAssetDataUrl(customAvatarUrl, 'avatar')
+    : null;
+  const avatarSrc = validatedCustomAvatar ?? resolveCharacterSpritePath(activeCharId);
+
+  const avatarEl = el('img', {
+    className: validatedCustomAvatar ? 'bw-avatar bw-avatar-custom' : 'bw-avatar',
+    src: avatarSrc,
+    alt: s.avatarAlt(cleanName),
+  });
+
+  const avatarWrap = el(
+    'div',
+    {
+      className: onUploadCustomAvatar || onOpenCreatorStudio ? 'bw-avatar-wrap bw-avatar-drop-target' : 'bw-avatar-wrap',
+      tooltip: onUploadCustomAvatar || onOpenCreatorStudio ? s.detailCustomAvatarUploadTip : undefined,
+      onClick: () => {
+        if (onOpenCreatorStudio) onOpenCreatorStudio();
+      },
+      onDragOver: onUploadCustomAvatar
+        ? (ev) => {
+            ev.preventDefault();
+            avatarWrap.classList.add('bw-avatar-drop-active');
+          }
+        : undefined,
+      onDragLeave: onUploadCustomAvatar
+        ? () => {
+            avatarWrap.classList.remove('bw-avatar-drop-active');
+          }
+        : undefined,
+      onDrop: onUploadCustomAvatar
+        ? (ev) => {
+            ev.preventDefault();
+            avatarWrap.classList.remove('bw-avatar-drop-active');
+            const f = ev.dataTransfer?.files?.[0];
+            if (f) onUploadCustomAvatar(bot.id, f);
+          }
+        : undefined,
+    },
+    avatarEl
+  );
+
   // Header
   const headerChildren: DomChild[] = [
-    el('img', {
-      className: 'bw-avatar',
-      src: resolveCharacterSpritePath(activeCharId),
-      alt: s.avatarAlt(cleanName),
-    }),
+    avatarWrap,
     el(
       'div',
       { className: 'bw-detail-title-col' },
@@ -218,7 +266,7 @@ export function renderBotDetail(
               {
                 type: 'button',
                 className: 'bw-btn bw-btn-teleport',
-                title: s.teleportTerminalTitle,
+                tooltip: s.teleportTerminalTitle,
                 onClick: () => onFocusTerminal(jumpTerminalHandle),
               },
               s.teleportJumpActiveButton
@@ -258,7 +306,7 @@ export function renderBotDetail(
           'span',
           {
             className: bid === 'mvp' ? 'bw-award-pill bw-award-mvp' : 'bw-award-pill',
-            title: meta.subtitle,
+            tooltip: meta.subtitle,
           },
           `${meta.emoji} ${meta.label}`
         );
@@ -339,7 +387,7 @@ export function renderBotDetail(
               : 'bw-prop-btn bw-prop-btn-locked',
           disabled: !unlocked,
           ariaPressed: String(isEquipped),
-          title: unlocked ? label : s.rpgPropLockedHint(spec.unlockLevel),
+          tooltip: unlocked ? label : s.rpgPropLockedHint(spec.unlockLevel),
           onClick: () => {
             if (unlocked) onEquipProp?.(bot.id, spec.id);
           },
@@ -388,7 +436,7 @@ export function renderBotDetail(
   const charGrid = el('div', { className: 'bw-char-grid' });
   for (const cid of POOL_CHARACTER_IDS) {
     const spec = getCharacterSpec(cid, locale);
-    const isActive = cid === activeCharId;
+    const isActive = !validatedCustomAvatar && cid === activeCharId;
     charGrid.appendChild(
       el(
         'button',
@@ -396,6 +444,7 @@ export function renderBotDetail(
           type: 'button',
           className: isActive ? 'bw-char-btn bw-char-btn-active' : 'bw-char-btn',
           ariaPressed: String(isActive),
+          tooltip: s.tipSwitchCharacter(spec.displayName, spec.roleHint),
           onClick: () => onSelectCharacter(bot.id, cid),
         },
         el('img', {
@@ -407,11 +456,39 @@ export function renderBotDetail(
       )
     );
   }
+  const charHeaderRow = el(
+    'div',
+    { className: 'bw-section-title-row' },
+    el('div', { className: 'bw-section-title' }, s.sectionSwitchCharacter),
+    validatedCustomAvatar && onResetCustomAvatar
+      ? el(
+          'button',
+          {
+            type: 'button',
+            className: 'bw-btn bw-btn-ghost bw-btn-xs',
+            tooltip: s.detailCustomAvatarResetTip,
+            onClick: () => onResetCustomAvatar(bot.id),
+          },
+          s.detailCustomAvatarReset
+        )
+      : onOpenCreatorStudio
+        ? el(
+            'button',
+            {
+              type: 'button',
+              className: 'bw-btn bw-btn-ghost bw-btn-xs',
+              tooltip: s.tipStudio,
+              onClick: onOpenCreatorStudio,
+            },
+            s.studioButton
+          )
+        : null
+  );
   body.appendChild(
     el(
       'section',
       { className: 'bw-section' },
-      el('div', { className: 'bw-section-title' }, s.sectionSwitchCharacter),
+      charHeaderRow,
       charGrid
     )
   );
@@ -587,7 +664,7 @@ export function renderBotDetail(
                       {
                         type: 'button',
                         className: 'bw-btn bw-btn-teleport',
-                        title: s.teleportTerminalTitle,
+                        tooltip: s.teleportTerminalTitle,
                         onClick: () => onFocusTerminal(termHandle),
                       },
                       s.teleportTerminalButton
@@ -599,7 +676,7 @@ export function renderBotDetail(
                       {
                         type: 'button',
                         className: 'bw-btn bw-btn-teleport',
-                        title: s.teleportWorkspaceTitle,
+                        tooltip: s.teleportWorkspaceTitle,
                         onClick: () => onOpenWorkspace(wsId),
                       },
                       s.teleportWorkspaceButton
@@ -682,33 +759,47 @@ export function renderBotQuickPills(
   options: {
     snapshot: WorldSnapshot;
     selectedBotId: string | null;
+    redactMode?: boolean;
+    botIndexMap?: ReadonlyMap<string, number>;
+    locale?: UiLocale;
     onSelectBot: (botId: string) => void;
   }
 ): void {
   clearChildren(container);
-  const { snapshot, selectedBotId, onSelectBot } = options;
-  const ids =
-    snapshot.botOrder.length > 0
-      ? snapshot.botOrder.filter((id) => isSafeKey(id) && Object.hasOwn(snapshot.bots, id))
-      : Object.keys(snapshot.bots);
+  const {
+    snapshot,
+    selectedBotId,
+    redactMode = false,
+    botIndexMap,
+    locale = 'en',
+    onSelectBot,
+  } = options;
+  const s = tStrings(locale);
+  const ids = orderedSnapshotBotIds(snapshot);
 
-  for (const id of ids) {
+  ids.forEach((id, idx) => {
     const bot = snapshot.bots[id];
-    if (!bot) continue;
+    if (!bot) return;
     const isSel = id === selectedBotId;
-    const label = bot.status.kind === 'NeedsOwner' ? `★ ${scrubAll(bot.name)}` : scrubAll(bot.name);
+    const displayName = redactMode
+      ? botIndexMap && botIndexMap.has(id)
+        ? s.botNumbered(botIndexMap.get(id)!)
+        : getBotRedactedAlias(id, snapshot, locale) || s.botNumbered(idx + 1)
+      : scrubAll(bot.name);
+    const label = bot.status.kind === 'NeedsOwner' ? `★ ${displayName}` : displayName;
     container.appendChild(
       el(
         'button',
         {
           type: 'button',
           className: isSel ? 'bw-bot-pill bw-bot-pill-active' : 'bw-bot-pill',
+          tooltip: `${displayName} · ${botStatusLabel(bot.status, locale)}`,
           onClick: () => onSelectBot(id),
         },
         label
       )
     );
-  }
+  });
 }
 
 export function renderEventTimelineList(

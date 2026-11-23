@@ -8,6 +8,16 @@ import {
   sanitizeBotRpgStore,
 } from '../shared/bot-rpg.ts';
 import {
+  MAX_CREATOR_AVATARS,
+  MAX_STORED_CREATOR_BYTES,
+  createEmptyCreatorAssetsState,
+  parseAndValidateCreatorPack,
+  sanitizeCreatorAssetsState,
+  sanitizePackName,
+  utf8JsonBytes,
+  validateCustomAssetDataUrl,
+} from '../shared/creator-studio.ts';
+import {
   effectiveLocale,
   localizeBotErrorMessage,
   normalizeLanguageSetting,
@@ -39,6 +49,7 @@ import {
   type BotRpgStore,
   type BotWorldStatePayload,
   type CharacterId,
+  type CreatorAssetsState,
   type FocusTerminalResponse,
   type LanguageSetting,
   MAX_BOT_APPEARANCES,
@@ -79,6 +90,7 @@ const STORAGE_PREFS_KEY = 'botWorld.prefs';
 const STORAGE_TIMELINE_KEY = 'botWorld.timeline';
 const STORAGE_WEEKLY_TREND_KEY = 'botWorld.weeklyTrend';
 const STORAGE_RPG_KEY = 'botWorld.rpg.v1';
+const STORAGE_CREATOR_KEY = 'botWorld.creator.v1';
 export const MAX_IPC_PAYLOAD_BYTES = 220 * 1024;
 const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
 const LOCALE_TAG_RE = /^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{1,8}){0,6}$/;
@@ -556,6 +568,7 @@ export class BotWorldWorkerController {
   private timeline = new TimelineBuffer();
   private weeklyTrendStore: WeeklyTrendStore = { days: [], seenIds: [] };
   private rpgStore: BotRpgStore = createEmptyBotRpgStore();
+  private creatorStore: CreatorAssetsState = createEmptyCreatorAssetsState();
   private prefs: StoredPrefs = {
     activeTheme: 'startup_office',
     atmosphereMode: 'auto',
@@ -667,6 +680,8 @@ export class BotWorldWorkerController {
     this.weeklyTrendStore = hydrateWeeklyTrendStore(storedWeeklyTrend, initNowMs);
     const storedRpg = await this.orca.storage.get(STORAGE_RPG_KEY);
     this.rpgStore = sanitizeBotRpgStore(storedRpg, initNowMs);
+    const storedCreator = await this.orca.storage.get(STORAGE_CREATOR_KEY);
+    this.creatorStore = sanitizeCreatorAssetsState(storedCreator, 0);
     if (this.timeline.eventLog.length > 0) {
       const mergedInit = mergeWeeklyTrendStore(
         this.weeklyTrendStore,
@@ -805,6 +820,7 @@ export class BotWorldWorkerController {
       locale,
       languageSetting: this.prefs.languageSetting,
       weeklyTrend: getLastSevenDaysTrend(this.weeklyTrendStore.days, trendNowMs),
+      creatorUpdatedAtMs: this.creatorStore.updatedAtMs,
     };
 
     const baseBytes = utf8ByteLength(payload);
@@ -988,6 +1004,26 @@ export class BotWorldWorkerController {
 
   private async persistRpgStore(): Promise<void> {
     await this.orca.storage.set(STORAGE_RPG_KEY, this.rpgStore as unknown as JsonValue);
+  }
+
+  private async persistCreatorStore(): Promise<void> {
+    if (utf8JsonBytes(this.creatorStore) > MAX_STORED_CREATOR_BYTES) {
+      throw makeHostError('invalid_params', 'Creator assets exceed storage cap');
+    }
+    await this.orca.storage.set(STORAGE_CREATOR_KEY, this.creatorStore as unknown as JsonValue);
+  }
+
+  private nextCreatorTimestamp(): number {
+    return Math.max(this.creatorStore.updatedAtMs + 1, this.nowMs());
+  }
+
+  private cloneCreatorState(): CreatorAssetsState {
+    return {
+      packName: this.creatorStore.packName,
+      customBackground: this.creatorStore.customBackground,
+      customAvatars: { ...this.creatorStore.customAvatars },
+      updatedAtMs: this.creatorStore.updatedAtMs,
+    };
   }
 
   private async updateStatusBar(): Promise<void> {
@@ -1496,6 +1532,134 @@ export class BotWorldWorkerController {
         await this.persistPrefs();
         this.postStateUpdated();
         return { botAppearances: { ...this.prefs.botAppearances } };
+      }),
+
+      this.orca.panels.handle('botWorld.getCreatorAssets', async () => {
+        return this.cloneCreatorState();
+      }),
+
+      this.orca.panels.handle('botWorld.setCustomAvatar', async (input) => {
+        if (!input || typeof input !== 'object' || Array.isArray(input)) {
+          throw makeHostError('invalid_params', 'input must be an object');
+        }
+        const clean = stripDangerousKeys(input as Record<string, unknown>);
+        const botId = clean.botId;
+        if (
+          typeof botId !== 'string' ||
+          !isSafeKey(botId) ||
+          botId.length > 128 ||
+          CONTROL_CHAR_RE.test(botId)
+        ) {
+          throw makeHostError('invalid_params', 'Invalid botId');
+        }
+        const nextAvatars = { ...this.creatorStore.customAvatars };
+        if (clean.dataUrl === null) {
+          delete nextAvatars[botId];
+        } else {
+          const valid = validateCustomAssetDataUrl(clean.dataUrl, 'avatar');
+          if (!valid) {
+            throw makeHostError('invalid_params', 'Invalid custom avatar dataUrl');
+          }
+          if (
+            !Object.hasOwn(nextAvatars, botId) &&
+            Object.keys(nextAvatars).length >= MAX_CREATOR_AVATARS
+          ) {
+            throw makeHostError('invalid_params', 'Too many custom avatars');
+          }
+          Object.defineProperty(nextAvatars, botId, {
+            value: valid,
+            enumerable: true,
+            writable: true,
+            configurable: true,
+          });
+        }
+        const candidate: CreatorAssetsState = {
+          packName: this.creatorStore.packName,
+          customBackground: this.creatorStore.customBackground,
+          customAvatars: nextAvatars,
+          updatedAtMs: this.nextCreatorTimestamp(),
+        };
+        if (utf8JsonBytes(candidate) > MAX_STORED_CREATOR_BYTES) {
+          throw makeHostError('invalid_params', 'Creator assets exceed storage cap');
+        }
+        this.creatorStore = candidate;
+        await this.persistCreatorStore();
+        this.postStateUpdated();
+        return this.cloneCreatorState();
+      }),
+
+      this.orca.panels.handle('botWorld.setCustomBackground', async (input) => {
+        if (!input || typeof input !== 'object' || Array.isArray(input)) {
+          throw makeHostError('invalid_params', 'input must be an object');
+        }
+        const clean = stripDangerousKeys(input as Record<string, unknown>);
+        let nextBg: string | null = null;
+        if (clean.dataUrl !== null) {
+          const valid = validateCustomAssetDataUrl(clean.dataUrl, 'background');
+          if (!valid) {
+            throw makeHostError('invalid_params', 'Invalid custom background dataUrl');
+          }
+          nextBg = valid;
+        }
+        const candidate: CreatorAssetsState = {
+          packName: this.creatorStore.packName,
+          customBackground: nextBg,
+          customAvatars: { ...this.creatorStore.customAvatars },
+          updatedAtMs: this.nextCreatorTimestamp(),
+        };
+        if (utf8JsonBytes(candidate) > MAX_STORED_CREATOR_BYTES) {
+          throw makeHostError('invalid_params', 'Creator assets exceed storage cap');
+        }
+        this.creatorStore = candidate;
+        await this.persistCreatorStore();
+        this.postStateUpdated();
+        return this.cloneCreatorState();
+      }),
+
+      this.orca.panels.handle('botWorld.importCreatorPack', async (input) => {
+        if (!input || typeof input !== 'object' || Array.isArray(input)) {
+          throw makeHostError('invalid_params', 'input must be an object');
+        }
+        const clean = stripDangerousKeys(input as Record<string, unknown>);
+        if (!clean.pack || typeof clean.pack !== 'object' || Array.isArray(clean.pack)) {
+          throw makeHostError('invalid_params', 'Invalid pack');
+        }
+        const parsed = parseAndValidateCreatorPack(JSON.stringify(clean.pack));
+        if (!parsed.ok) {
+          throw makeHostError('invalid_params', `Invalid creator pack: ${parsed.error}`);
+        }
+        const candidate: CreatorAssetsState = {
+          packName: sanitizePackName(parsed.pack.packName, 'Custom Pack'),
+          customBackground: parsed.pack.customBackground ?? null,
+          customAvatars: { ...parsed.pack.customAvatars },
+          updatedAtMs: this.nextCreatorTimestamp(),
+        };
+        if (utf8JsonBytes(candidate) > MAX_STORED_CREATOR_BYTES) {
+          throw makeHostError('invalid_params', 'Creator pack exceeds storage cap');
+        }
+        this.creatorStore = candidate;
+        await this.persistCreatorStore();
+        this.postStateUpdated();
+        return this.cloneCreatorState();
+      }),
+
+      this.orca.panels.handle('botWorld.resetCustomAssets', async (input) => {
+        let target: 'all' | 'background' | 'avatars' = 'all';
+        if (input && typeof input === 'object' && !Array.isArray(input)) {
+          const clean = stripDangerousKeys(input as Record<string, unknown>);
+          if (clean.target === 'background' || clean.target === 'avatars' || clean.target === 'all') {
+            target = clean.target;
+          }
+        }
+        this.creatorStore = {
+          packName: target === 'all' ? 'Custom Pack' : this.creatorStore.packName,
+          customBackground: target === 'avatars' ? this.creatorStore.customBackground : null,
+          customAvatars: target === 'background' ? { ...this.creatorStore.customAvatars } : {},
+          updatedAtMs: this.nextCreatorTimestamp(),
+        };
+        await this.persistCreatorStore();
+        this.postStateUpdated();
+        return this.cloneCreatorState();
       }),
 
       this.orca.events.on('agent.status.changed', () => {

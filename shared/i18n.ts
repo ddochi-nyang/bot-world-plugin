@@ -1,5 +1,6 @@
 import {
   type AtmosphereMode,
+  type BroadcastChromaKey,
   type CharacterId,
   type DeskPropId,
   type LanguageSetting,
@@ -460,6 +461,95 @@ export type UiDictionary = {
   notifyErrorBody: (message: string | null) => string;
   notifyErrorTitleRedacted: string;
   notifyErrorBodyRedacted: (seq: number) => string;
+  broadcastButton: string;
+  broadcastButtonTitle: string;
+  shortcutToggleBroadcast: string;
+  broadcastChromaLabels: Record<BroadcastChromaKey, string>;
+  broadcastRedactOn: string;
+  broadcastRedactOff: string;
+  broadcastExitButton: string;
+  broadcastExitTip: string;
+  petExitButton: string;
+  petExitTip: string;
+  studioButton: string;
+  studioButtonTitle: string;
+  shortcutToggleCreatorStudio: string;
+  creatorModalTitle: string;
+  creatorModalSubtitle: string;
+  creatorClose: string;
+  creatorTabAvatars: string;
+  creatorTabAvatarsTip: string;
+  creatorTabBackground: string;
+  creatorTabBackgroundTip: string;
+  creatorSelectBotAria: string;
+  creatorSelectBotTip: string;
+  creatorResetAvatar: string;
+  creatorResetAvatarTip: string;
+  creatorAvatarDropTitle: string;
+  creatorAvatarDropSub: string;
+  creatorAvatarDropTip: string;
+  creatorAvatarPreviewAlt: string;
+  creatorBgDropTitle: string;
+  creatorBgDropSub: string;
+  creatorBgDropTip: string;
+  creatorBgPreviewAlt: string;
+  creatorResetBg: string;
+  creatorResetBgTip: string;
+  creatorExportPack: string;
+  creatorExportPackTip: string;
+  creatorImportPack: string;
+  creatorImportPackTip: string;
+  creatorResetAll: string;
+  creatorResetAllTip: string;
+  creatorNoBots: string;
+  creatorStatusSaved: string;
+  creatorStatusReset: string;
+  creatorStatusPackExported: string;
+  creatorStatusPackImported: (count: number) => string;
+  creatorErrorType: string;
+  creatorErrorSize: string;
+  creatorErrorDecode: string;
+  creatorErrorPack: string;
+  detailCustomAvatarUploadTip: string;
+  detailCustomAvatarReset: string;
+  detailCustomAvatarResetTip: string;
+  tipThemeSelect: string;
+  tipPetMode: string;
+  tipOfficeMode: string;
+  tipRoam: string;
+  tipStream: string;
+  tipStudio: string;
+  tipAtmosphere: (modeLabel: string) => string;
+  tipWeather: (modeLabel: string) => string;
+  tipSound: (modeLabel: string) => string;
+  tipFocus: string;
+  tipCollab: string;
+  tipZones: string;
+  tipPhoto: string;
+  tipReport: string;
+  tipRedact: string;
+  tipLanguage: string;
+  tipDemo: string;
+  tipShortcuts: string;
+  tipRefresh: string;
+  tipResetSeats: string;
+  tipFilterPreset: (preset: 'all' | 'working' | 'needs_you' | 'error' | 'workers') => string;
+  tipSearchInput: string;
+  tipSearchClear: string;
+  tipQuickSendTarget: string;
+  tipQuickSendSend: string;
+  tipZoomOut: string;
+  tipZoomReset: (pct: number) => string;
+  tipZoomIn: string;
+  tipFollowCam: string;
+  tipRoamHighFive: string;
+  tipRoamCoffee: string;
+  tipTimelineLive: string;
+  tipTimelinePlay: string;
+  tipTimelineTimelapse: string;
+  tipTimelineSpeed: (speed: number) => string;
+  tipTimelineDrawer: string;
+  tipSwitchCharacter: (displayName: string, roleHint: string) => string;
 };
 
 export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
@@ -484,8 +574,8 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
       officeDoor: 'Entrance',
       automationBoard: 'Automation Board',
     },
-    redactOn: 'Redact ON',
-    redactOff: 'Redact OFF',
+    redactOn: 'Redact',
+    redactOff: 'Redact',
     refresh: 'Refresh',
     langToggleText: 'EN',
     langToggleTitle: 'Switch language (EN / 한국어)',
@@ -548,7 +638,7 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     avatarAlt: (name) => `${name} character`,
     redactSpecialtyHidden: 'Redact mode active: specialty hidden',
     closeDetailAria: 'Close details',
-    sectionActiveTask: 'Active Task (Read-Only)',
+    sectionActiveTask: 'Active Task',
     needsDecisionPrefix: (prompt) => `Needs decision: ${prompt}`,
     noActiveTask: 'No active task',
     usingToolPrefix: (tool) => `Tool: ${tool}`,
@@ -866,6 +956,113 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     notifyErrorBody: (message) => message || 'Bot entered an error state.',
     notifyErrorTitleRedacted: 'Bot World: Bot encountered an error',
     notifyErrorBodyRedacted: (seq) => `Bot #${seq} reported an error.`,
+    broadcastButton: 'Stream',
+    broadcastButtonTitle: 'Chroma-key Broadcast Pet Bar for OBS & screen recording [B]',
+    shortcutToggleBroadcast: 'Toggle Broadcast Chroma Bar',
+    broadcastChromaLabels: {
+      green: 'Chroma Green (#00b140)',
+      blue: 'Chroma Blue (#0047bb)',
+      black: 'Pure Black (#000000)',
+      charcoal: 'Soft Charcoal (#11141b)',
+    },
+    broadcastRedactOn: 'Masked',
+    broadcastRedactOff: 'Redact',
+    broadcastExitButton: 'Exit',
+    broadcastExitTip: 'Exit Broadcast mode',
+    petExitButton: 'Office',
+    petExitTip: 'Return to Isometric Office',
+    studioButton: 'Studio',
+    studioButtonTitle: 'Creator Studio: custom avatars, backgrounds & packs [U]',
+    shortcutToggleCreatorStudio: 'Open Creator Studio',
+    creatorModalTitle: 'Creator Studio',
+    creatorModalSubtitle: 'Customize bot avatars, stage background, or share .botworld-pack.json',
+    creatorClose: 'Close',
+    creatorTabAvatars: 'Bot Avatars',
+    creatorTabAvatarsTip: 'Upload or reset custom 128×128 raster avatars per bot',
+    creatorTabBackground: 'Office Background',
+    creatorTabBackgroundTip: 'Upload or reset a custom 1600×1000 stage backdrop',
+    creatorSelectBotAria: 'Select bot for custom avatar',
+    creatorSelectBotTip: 'Choose which bot receives the uploaded avatar',
+    creatorResetAvatar: 'Reset Avatar',
+    creatorResetAvatarTip: 'Restore default pixel sprite for this bot',
+    creatorAvatarDropTitle: 'Drop PNG, JPEG, or WebP here (or click to browse)',
+    creatorAvatarDropSub: 'Center-cropped to 128×128 PNG (max 4 MB raw, SVG blocked)',
+    creatorAvatarDropTip: 'Drop or pick a raster image for this bot avatar',
+    creatorAvatarPreviewAlt: 'Custom bot avatar preview',
+    creatorBgDropTitle: 'Drop stage background image here (or click to browse)',
+    creatorBgDropSub: 'Aspect-fitted up to 1600×1000 JPEG (max 4 MB raw, SVG blocked)',
+    creatorBgDropTip: 'Drop or pick a custom office stage backdrop',
+    creatorBgPreviewAlt: 'Custom office background preview',
+    creatorResetBg: 'Reset to Theme Default',
+    creatorResetBgTip: 'Remove custom background and restore theme artwork',
+    creatorExportPack: 'Export Pack',
+    creatorExportPackTip: 'Download current custom avatars and background as .botworld-pack.json',
+    creatorImportPack: 'Import Pack',
+    creatorImportPackTip: 'Load a validated .botworld-pack.json creator pack',
+    creatorResetAll: 'Reset All',
+    creatorResetAllTip: 'Clear all custom avatars and background',
+    creatorNoBots: 'No bots in the current snapshot yet.',
+    creatorStatusSaved: 'Saved custom asset.',
+    creatorStatusReset: 'Restored default artwork.',
+    creatorStatusPackExported: 'Exported .botworld-pack.json',
+    creatorStatusPackImported: (count) => `Imported creator pack (${count} avatars).`,
+    creatorErrorType: 'Only PNG, JPEG, and WebP images are supported (SVG/HTML rejected).',
+    creatorErrorSize: 'File is too large (max 4 MB raw upload; packed limits apply).',
+    creatorErrorDecode: 'Could not decode image file.',
+    creatorErrorPack: 'Invalid or oversized .botworld-pack.json file.',
+    detailCustomAvatarUploadTip: 'Drop an image here or click Studio to set a custom avatar',
+    detailCustomAvatarReset: 'Reset Avatar',
+    detailCustomAvatarResetTip: 'Restore the default pixel character sprite for this bot',
+    tipThemeSelect: 'Switch office backdrop theme',
+    tipPetMode: 'Switch to Pocket Pet Terrarium',
+    tipOfficeMode: 'Return to Isometric Office view',
+    tipRoam: 'Walk around the office as Owner (WASD / double-click floor)',
+    tipStream: 'Open OBS-ready Chroma-Key Broadcast Pet Bar',
+    tipStudio: 'Customize avatars, stage background, and export packs',
+    tipAtmosphere: (modeLabel) => `Cycle time-of-day lighting (${modeLabel})`,
+    tipWeather: (modeLabel) => `Cycle ambient weather effect (${modeLabel})`,
+    tipSound: (modeLabel) => `Cycle cozy office soundscape (${modeLabel})`,
+    tipFocus: 'Spotlight next urgent or active bot',
+    tipCollab: 'Toggle 24h bot collaboration network overlay',
+    tipZones: 'Configure team floor zones',
+    tipPhoto: 'Save a PNG photo card of the current office state',
+    tipReport: 'View 24h office digest & weekly trend',
+    tipRedact: 'Mask sensitive bot names, tasks, tools, and logs',
+    tipLanguage: 'Switch interface language (EN / 한국어)',
+    tipDemo: 'Preview Bot World with a simulated live office',
+    tipShortcuts: 'Show keyboard shortcuts',
+    tipRefresh: 'Poll live Orca status now',
+    tipResetSeats: 'Reset dragged bot desks to theme defaults',
+    tipFilterPreset: (preset) => {
+      switch (preset) {
+        case 'all':
+          return 'Show all bots on stage';
+        case 'working':
+          return 'Filter to bots currently working';
+        case 'needs_you':
+          return 'Filter to bots awaiting your approval or blocked';
+        case 'error':
+          return 'Filter to bots in an error state';
+        case 'workers':
+          return 'Filter to bots with active sub-workers';
+      }
+    },
+    tipSearchInput: 'Filter bots by name, task, tool, or alias',
+    tipSearchClear: 'Clear bot search filter',
+    tipQuickSendTarget: 'Choose which bot receives your quick message',
+    tipQuickSendSend: 'Send quick message to selected bot',
+    tipZoomOut: 'Zoom camera out',
+    tipZoomReset: (pct) => `Camera zoom ${pct}% — click to reset`,
+    tipZoomIn: 'Zoom camera in',
+    tipFollowCam: 'Lock camera to follow the selected bot',
+    tipRoamHighFive: 'Give a nearby bot a high-five (+8 XP)',
+    tipRoamCoffee: 'Hand coffee to a nearby bot (+10 XP)',
+    tipTimelineLive: 'Jump back to live real-time state',
+    tipTimelinePlay: 'Play or pause 24h timeline replay',
+    tipTimelineTimelapse: 'Play 10-second 24h daily timelapse',
+    tipTimelineSpeed: (speed) => `Set replay playback speed to ${speed}x`,
+    tipTimelineDrawer: 'Toggle 24h event log drawer',
+    tipSwitchCharacter: (displayName, roleHint) => `${displayName} · ${roleHint}`,
   },
   ko: {
     appTitlePanel: '봇 월드',
@@ -888,8 +1085,8 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
       officeDoor: '출입구',
       automationBoard: '자동화 보드',
     },
-    redactOn: '가림 ON',
-    redactOff: '가림 OFF',
+    redactOn: '가림',
+    redactOff: '가림',
     refresh: '새로고침',
     langToggleText: '한',
     langToggleTitle: '언어 전환 (EN / 한국어)',
@@ -950,7 +1147,7 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     avatarAlt: (name) => `${name} 캐릭터`,
     redactSpecialtyHidden: '가림 모드 활성: 세부 분야 숨김',
     closeDetailAria: '상세 닫기',
-    sectionActiveTask: '진행 중 작업 (읽기 전용)',
+    sectionActiveTask: '진행 중 작업',
     needsDecisionPrefix: (prompt) => `결정 필요: ${prompt}`,
     noActiveTask: '진행 중인 작업 없음',
     usingToolPrefix: (tool) => `사용 도구: ${tool}`,
@@ -1267,6 +1464,113 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     notifyErrorBody: (message) => message || '봇이 오류 상태가 되었습니다.',
     notifyErrorTitleRedacted: 'Bot World: 봇 오류가 발생했습니다',
     notifyErrorBodyRedacted: (seq) => `봇 #${seq}에서 오류가 발생했습니다.`,
+    broadcastButton: '방송',
+    broadcastButtonTitle: 'OBS·화면 녹화용 크로마키 방송 펫 바 [B]',
+    shortcutToggleBroadcast: '크로마키 방송 펫 바 전환',
+    broadcastChromaLabels: {
+      green: '크로마 그린 (#00b140)',
+      blue: '크로마 블루 (#0047bb)',
+      black: '순수 블랙 (#000000)',
+      charcoal: '소프트 차콜 (#11141b)',
+    },
+    broadcastRedactOn: '가림',
+    broadcastRedactOff: '가림',
+    broadcastExitButton: '나가기',
+    broadcastExitTip: '방송 모드 종료',
+    petExitButton: '사무실',
+    petExitTip: '가상 사무실 보기로 복귀',
+    studioButton: '스튜디오',
+    studioButtonTitle: '크리에이터 스튜디오: 커스텀 아바타·배경·팩 [U]',
+    shortcutToggleCreatorStudio: '크리에이터 스튜디오 열기',
+    creatorModalTitle: '크리에이터 스튜디오',
+    creatorModalSubtitle: '봇 아바타·배경 이미지를 바꾸거나 .botworld-pack.json 팩으로 공유하세요',
+    creatorClose: '닫기',
+    creatorTabAvatars: '봇 아바타',
+    creatorTabAvatarsTip: '봇별 128×128 래스터 아바타 업로드 및 초기화',
+    creatorTabBackground: '사무실 배경',
+    creatorTabBackgroundTip: '1600×1000 무대 배경 이미지 업로드 및 초기화',
+    creatorSelectBotAria: '커스텀 아바타 대상 봇 선택',
+    creatorSelectBotTip: '커스텀 아바타를 적용할 봇을 선택합니다',
+    creatorResetAvatar: '아바타 초기화',
+    creatorResetAvatarTip: '이 봇의 기본 픽셀 캐릭터로 되돌립니다',
+    creatorAvatarDropTitle: 'PNG · JPEG · WebP 이미지를 끌어다 놓거나 클릭해 선택',
+    creatorAvatarDropSub: '128×128 PNG로 중앙 크롭·재인코딩 (원본 최대 4 MB, SVG 차단)',
+    creatorAvatarDropTip: '이 봇에 적용할 아바타 이미지를 드롭하거나 선택합니다',
+    creatorAvatarPreviewAlt: '커스텀 봇 아바타 미리보기',
+    creatorBgDropTitle: '배경 이미지를 끌어다 놓거나 클릭해 선택',
+    creatorBgDropSub: '비율 유지 최대 1600×1000 JPEG 재인코딩 (원본 최대 4 MB, SVG 차단)',
+    creatorBgDropTip: '사무실 무대 전체 배경으로 쓸 이미지를 선택합니다',
+    creatorBgPreviewAlt: '커스텀 사무실 배경 미리보기',
+    creatorResetBg: '테마 기본 배경으로 복원',
+    creatorResetBgTip: '커스텀 배경을 제거하고 기본 테마 배경을 씁니다',
+    creatorExportPack: '팩 내보내기',
+    creatorExportPackTip: '현재 커스텀 아바타와 배경을 .botworld-pack.json으로 저장',
+    creatorImportPack: '팩 불러오기',
+    creatorImportPackTip: '검증된 .botworld-pack.json 크리에이터 팩 불러오기',
+    creatorResetAll: '전체 초기화',
+    creatorResetAllTip: '모든 커스텀 아바타와 배경을 초기화합니다',
+    creatorNoBots: '현재 스냅샷에 활성 봇이 없습니다.',
+    creatorStatusSaved: '커스텀 애셋을 저장했습니다.',
+    creatorStatusReset: '기본 그래픽으로 복원했습니다.',
+    creatorStatusPackExported: '.botworld-pack.json 파일을 내보냈습니다.',
+    creatorStatusPackImported: (count) => `크리에이터 팩을 불러왔습니다 (아바타 ${count}개).`,
+    creatorErrorType: 'PNG, JPEG, WebP 이미지 형식만 지원합니다 (SVG/HTML 차단).',
+    creatorErrorSize: '이미지 용량이 너무 큽니다 (원본 최대 4 MB).',
+    creatorErrorDecode: '이미지를 디코딩하지 못했습니다.',
+    creatorErrorPack: '유효하지 않거나 용량을 초과한 .botworld-pack.json 파일입니다.',
+    detailCustomAvatarUploadTip: '이미지를 여기 끌어다 놓거나 스튜디오에서 커스텀 아바타를 설정하세요',
+    detailCustomAvatarReset: '아바타 초기화',
+    detailCustomAvatarResetTip: '이 봇의 기본 픽셀 캐릭터로 되돌립니다',
+    tipThemeSelect: '사무실 무대 테마 변경',
+    tipPetMode: '포켓 펫 테라리움 모드로 전환',
+    tipOfficeMode: '가상 사무실 보기로 복귀',
+    tipRoam: '사장님 캐릭터로 사무실 산책 (WASD / 바닥 더블클릭)',
+    tipStream: 'OBS·녹화용 크로마키 방송 펫 바 열기',
+    tipStudio: '커스텀 아바타·배경 편집 및 팩 공유',
+    tipAtmosphere: (modeLabel) => `시간대 조명 전환 (${modeLabel})`,
+    tipWeather: (modeLabel) => `날씨 효과 전환 (${modeLabel})`,
+    tipSound: (modeLabel) => `사무실 사운드 전환 (${modeLabel})`,
+    tipFocus: '긴급하거나 작업 중인 봇에 카메라 포커스',
+    tipCollab: '24시간 봇 협업 네트워크 오버레이 전환',
+    tipZones: '사무실 팀 구역 설정 열기',
+    tipPhoto: '현재 사무실 상태를 PNG 포토 카드로 저장',
+    tipReport: '24시간 사무실 리포트 및 주간 추이 보기',
+    tipRedact: '민감한 봇 이름·작업·도구·메시지 가리기',
+    tipLanguage: '표시 언어 전환 (EN / 한국어)',
+    tipDemo: '가상 데모 오피스로 기능 미리보기',
+    tipShortcuts: '키보드 단축키 목록 보기',
+    tipRefresh: 'Orca 실시간 상태를 지금 다시 불러옵니다',
+    tipResetSeats: '드래그로 옮긴 봇 책상을 기본 위치로 초기화',
+    tipFilterPreset: (preset) => {
+      switch (preset) {
+        case 'all':
+          return '모든 봇 표시';
+        case 'working':
+          return '작업 중인 봇만 필터링';
+        case 'needs_you':
+          return '결정 대기 또는 차단된 봇만 필터링';
+        case 'error':
+          return '오류 상태인 봇만 필터링';
+        case 'workers':
+          return '활성 서브워커가 있는 봇만 필터링';
+      }
+    },
+    tipSearchInput: '이름·작업·도구·별칭으로 봇 검색',
+    tipSearchClear: '검색어 지우기',
+    tipQuickSendTarget: '빠른 메시지를 보낼 봇 선택',
+    tipQuickSendSend: '선택한 봇에게 빠른 메시지 전송',
+    tipZoomOut: '카메라 축소',
+    tipZoomReset: (pct) => `현재 배율 ${pct}% — 클릭하면 기본 배율로 복원`,
+    tipZoomIn: '카메라 확대',
+    tipFollowCam: '선택한 봇을 카메라가 자동으로 따라가기',
+    tipRoamHighFive: '가까운 봇과 하이파이브 (+8 XP)',
+    tipRoamCoffee: '가까운 봇에게 커피 건네기 (+10 XP)',
+    tipTimelineLive: '실시간 LIVE 상태로 복귀',
+    tipTimelinePlay: '24시간 타임라인 리플레이 재생 / 일시정지',
+    tipTimelineTimelapse: '24시간 활동을 10초 타임랩스로 재생',
+    tipTimelineSpeed: (speed) => `리플레이 재생 속도를 ${speed}x로 설정`,
+    tipTimelineDrawer: '24시간 이벤트 로그 서랍 열기 / 닫기',
+    tipSwitchCharacter: (displayName, roleHint) => `${displayName} · ${roleHint}`,
   },
 };
 
