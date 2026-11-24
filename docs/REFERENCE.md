@@ -1,6 +1,6 @@
 [English README](../README.md) · [한국어 README](../README.ko.md) · **Full Reference**
 
-# Bot World Technical Reference (`v0.9.0`)
+# Bot World Technical Reference (`v1.0.0`)
 
 Complete reference for plugin settings, keyboard shortcuts, Bot RPG mechanics, security architecture, verification commands, and release history.
 
@@ -19,13 +19,14 @@ Complete reference for plugin settings, keyboard shortcuts, Bot RPG mechanics, s
 | `atmosphereMode` | `string` | `auto`, `day`, `sunset`, `night` | `auto` | Time-of-day lighting (`auto` follows live or replay timestamp; `day` 07:00–16:59, `sunset` 17:00–19:59, `night` 20:00–06:59). |
 | `weatherMode` | `string` | `auto`, `clear`, `rain`, `snow`, `starlight` | `auto` | Ambient weather effect (`auto` matches active theme and time of day). |
 | `viewMode` | `string` | `office`, `pet`, `broadcast` | `office` | Default visualization mode (`Isometric Office`, `Pocket Pet Terrarium`, or `Broadcast Chroma Bar`). |
-| `allowQuickSend` | `boolean` | `true` / `false` | `false` | Opt-in: allow sending messages to Orca bots from the Quick Send bar (disabled by default for read-only safety). |
-| `desktopNotifications` | `boolean` | `true` / `false` | `false` | Opt-in: OS desktop alerts when a bot enters `Needs You` or `Error` state (disabled by default; Redact-safe). |
+| `allowQuickSend` | `boolean` | `true` / `false` | `false` | Opt-in: allow sending messages and 1-click `Needs You` decision replies to Orca bots from Bot World (disabled by default for read-only safety). |
+| `desktopNotifications` | `boolean` | `true` / `false` | `false` | Opt-in: OS desktop alerts when a bot enters `Needs You`, `Error`, or `Stuck Watchdog` state (disabled by default; Redact-safe). |
+| `stuckThresholdMin` | `integer` | `0` – `180` | `15` | Minutes without status, task, or tool change before flagging a `Working` bot or active sub-worker as stuck (`0` disables watchdog). |
 
 ### Workspace & UI Preferences
 
 - **`soundMode`** (`off` | `chimes` | `ambient`, default `off`): Toggled via `M` or the toolbar button and persisted locally in `botWorld.prefs`. Only synthesizes Web Audio cues after an explicit user gesture.
-- **`broadcastChroma`** (`green` | `blue` | `black` | `charcoal`, default `green`): Chroma-key backdrop color for the Broadcast Chroma Bar (`B`), persisted locally in `botWorld.prefs`.
+- **`broadcastChroma`** (`green` | `blue` | `black` | `charcoal`, default `green`): Chroma-key backdrop color for the Broadcast Chroma Bar (`B`), kept in view session memory (not persisted).
 - **`.botworld` Document Fields**: Custom board files store view preferences only (`themeId`, `atmosphereMode`, `weatherMode`, `redactMode`, `selectedBotId`, `botAppearances`, `customDeskPositions`, `zones`, `showZones`) and never persist sensitive task text.
 - **24h Replay Timeline**: Automatically records sanitized snapshots into `botWorld.timeline` for 24h scrubbing (`1x`, `2x`, `5x`, `10x`) and 10-second Daily Timelapse playback.
 
@@ -98,7 +99,7 @@ Bot World is built as a **read-only-by-default**, zero-egress plugin with strict
 | `settings:own` | Reads and reacts to user-configured plugin settings in Orca. |
 | `agent:read` | Reads live bot, chat, worktree, orchestration, and automation snapshots. |
 | `workspace:write` | Used exclusively for 1-click teleport (`terminal.focus` and `workspace.open`) on `↗ Terminal` / `↗ Workspace` clicks — never writes files or workspace config. |
-| `notifications:show` | Used exclusively for opt-in OS notifications (`desktopNotifications: false` by default) when a bot enters `Needs You` or `Error`. |
+| `notifications:show` | Used exclusively for opt-in OS notifications (`desktopNotifications: false` by default) when a bot enters `Needs You`, `Error`, or `Stuck Watchdog`. |
 
 ### Runtime & Storage Guards
 
@@ -110,9 +111,10 @@ Bot World is built as a **read-only-by-default**, zero-egress plugin with strict
   - `worktree ps --since <dur> --json`
   - `orchestration inbox --limit <n> --full --json`, `orchestration worker-list --limit <n> [--cursor <c>] --full --json`, `orchestration run-list --full --json`
   - `automations list --json`, `automations runs --json`
-- **Opt-In Quick Send & Notifications**:
-  - `allowQuickSend` (`false` by default): When enabled, `sendQuickBotMessage` validates bot targets, rejects control characters, enforces `1–500` character limits, and applies a 2-second per-bot cooldown outside `assertAllowedSubcommand()`.
-  - `desktopNotifications` (`false` by default): Skips initial sync bursts, applies a 60-second per-bot/kind cooldown, truncates title/body lengths, and masks names/prompts/errors when **Redact Mode** is enabled.
+- **Opt-In Quick Send, Decision Replies, Notifications & Watchdog**:
+  - `allowQuickSend` (`false` by default): When enabled, `sendQuickBotMessage` (`buildQuickSendArgs`) and `botWorld.replyNeedsOwnerItem` (`buildItemReplyArgs` → `replyNeedsOwnerItem`) validate bot targets (and `needs_you` item ownership plus safe-integer item numbers for decision replies), reject control characters, enforce `1–500` character limits, apply a 2-second per-bot cooldown, scrub error strings with `scrubAll()`, and remain strictly separated from the read-only `assertAllowedSubcommand()` allowlist.
+  - `desktopNotifications` (`false` by default): Skips initial sync bursts, applies a 60-second per-bot/kind cooldown for `Needs You` / `Error` and a 15-minute cooldown (`STUCK_NOTIFY_COOLDOWN_MS`) for `Stuck` alerts, truncates title/body lengths, and masks names/prompts/tasks/tools/errors with `scrubAll()` and **Redact Mode** aliases (`Bot #N` / `봇 #N`).
+  - `StuckWatchdogTracker` (`stuckThresholdMin`, default `15`, `0` disables): Monitors `Working` bots and active sub-workers strictly in memory (capped at `MAX_TRACKED_WATCHDOG_ENTRIES = 256` per map), suppresses evaluation when disconnected/offline (`!snapshot.runtime.connected`) or during timeline replay, enforces the 15-minute notification cooldown (`STUCK_NOTIFY_COOLDOWN_MS`), and applies `scrubAll()` plus **Redact Mode** masking (`Bot #N` / `봇 #N`, hiding `lastTaskTitle` and `lastTool`).
 - **PII-Free Local Schemas & Secret Scrubbing**:
   - `scrubAll()` masks AWS access keys, Slack/GitHub/Bearer/API tokens, webhook URLs, PEM private key blocks, email addresses, payment card numbers, and 12-digit AWS account IDs before storage or rendering.
   - `botWorld.weeklyTrend` stores daily integer rollups only (`date`, `events`, `tasksDone`, `workerRuns`, `collaborations`).
@@ -134,8 +136,9 @@ orca plugin test . --json
 
 ---
 
-## Release History (`v0.1.0` → `v0.9.0`)
+## Release History (`v0.1.0` → `v1.0.0`)
 
+- **`v1.0.0`**: Zero-layout-shift fixed-size toolbar (2-row 440px panel · single-row 1280px editor) & performance engine (parallel CLI polling, unchanged-snapshot fingerprint IPC suppression, 12s inactive-UI backoff, `ResizeObserver`, `visibilitychange` pause, offscreen backdrop cache, `DPR <= 2`, 3-tier Pocket Pet throttling, JPEG backdrops); opt-in **Needs You 1-Click Decision Reply** (`buildItemReplyArgs` / `botWorld.replyNeedsOwnerItem`, `allowQuickSend` default `false`, instant in Demo); **Stuck Bot Watchdog** (`StuckWatchdogTracker`, `stuckThresholdMin` default `15`, desk `⏳` badge, detail banner, 15m-cooldown Redact-safe OS alerts); and 24h Digest (`I`) **Daily Standup Markdown Export**.
 - **`v0.9.0`**: Creator Studio (`U`) for canvas-sanitized custom avatars, office backgrounds, and `.botworld-pack.json` sharing (`botWorld.creator.v1`); Broadcast Chroma-Key Pet Bar (`B`) with Green/Blue/Black/Charcoal keys & hover-reveal exit pill; universal native hover tooltips across every control; and Redact Mode (`R`) alias coverage across Pet/Broadcast/Quick Send/pills/filters/hover HUD/notifications.
 - **`v0.8.0`**: Bot RPG XP/leveling (`Lv.1 Intern` → `Lv.6+ Archmage`) with 6 desk props, Owner Avatar Roaming (`V`, `H` High-Five, `K` Hand Coffee), idle watercooler banter, opt-in OS desktop notifications (`desktopNotifications`), and RPG growth in the 24h Digest.
 - **`v0.7.0`**: Pocket Pet Terrarium mode (`G`) with headpats & toys (`☕`/`🎾`/`🍪`), 1-click Terminal/Workspace teleport (`↗ Terminal`/`↗ Workspace`), and opt-in Quick Send paper planes (`allowQuickSend`).

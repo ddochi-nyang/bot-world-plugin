@@ -73,8 +73,8 @@ describe('Prototype pollution, document validation, and static XSS checks', () =
   });
 
   test('asset allowlist blocks path traversal', () => {
-    assert.equal(resolveThemeAssetPath('../../secret'), '../assets/themes/startup_office/bg.png');
-    assert.equal(resolveThemeAssetPath('corporate_office'), '../assets/themes/corporate_office/bg.png');
+    assert.equal(resolveThemeAssetPath('../../secret'), '../assets/themes/startup_office/bg.jpg');
+    assert.equal(resolveThemeAssetPath('corporate_office'), '../assets/themes/corporate_office/bg.jpg');
     assert.equal(resolveCharacterSpritePath('../etc/passwd'), '../assets/characters/ddochi/idle.png');
     assert.equal(resolveCharacterSpritePath('cve'), '../assets/characters/cve/idle.png');
   });

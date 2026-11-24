@@ -7,6 +7,7 @@ import type {
   CreatorAssetsState,
   DeskPropId,
   FocusTerminalResponse,
+  ItemReplyResponse,
   LanguageSetting,
   OpenWorkspaceResponse,
   QuickSendResponse,
@@ -64,6 +65,10 @@ declare module 'orca' {
       input: { botId: string; message: string };
       output: QuickSendResponse;
     };
+    'botWorld.replyNeedsOwnerItem': {
+      input: { botId: string; itemNumber: number; answerText: string };
+      output: ItemReplyResponse;
+    };
     'botWorld.focusTerminal': {
       input: { terminalId: string };
       output: FocusTerminalResponse;
@@ -112,6 +117,10 @@ declare module 'orca' {
     'botWorld.resetCustomAssets': {
       input?: { target?: 'all' | 'background' | 'avatars' };
       output: CreatorAssetsState;
+    };
+    'botWorld.setUiActive': {
+      input: { active: boolean; clientId?: string };
+      output: { uiActive: boolean; fastIntervalMs: number };
     };
   }
 

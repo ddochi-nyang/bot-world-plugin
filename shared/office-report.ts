@@ -4,22 +4,25 @@ import {
   type BotRpgProfile,
   type DailyTrendPoint,
   type DeskPropId,
+  type StuckAlert,
   type UiLocale,
   type WorldEvent,
   type WorldEventRecord,
   type WorldSnapshot,
+  botStatusLabel,
   isSafeKey,
 } from '../src/types.ts';
 import { getLastSevenDaysTrend, mergeEventsIntoWeeklyTrend } from '../src/weekly-trend.ts';
 import { propEmoji, rpgTitleForLevel } from './bot-rpg.ts';
 import { clearChildren, el } from './dom.ts';
-import { getBotRedactedAlias } from './filter.ts';
+import { getBotRedactedAlias, orderedSnapshotBotIds } from './filter.ts';
 import { formatTimeHms, tStrings } from './i18n.ts';
 import {
   type OfficeBadgeId,
   badgeDisplayMeta,
   computeOfficeBadges,
 } from './office-badges.ts';
+import { stuckAlertByBotMap } from './watchdog.ts';
 
 export type OfficeReportTopBot = {
   botId: string;
@@ -52,6 +55,17 @@ export type OfficeReportRpgBot = {
   propEmoji: string;
 };
 
+export type OfficeReportStandupBot = {
+  botId: string;
+  botName: string;
+  estimatedWorkMinutes: number;
+  completedCount: number;
+  needsYouCount: number;
+  stuckMinutes: number | null;
+  statusText: string;
+  activeTask: string | null;
+};
+
 export type OfficeReport = {
   redacted?: boolean;
   windowHours: number;
@@ -70,6 +84,7 @@ export type OfficeReport = {
   weeklyTrend?: DailyTrendPoint[];
   badges: OfficeReportBadgeEntry[];
   topRpgBots?: OfficeReportRpgBot[];
+  standupBots?: OfficeReportStandupBot[];
 };
 
 const HOUR_MS = 3600_000;
@@ -135,6 +150,7 @@ export function buildOfficeReport(
     locale: UiLocale;
     weeklyTrend?: readonly DailyTrendPoint[];
     rpgProfiles?: Readonly<Record<string, BotRpgProfile>>;
+    stuckAlerts?: readonly StuckAlert[];
   }
 ): OfficeReport {
   const s = tStrings(opts.locale);
@@ -317,6 +333,118 @@ export function buildOfficeReport(
     }
   }
 
+  const sortedWindowEvents = [...windowEvents].sort((a, b) => a.timestampMs - b.timestampMs);
+  const workStartByBot = new Map<string, number>();
+  const lastEventTsByBot = new Map<string, number>();
+  const workMsByBot = new Map<string, number>();
+  const completedByBot = new Map<string, number>();
+
+  for (const rec of sortedWindowEvents) {
+    const ev = rec.event;
+    if (!ev) continue;
+    const botId = eventRelatedBotId(ev);
+    if (!botId || !isSafeKey(botId)) continue;
+    const prevLastTs = lastEventTsByBot.get(botId) ?? 0;
+    if (rec.timestampMs > prevLastTs) {
+      lastEventTsByBot.set(botId, rec.timestampMs);
+    }
+
+    if (ev.kind === 'BotWorking' || ev.kind === 'ToolChanged') {
+      if (!workStartByBot.has(botId)) {
+        workStartByBot.set(botId, rec.timestampMs);
+      }
+    } else if (
+      ev.kind === 'BotIdle' ||
+      ev.kind === 'BotPaused' ||
+      ev.kind === 'BotFailed' ||
+      ev.kind === 'WaitingAnswer' ||
+      ev.kind === 'ItemNeedsYou'
+    ) {
+      const started = workStartByBot.get(botId);
+      if (started !== undefined) {
+        workMsByBot.set(botId, (workMsByBot.get(botId) ?? 0) + Math.max(0, rec.timestampMs - started));
+        workStartByBot.delete(botId);
+      }
+    } else if (ev.kind === 'ItemDone' || ev.kind === 'WorkerDone') {
+      completedByBot.set(botId, (completedByBot.get(botId) ?? 0) + 1);
+      if (!workStartByBot.has(botId) && (workMsByBot.get(botId) ?? 0) === 0) {
+        workMsByBot.set(botId, 5 * 60_000);
+      }
+    }
+  }
+  const maxUnclosedNonWorkingMs = 15 * 60_000;
+  for (const [botId, started] of workStartByBot.entries()) {
+    const bot = Object.hasOwn(snapshot.bots, botId) ? snapshot.bots[botId] : undefined;
+    if (bot?.status.kind === 'Working') {
+      workMsByBot.set(botId, (workMsByBot.get(botId) ?? 0) + Math.max(0, nowMs - started));
+    } else {
+      const lastEvTs = lastEventTsByBot.get(botId) ?? started;
+      const boundedEnd =
+        lastEvTs > started ? Math.min(nowMs, lastEvTs) : nowMs;
+      const conservativeElapsed = Math.min(Math.max(0, boundedEnd - started), maxUnclosedNonWorkingMs);
+      workMsByBot.set(botId, (workMsByBot.get(botId) ?? 0) + conservativeElapsed);
+    }
+  }
+
+  const stuckByBot = stuckAlertByBotMap(opts.stuckAlerts ?? []);
+  const standupBotIds = new Set<string>(orderedSnapshotBotIds(snapshot));
+  for (const botId of botCounts.keys()) {
+    if (isSafeKey(botId)) standupBotIds.add(botId);
+  }
+  const standupBots: OfficeReportStandupBot[] = [];
+  for (const botId of standupBotIds) {
+    const bot = Object.hasOwn(snapshot.bots, botId) ? snapshot.bots[botId] : undefined;
+    let totalWorkMs = workMsByBot.get(botId) ?? 0;
+    if (totalWorkMs === 0 && bot && bot.status.kind === 'Working') {
+      if (
+        bot.lastActivityAt !== null &&
+        Number.isFinite(bot.lastActivityAt) &&
+        bot.lastActivityAt <= nowMs &&
+        bot.lastActivityAt >= windowStartMs
+      ) {
+        totalWorkMs = Math.max(60_000, nowMs - bot.lastActivityAt);
+      } else {
+        totalWorkMs = 5 * 60_000;
+      }
+    } else if (totalWorkMs === 0 && (botCounts.get(botId) ?? 0) > 0) {
+      totalWorkMs = Math.min(30, (botCounts.get(botId) ?? 0) * 2) * 60_000;
+    }
+
+    const estimatedWorkMinutes = Math.max(
+      0,
+      Math.min(REPORT_WINDOW_HOURS * 60, Math.round(totalWorkMs / 60_000))
+    );
+    const completedCount = completedByBot.get(botId) ?? 0;
+    const needsYouCount = bot ? bot.needsYouCount : 0;
+    const stuckMinutes = stuckByBot.get(botId)?.elapsedMinutes ?? null;
+    const displayName = opts.redactMode
+      ? getBotRedactedAlias(botId, snapshot, opts.locale)
+      : bot
+        ? scrubAll(bot.name)
+        : (botNames.get(botId) ?? s.botGeneric);
+    const statusText = bot ? botStatusLabel(bot.status, opts.locale) : s.unknownActor;
+    const activeTask =
+      !opts.redactMode && bot?.currentTaskTitle ? scrubAll(bot.currentTaskTitle) : null;
+
+    standupBots.push({
+      botId,
+      botName: displayName,
+      estimatedWorkMinutes,
+      completedCount,
+      needsYouCount,
+      stuckMinutes,
+      statusText,
+      activeTask,
+    });
+  }
+  standupBots.sort(
+    (a, b) =>
+      b.estimatedWorkMinutes - a.estimatedWorkMinutes ||
+      b.completedCount - a.completedCount ||
+      b.needsYouCount - a.needsYouCount ||
+      a.botName.localeCompare(b.botName)
+  );
+
   return {
     redacted: opts.redactMode,
     windowHours: REPORT_WINDOW_HOURS,
@@ -335,6 +463,7 @@ export function buildOfficeReport(
     weeklyTrend,
     badges,
     topRpgBots,
+    standupBots,
   };
 }
 
@@ -423,6 +552,92 @@ export function formatReportMarkdown(
   return lines.join('\n');
 }
 
+function formatWorkDuration(minutes: number, locale: UiLocale): string {
+  const m = Math.max(0, Math.round(minutes));
+  if (m < 60) {
+    return locale === 'ko' ? `${m}분` : `${m}m`;
+  }
+  const h = Math.floor(m / 60);
+  const rem = m % 60;
+  if (locale === 'ko') {
+    return rem > 0 ? `${h}시간 ${rem}분` : `${h}시간`;
+  }
+  return rem > 0 ? `${h}h ${rem}m` : `${h}h`;
+}
+
+export function formatStandupMarkdown(
+  report: OfficeReport,
+  opts: { redactMode: boolean; locale: UiLocale }
+): string {
+  const s = tStrings(opts.locale);
+  const generatedHms = formatTimeHms(report.generatedAtMs, opts.locale);
+  const needsFallbackMask = opts.redactMode && report.redacted !== true;
+  const rows = report.standupBots ?? [];
+  const totalCompleted = rows.reduce((sum, r) => sum + r.completedCount, 0);
+  const totalNeedsYou = rows.reduce((sum, r) => sum + r.needsYouCount, 0);
+  const totalStuck = rows.filter((r) => r.stuckMinutes !== null && r.stuckMinutes > 0).length;
+
+  const lines: string[] = [];
+  if (opts.redactMode) {
+    lines.push(`# ${s.standupTitle} [${s.reportRedactedBadge}]`);
+    lines.push(`> [${s.reportRedactedBadge}] ${s.reportRedactedNotice}`);
+  } else {
+    lines.push(`# ${s.standupTitle}`);
+  }
+  lines.push(`- ${s.reportSubtitle(report.windowHours, generatedHms)}`);
+  lines.push(
+    opts.locale === 'ko'
+      ? `- 요약: 활성 봇 ${report.activeBotsCount}/${report.totalBotsCount} · 완료 ${totalCompleted}건 · 결정 대기 ${totalNeedsYou}건 · 정체 ${totalStuck}건`
+      : `- Summary: Active ${report.activeBotsCount}/${report.totalBotsCount} · Completed ${totalCompleted} · Needs You ${totalNeedsYou} · Stuck ${totalStuck}`
+  );
+  lines.push('');
+
+  if (rows.length === 0) {
+    lines.push(`- ${s.standupNoBots}`);
+    return lines.join('\n');
+  }
+
+  lines.push(
+    `| ${s.standupColumns.bot} | ${s.standupColumns.estWork} | ${s.standupColumns.completed} | ${s.standupColumns.needsYou} | ${s.standupColumns.stuck} | ${s.standupColumns.status} |`
+  );
+  lines.push('| --- | --- | --- | --- | --- | --- |');
+  rows.forEach((row, idx) => {
+    const displayName = opts.redactMode
+      ? needsFallbackMask
+        ? s.botNumbered(idx + 1)
+        : scrubAll(row.botName)
+      : scrubAll(row.botName);
+    const workText = formatWorkDuration(row.estimatedWorkMinutes, opts.locale);
+    const stuckText =
+      row.stuckMinutes !== null && row.stuckMinutes > 0 ? `⏳ ${row.stuckMinutes}m` : '—';
+    const statusCell =
+      !opts.redactMode && row.activeTask
+        ? `${row.statusText} — ${scrubAll(row.activeTask).replace(/\|/g, '/')}`
+        : row.statusText;
+    lines.push(
+      `| ${displayName.replace(/\|/g, '/')} | ${workText} | ${row.completedCount} | ${row.needsYouCount} | ${stuckText} | ${statusCell} |`
+    );
+  });
+
+  return lines.join('\n');
+}
+
+export function buildStandupMarkdown(
+  events: readonly WorldEventRecord[],
+  snapshot: WorldSnapshot,
+  opts: {
+    nowMs?: number;
+    redactMode: boolean;
+    locale: UiLocale;
+    weeklyTrend?: readonly DailyTrendPoint[];
+    rpgProfiles?: Readonly<Record<string, BotRpgProfile>>;
+    stuckAlerts?: readonly StuckAlert[];
+  }
+): string {
+  const report = buildOfficeReport(events, snapshot, opts);
+  return formatStandupMarkdown(report, { redactMode: opts.redactMode, locale: opts.locale });
+}
+
 export function renderOfficeReportModal(
   backdrop: HTMLElement,
   opts: {
@@ -431,7 +646,9 @@ export function renderOfficeReportModal(
     redactMode: boolean;
     locale: UiLocale;
     copied: boolean;
+    standupCopied?: boolean;
     onCopyMarkdown: () => void;
+    onCopyStandupMarkdown?: () => void;
     onClose: () => void;
   }
 ): void {
@@ -644,6 +861,29 @@ export function renderOfficeReportModal(
         )
   );
 
+  const standupMd = formatStandupMarkdown(report, { redactMode, locale: opts.locale });
+  const standupSection = el(
+    'div',
+    { className: 'bw-section' },
+    el(
+      'div',
+      { className: 'bw-section-title-row' },
+      el('div', { className: 'bw-section-title' }, s.reportStandupPreviewTitle),
+      opts.onCopyStandupMarkdown
+        ? el(
+            'button',
+            {
+              type: 'button',
+              className: opts.standupCopied ? 'bw-btn bw-btn-active bw-btn-xs' : 'bw-btn bw-btn-xs',
+              onClick: opts.onCopyStandupMarkdown,
+            },
+            opts.standupCopied ? s.reportCopied : s.reportCopyStandup
+          )
+        : null
+    ),
+    el('pre', { className: 'bw-standup-preview' }, standupMd)
+  );
+
   const titleRowChildren = [
     el('span', { className: 'bw-modal-title' }, s.reportTitle),
     redactMode ? el('span', { className: 'bw-badge bw-badge-needs' }, s.reportRedactedBadge) : null,
@@ -670,7 +910,18 @@ export function renderOfficeReportModal(
       ),
       el(
         'div',
-        { className: 'bw-toolbar-group' },
+        { className: 'bw-toolbar-group bw-modal-actions' },
+        opts.onCopyStandupMarkdown
+          ? el(
+              'button',
+              {
+                type: 'button',
+                className: opts.standupCopied ? 'bw-btn bw-btn-active' : 'bw-btn',
+                onClick: opts.onCopyStandupMarkdown,
+              },
+              opts.standupCopied ? s.reportCopied : s.reportCopyStandup
+            )
+          : null,
         el(
           'button',
           {
@@ -703,7 +954,8 @@ export function renderOfficeReportModal(
     rpgSection,
     topBotsSection,
     hourlyChart,
-    weeklyChart
+    weeklyChart,
+    standupSection
   );
 
   backdrop.appendChild(dialog);

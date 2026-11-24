@@ -251,6 +251,22 @@ const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
 const QUICK_MESSAGE_CONTROL_CHAR_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/;
 const SHELL_META_RE = /[;|&$`<>\\/]/;
 export const MAX_QUICK_MESSAGE_CHARS = 500;
+export const MAX_ITEM_NUMBER = 999_999_999;
+
+export function validateItemNumber(itemNumber: number): number {
+  if (
+    typeof itemNumber !== 'number' ||
+    !Number.isSafeInteger(itemNumber) ||
+    itemNumber < 1 ||
+    itemNumber > MAX_ITEM_NUMBER
+  ) {
+    throw new OrcaCliError(
+      'invalid_argument',
+      `itemNumber must be an integer between 1 and ${MAX_ITEM_NUMBER}`
+    );
+  }
+  return itemNumber;
+}
 
 export function validateBotName(botName: string): string {
   if (typeof botName !== 'string') {
@@ -742,18 +758,45 @@ export function buildQuickSendArgs(botName: string, message: string): string[] {
   ];
 }
 
-export async function sendQuickBotMessage(
+/**
+ * Builds an execFile argument vector for opt-in Needs You item replies.
+ * Kept strictly separate from the read-only `assertAllowedSubcommand()` allowlist.
+ */
+export function buildItemReplyArgs(
   botName: string,
-  message: string,
-  options?: {
-    binaryPath?: string | null;
-    timeoutMs?: number;
-    runner?: CliRunner;
-    env?: Record<string, string>;
-    signal?: AbortSignal;
-  }
+  itemNumber: number,
+  answerText: string
+): string[] {
+  const cleanBot = validateBotName(botName);
+  const cleanNum = validateItemNumber(itemNumber);
+  const cleanBody = validateQuickMessageBody(answerText);
+  return [
+    'orchestration',
+    'send',
+    '--to',
+    `bot:${cleanBot}`,
+    '--item',
+    String(cleanNum),
+    '--subject',
+    'Bot World Decision Reply',
+    '--body',
+    cleanBody,
+    '--json',
+  ];
+}
+
+export type CliWriteOptions = {
+  binaryPath?: string | null;
+  timeoutMs?: number;
+  runner?: CliRunner;
+  env?: Record<string, string>;
+  signal?: AbortSignal;
+};
+
+async function runWriteEnvelope(
+  args: readonly string[],
+  options?: CliWriteOptions
 ): Promise<CliEnvelope<unknown>> {
-  const args = buildQuickSendArgs(botName, message);
   const hasCustomRunner = Boolean(options?.runner);
   const execPath = hasCustomRunner
     ? options?.binaryPath === undefined
@@ -815,4 +858,23 @@ export async function sendQuickBotMessage(
   }
 
   return parsed;
+}
+
+export async function sendQuickBotMessage(
+  botName: string,
+  message: string,
+  options?: CliWriteOptions
+): Promise<CliEnvelope<unknown>> {
+  const args = buildQuickSendArgs(botName, message);
+  return runWriteEnvelope(args, options);
+}
+
+export async function replyNeedsOwnerItem(
+  botName: string,
+  itemNumber: number,
+  answerText: string,
+  options?: CliWriteOptions
+): Promise<CliEnvelope<unknown>> {
+  const args = buildItemReplyArgs(botName, itemNumber, answerText);
+  return runWriteEnvelope(args, options);
 }

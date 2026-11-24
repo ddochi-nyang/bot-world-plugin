@@ -14,6 +14,7 @@ import {
   type CharacterId,
   type DeskPropId,
   POOL_CHARACTER_IDS,
+  type StuckAlert,
   type UiLocale,
   type WorldEventRecord,
   type WorldSnapshot,
@@ -121,6 +122,15 @@ export function renderBotDetail(
     onUploadCustomAvatar?: (botId: string, file: File) => void;
     onResetCustomAvatar?: (botId: string) => void;
     onOpenCreatorStudio?: () => void;
+    allowQuickSend?: boolean;
+    demoMode?: boolean;
+    replyingItemKey?: string | null;
+    copiedReplyText?: string | null;
+    stuckAlert?: StuckAlert | null;
+    needsYouDrafts?: ReadonlyMap<string, string>;
+    onNeedsYouDraftChange?: (itemKey: string, value: string) => void;
+    onReplyNeedsOwnerItem?: (botId: string, itemNumber: number, answerText: string) => void;
+    onCopyReplyText?: (text: string) => void;
   }
 ): void {
   clearChildren(container);
@@ -143,6 +153,15 @@ export function renderBotDetail(
     onUploadCustomAvatar,
     onResetCustomAvatar,
     onOpenCreatorStudio,
+    allowQuickSend = false,
+    demoMode = false,
+    replyingItemKey = null,
+    copiedReplyText = null,
+    stuckAlert = null,
+    needsYouDrafts,
+    onNeedsYouDraftChange,
+    onReplyNeedsOwnerItem,
+    onCopyReplyText,
   } = options;
   const s = tStrings(locale);
 
@@ -294,6 +313,243 @@ export function renderBotDetail(
   container.appendChild(el('div', { className: 'bw-detail-header' }, ...headerChildren));
 
   const body = el('div', { className: 'bw-detail-body' });
+
+  // Top Priority 1: Needs You Action Card(s)
+  const needsYouItems = Object.values(snapshot.items)
+    .filter(
+      (it) =>
+        it.status === 'needs_you' &&
+        (it.ownerBotId === bot.id || it.ownerBotName === bot.name)
+    )
+    .sort((a, b) => a.number - b.number);
+
+  if (needsYouItems.length > 0) {
+    const canQuickReply = Boolean(demoMode || allowQuickSend);
+    const needsSection = el(
+      'section',
+      { className: 'bw-section' },
+      el('div', { className: 'bw-section-title' }, s.needsYouCardTitle)
+    );
+
+    for (const it of needsYouItems) {
+      const itemKey = `${bot.id}:${it.number}`;
+      const isReplying = replyingItemKey === itemKey;
+      const isAnyReplying = replyingItemKey !== null;
+      const itemTitleLine = redactMode
+        ? `#${it.number}`
+        : `#${it.number} ${scrubAll(it.title)}`;
+      const promptText = redactMode
+        ? s.needsYouRedactedPrompt
+        : scrubAll(it.questionPrompt && it.questionPrompt.trim().length > 0 ? it.questionPrompt : it.title);
+
+      const cardChildren: DomChild[] = [
+        el(
+          'div',
+          { className: 'bw-card-meta' },
+          el('span', { className: 'bw-card-text' }, itemTitleLine),
+          el('span', { className: 'bw-badge bw-badge-needs' }, s.itemStatusLabels.needs_you)
+        ),
+        el('div', { className: 'bw-needs-prompt' }, promptText),
+      ];
+
+      if (!redactMode) {
+        const opts = Array.isArray(it.questionOptions) ? it.questionOptions.slice(0, 6) : [];
+        if (canQuickReply && onReplyNeedsOwnerItem) {
+          if (opts.length > 0) {
+            const optList = el(
+              'div',
+              { className: 'bw-needs-options' },
+              ...opts.map((opt) => {
+                const cleanLabel = scrubAll(opt.label);
+                const cleanDetail = opt.detail ? scrubAll(opt.detail) : '';
+                return el(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'bw-needs-option-btn',
+                    disabled: isAnyReplying,
+                    onClick: () => onReplyNeedsOwnerItem(bot.id, it.number, cleanLabel),
+                  },
+                  el(
+                    'div',
+                    { className: 'bw-needs-option-head' },
+                    el('span', { className: 'bw-needs-option-label' }, cleanLabel),
+                    opt.recommended
+                      ? el('span', { className: 'bw-needs-option-rec' }, `★ ${s.needsYouRecommendedBadge}`)
+                      : null
+                  ),
+                  cleanDetail.length > 0
+                    ? el('div', { className: 'bw-needs-option-detail' }, cleanDetail)
+                    : null
+                );
+              })
+            );
+            cardChildren.push(optList);
+          }
+
+          const customInput = el('input', {
+            type: 'text',
+            className: 'bw-needs-custom-input',
+            placeholder: s.needsYouCustomPlaceholder,
+            maxLength: 500,
+            disabled: isAnyReplying,
+            ariaLabel: s.needsYouCustomPlaceholder,
+          }) as HTMLInputElement;
+          customInput.value = needsYouDrafts?.get(itemKey) ?? '';
+          if (onNeedsYouDraftChange) {
+            customInput.addEventListener('input', () => {
+              onNeedsYouDraftChange(itemKey, customInput.value);
+            });
+          }
+          const sendCustom = () => {
+            if (isAnyReplying) return;
+            const val = customInput.value.trim();
+            if (val.length === 0) return;
+            onReplyNeedsOwnerItem(bot.id, it.number, val);
+          };
+          customInput.addEventListener('keydown', (ev) => {
+            const kev = ev as KeyboardEvent;
+            if (kev.key === 'Enter' && !kev.shiftKey && !kev.isComposing && kev.keyCode !== 229) {
+              kev.preventDefault();
+              sendCustom();
+            }
+          });
+          cardChildren.push(
+            el(
+              'div',
+              { className: 'bw-needs-custom-row' },
+              customInput,
+              el(
+                'button',
+                {
+                  type: 'button',
+                  className: 'bw-btn bw-btn-primary bw-btn-xs',
+                  disabled: isAnyReplying,
+                  onClick: sendCustom,
+                },
+                isReplying ? s.needsYouSending : s.needsYouSendReply
+              )
+            )
+          );
+        } else {
+          cardChildren.push(el('div', { className: 'bw-needs-ro-hint' }, s.needsYouReadOnlyHint));
+          if (opts.length > 0 && onCopyReplyText) {
+            const optList = el(
+              'div',
+              { className: 'bw-needs-options' },
+              ...opts.map((opt) => {
+                const cleanLabel = scrubAll(opt.label);
+                const cleanDetail = opt.detail ? scrubAll(opt.detail) : '';
+                const isCopied = copiedReplyText === cleanLabel;
+                return el(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'bw-needs-option-btn',
+                    onClick: () => onCopyReplyText(cleanLabel),
+                  },
+                  el(
+                    'div',
+                    { className: 'bw-needs-option-head' },
+                    el('span', { className: 'bw-needs-option-label' }, cleanLabel),
+                    el(
+                      'span',
+                      { className: 'bw-needs-option-rec' },
+                      isCopied
+                        ? s.needsYouCopiedReply
+                        : opt.recommended
+                          ? `★ ${s.needsYouRecommendedBadge} · ${s.needsYouCopyReply}`
+                          : s.needsYouCopyReply
+                    )
+                  ),
+                  cleanDetail.length > 0
+                    ? el('div', { className: 'bw-needs-option-detail' }, cleanDetail)
+                    : null
+                );
+              })
+            );
+            cardChildren.push(optList);
+          }
+
+          const roActions: DomChild[] = [];
+          if (opts.length === 0 && onCopyReplyText) {
+            const copyTarget = promptText;
+            const isCopied = copiedReplyText === copyTarget;
+            roActions.push(
+              el(
+                'button',
+                {
+                  type: 'button',
+                  className: 'bw-btn bw-btn-xs',
+                  onClick: () => onCopyReplyText(copyTarget),
+                },
+                isCopied ? s.needsYouCopiedReply : s.needsYouCopyReply
+              )
+            );
+          }
+          if (jumpTerminalHandle && onFocusTerminal) {
+            roActions.push(
+              el(
+                'button',
+                {
+                  type: 'button',
+                  className: 'bw-btn bw-btn-teleport bw-btn-xs',
+                  tooltip: s.teleportTerminalTitle,
+                  onClick: () => onFocusTerminal(jumpTerminalHandle),
+                },
+                s.needsYouJumpTerminal
+              )
+            );
+          }
+          if (roActions.length > 0) {
+            cardChildren.push(el('div', { className: 'bw-needs-ro-actions' }, ...roActions));
+          }
+        }
+      } else if (jumpTerminalHandle && onFocusTerminal) {
+        cardChildren.push(
+          el(
+            'div',
+            { className: 'bw-needs-ro-actions' },
+            el(
+              'button',
+              {
+                type: 'button',
+                className: 'bw-btn bw-btn-teleport bw-btn-xs',
+                tooltip: s.teleportTerminalTitle,
+                onClick: () => onFocusTerminal(jumpTerminalHandle),
+              },
+              s.needsYouJumpTerminal
+            )
+          )
+        );
+      }
+
+      needsSection.appendChild(el('div', { className: 'bw-card bw-needs-card' }, ...cardChildren));
+    }
+
+    body.appendChild(needsSection);
+  }
+
+  // Top Priority 2: Watchdog Stuck Banner
+  if (stuckAlert) {
+    const stuckDetail = redactMode
+      ? s.watchdogStuckRedactedDetail(stuckAlert.elapsedMinutes)
+      : s.watchdogStuckDetail(
+          stuckAlert.targetKind === 'bot'
+            ? statusLabel
+            : scrubAll(stuckAlert.lastStatusKind),
+          stuckAlert.lastTool ? scrubAll(stuckAlert.lastTool) : null,
+          stuckAlert.lastTaskTitle ? scrubAll(stuckAlert.lastTaskTitle) : null
+        );
+    body.appendChild(
+      el(
+        'div',
+        { className: 'bw-card bw-card-warn bw-watchdog-banner' },
+        el('div', { className: 'bw-watchdog-title' }, `⏳ ${s.watchdogStuckTitle(stuckAlert.elapsedMinutes)}`),
+        el('div', { className: 'bw-watchdog-sub' }, stuckDetail)
+      )
+    );
+  }
 
   // Badges (if earned in 24h)
   if (badges && badges.length > 0) {

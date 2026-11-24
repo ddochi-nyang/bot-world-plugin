@@ -411,12 +411,23 @@ export function scrubFullSnapshot(snapshot: WorldSnapshot): WorldSnapshot {
   const items: WorldSnapshot['items'] = {};
   for (const [id, it] of Object.entries(clean.items)) {
     if (!isSafeKey(id)) continue;
+    const scrubbedOptions = Array.isArray(it.questionOptions)
+      ? it.questionOptions
+          .slice(0, 6)
+          .filter((o) => o && typeof o === 'object' && typeof o.label === 'string' && o.label.trim().length > 0)
+          .map((o) => ({
+            label: scrubAll(o.label),
+            ...(typeof o.detail === 'string' && o.detail.trim().length > 0 ? { detail: scrubAll(o.detail) } : {}),
+            ...(o.recommended === true ? { recommended: true } : {}),
+          }))
+      : [];
     Object.defineProperty(items, id, {
       value: {
         ...it,
         ownerBotName: scrubAll(it.ownerBotName),
         title: scrubAll(it.title),
         questionPrompt: it.questionPrompt !== null ? scrubAll(it.questionPrompt) : null,
+        questionOptions: scrubbedOptions,
       },
       enumerable: true,
       writable: true,

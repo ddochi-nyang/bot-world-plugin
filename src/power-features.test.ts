@@ -124,7 +124,7 @@ describe('Bot World v0.3.0 — Power User Edition features', () => {
 
     assert.equal(resolveThemeAssetPath('cozy_cafe'), '../assets/themes/cozy_cafe/bg.jpg');
     assert.equal(resolveThemeAssetPath('cyber_ops'), '../assets/themes/cyber_ops/bg.jpg');
-    assert.equal(resolveThemeAssetPath('../cozy_cafe'), '../assets/themes/startup_office/bg.png');
+    assert.equal(resolveThemeAssetPath('../cozy_cafe'), '../assets/themes/startup_office/bg.jpg');
 
     assert.equal(resolveThemeName('cozy_cafe', 'en'), 'Cozy Cafe');
     assert.equal(resolveThemeName('cozy_cafe', 'ko'), '코지 카페');
@@ -138,7 +138,7 @@ describe('Bot World v0.3.0 — Power User Edition features', () => {
       version: string;
       contributes: { settings: Array<{ key: string; enum?: string[]; enumLabels?: string[] }> };
     };
-    assert.equal(manifest.version, '0.9.0');
+    assert.equal(manifest.version, '1.0.0');
     const themeSetting = manifest.contributes.settings.find((s) => s.key === 'defaultTheme');
     assert.deepEqual(themeSetting?.enum, ['startup_office', 'corporate_office', 'cozy_cafe', 'cyber_ops']);
     assert.deepEqual(themeSetting?.enumLabels, [

@@ -4,11 +4,11 @@
 
 **Turn your Orca bots and live sub-workers into a living isometric office, Pocket Pet terrarium, Broadcast Chroma Bar, and local Bot RPG — read-only by default, with zero external network calls.**
 
-![Version 0.9.0](https://img.shields.io/badge/version-0.9.0-2563eb) ![Orca >= 1.4.265](https://img.shields.io/badge/Orca-%3E%3D1.4.265-0f766e) ![License MIT](https://img.shields.io/badge/license-MIT-475569) ![Privacy First](https://img.shields.io/badge/privacy--first-zero%20external%20network-16a34a)
+![Version 1.0.0](https://img.shields.io/badge/version-1.0.0-2563eb) ![Orca >= 1.4.265](https://img.shields.io/badge/Orca-%3E%3D1.4.265-0f766e) ![License MIT](https://img.shields.io/badge/license-MIT-475569) ![Privacy First](https://img.shields.io/badge/privacy--first-zero%20external%20network-16a34a)
 
 ![Bot World live preview](assets/showcase/preview.gif)
 
-*Virtual Office, Pocket Pet Terrarium (`G`), Broadcast Chroma Bar (`B`), Creator Studio (`U`), Bot RPG (`V`/`H`/`K`), Quick Send, and 24h Digest (`I`) — all running locally inside Orca.*
+*Virtual Office, Pocket Pet Terrarium (`G`), Broadcast Chroma Bar (`B`), Creator Studio (`U`), Bot RPG (`V`/`H`/`K`), Quick Send & Decision Reply, Stuck Watchdog, and 24h Digest (`I`) — all running locally inside Orca.*
 
 ## Quick Start
 
@@ -36,6 +36,12 @@
 - **Bot RPG & Owner Roaming**
   - Privacy-safe local XP & leveling (`Lv.1 Intern` → `Lv.6+ Archmage`) unlocks 6 pixel desk props (`🦆`, `🪴`, `⌨️`, `🖥️`, `🐱`, `🏆`) displayed right on each bot's desk.
   - Toggle **Owner Avatar Roaming** (`V`), walk with `WASD` / Arrow keys / canvas double-click, press `H` for **High-Five** (`+8 XP`) or `K` for **Hand Coffee** (`+10 XP`), and enjoy idle watercooler banter.
+- **Zero-Layout-Shift Toolbar & Performance Engine**
+  - Fixed-height, fixed-width toolbar (2-row 440px panel · single-row 1280px editor with `0px` shift on click) and lightweight JPEG office backdrops.
+  - Parallel CLI polling with unchanged-snapshot fingerprint IPC suppression and 12s inactive-UI backoff, plus `ResizeObserver`, `visibilitychange` pause, offscreen background cache, `DPR <= 2` cap, and 3-tier Pocket Pet throttling.
+- **Command & Ops Controls**
+  - Opt-in **Needs You 1-Click Decision Reply** (`allowQuickSend` default `false`, instant in Demo) and **Stuck Bot Watchdog** (`stuckThresholdMin` default `15`m: desk `⏳` badge, detail banner, and 15m-cooldown Redact-safe OS alerts).
+  - One-click **Daily Standup Markdown Export** inside the 24h Office Digest (`I`).
 - **Replay, Digest & Privacy-First Design**
   - Scrub 24h snapshots, play a **10s Daily Timelapse**, inspect the **24h Office Digest** (`I`) with Daily MVP, Bot Growth, and **7-Day Weekly Trend**, or save a **PNG Photo Card** (`P`).
   - Read-only by default, one-click **Redact Mode** (`R`), strict `connect-src 'none'` CSP with zero external network, and opt-in guards for Quick Send and OS Desktop Notifications.
@@ -58,12 +64,12 @@
   <tr>
     <td width="50%" align="center" valign="top">
       <img src="assets/showcase/broadcast-chroma.jpg" alt="Bot World Broadcast Chroma-Key Pet Bar with Green chroma background and hover-reveal toolbar" />
-      <br /><strong>Broadcast Chroma-Key Pet Bar (v0.9.0)</strong><br />
+      <br /><strong>Broadcast Chroma-Key Pet Bar</strong><br />
       <sub>OBS-ready Green/Blue/Black/Charcoal chroma bar with hover-reveal exit pill (<code>B</code>).</sub>
     </td>
     <td width="50%" align="center" valign="top">
       <img src="assets/showcase/creator-studio.jpg" alt="Bot World Creator Studio modal for custom avatars, backgrounds, and .botworld-pack.json export" />
-      <br /><strong>Creator Studio &amp; Asset Packs (v0.9.0)</strong><br />
+      <br /><strong>Creator Studio &amp; Asset Packs</strong><br />
       <sub>Drag-and-drop canvas-sanitized avatars &amp; backgrounds and export <code>.botworld-pack.json</code> (<code>U</code>).</sub>
     </td>
   </tr>
@@ -109,7 +115,7 @@ See [Full Shortcuts, Settings & Security Reference](./docs/REFERENCE.md) for all
 
 ## Security & Privacy Summary
 
-- **Read-Only & Opt-In Writes**: CLI polling uses a strict `assertAllowedSubcommand()` allowlist (`execFile`, `shell: false`). Both `allowQuickSend` and `desktopNotifications` default to `false`, and `workspace:write` is used solely for 1-click `terminal.focus` / `workspace.open` teleport.
+- **Read-Only & Opt-In Writes**: CLI polling uses a strict `assertAllowedSubcommand()` allowlist (`execFile`, `shell: false`). Both `allowQuickSend` (Quick Send & 1-click `Needs You` replies) and `desktopNotifications` (`Needs You` / `Error` / `Stuck Watchdog`) default to `false`, and `workspace:write` is used solely for 1-click `terminal.focus` / `workspace.open` teleport.
 - **Zero External Network**: Isolated custom editor frame (`frame: "isolated"`) with `connect-src 'none'`; all audio, particles, PNG photo cards, Creator Studio re-encoding, and XP storage run 100% locally.
 - **PII Scrubbing & Redact Mode**: Secrets, tokens, emails, cards, and 12-digit AWS account IDs are masked before storage or rendering; `botWorld.weeklyTrend`, `botWorld.rpg.v1`, and `botWorld.creator.v1` enforce strict schemas with zero PII.
 - **XSS-Safe DOM**: Built exclusively with `textContent` and `createTextNode` (zero `innerHTML` or `eval`).

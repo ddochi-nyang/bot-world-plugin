@@ -8,6 +8,7 @@ import {
   type CharacterId,
   type DeskCoordinate,
   type DeskPropId,
+  type StuckAlert,
   type TeamZone,
   type ThemeId,
   type UiLocale,
@@ -58,6 +59,7 @@ import {
   hasErrorDeskBeacon,
 } from './motion.ts';
 import type { OwnerRipple } from './owner-avatar.ts';
+import { stuckAlertByBotMap } from './watchdog.ts';
 import { WeatherSystem, resolveWeatherKind } from './weather.ts';
 import { formatZoneDisplayLabel, zoneColorPalette } from './zones.ts';
 
@@ -354,6 +356,7 @@ export type StageRenderInput = {
   timelapseActive?: boolean;
   customBackground?: string | null;
   customAvatars?: Readonly<Record<string, string>>;
+  stuckAlerts?: readonly StuckAlert[];
 };
 
 type HitBox = {
@@ -403,6 +406,14 @@ export class StageRenderer {
   private animTick = 0;
   private tickAccumulatorMs = 0;
   private resizeObserver: ResizeObserver | null = null;
+  private active = true;
+  private pageVisible = typeof document !== 'undefined' ? !document.hidden : true;
+  private cssW = 0;
+  private cssH = 0;
+  private dpr = 1;
+  private bgCacheCanvas: HTMLCanvasElement | null = null;
+  private bgCacheCtx: CanvasRenderingContext2D | null = null;
+  private bgCacheKey = '';
   private destroyed = false;
 
   constructor(
@@ -439,13 +450,72 @@ export class StageRenderer {
     this.canvas.addEventListener('wheel', this.handleWheel, { passive: false });
 
     if (typeof ResizeObserver !== 'undefined') {
-      this.resizeObserver = new ResizeObserver(() => {
-        this.resizeCanvas();
-        this.renderNow();
+      this.resizeObserver = new ResizeObserver((entries) => {
+        const cr = entries[0]?.contentRect;
+        this.resizeCanvas(cr ? { width: cr.width, height: cr.height } : undefined);
+        if (this.active && this.pageVisible) this.renderNow();
       });
       this.resizeObserver.observe(this.canvas);
     }
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('resize', this.handleWindowResize);
+    }
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', this.handleVisibilityChange);
+    }
     this.resizeCanvas();
+  }
+
+  private readonly handleWindowResize = (): void => {
+    this.resizeCanvas();
+    if (this.active && this.pageVisible) this.renderNow();
+  };
+
+  private readonly handleVisibilityChange = (): void => {
+    if (typeof document !== 'undefined') {
+      this.setPageVisible(!document.hidden);
+    }
+  };
+
+  setActive(active: boolean): void {
+    if (this.active === active) return;
+    this.active = active;
+    if (!active) {
+      if (this.rafId !== null) {
+        cancelAnimationFrame(this.rafId);
+        this.rafId = null;
+      }
+      return;
+    }
+    this.resizeCanvas();
+    if (!this.destroyed && this.pageVisible && this.lastInput) {
+      this.renderNow();
+      this.ensureAnimationLoopIfNeeded();
+    }
+  }
+
+  isActive(): boolean {
+    return this.active;
+  }
+
+  setPageVisible(visible: boolean): void {
+    if (this.pageVisible === visible) return;
+    this.pageVisible = visible;
+    if (!visible) {
+      if (this.rafId !== null) {
+        cancelAnimationFrame(this.rafId);
+        this.rafId = null;
+      }
+      return;
+    }
+    if (!this.destroyed && this.active && this.lastInput) {
+      this.renderNow();
+      this.ensureAnimationLoopIfNeeded();
+    }
+  }
+
+  isPageVisible(): boolean {
+    return this.pageVisible;
   }
 
   private loadImage(safePath: string): HTMLImageElement | null {
@@ -478,14 +548,27 @@ export class StageRenderer {
     return img.complete && img.naturalWidth > 0 ? img : null;
   }
 
-  private resizeCanvas(): void {
-    const rect = this.canvas.getBoundingClientRect();
-    const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
-    const targetW = Math.max(1, Math.round(rect.width * dpr));
-    const targetH = Math.max(1, Math.round(rect.height * dpr));
-    if (this.canvas.width !== targetW || this.canvas.height !== targetH) {
-      this.canvas.width = targetW;
-      this.canvas.height = targetH;
+  private resizeCanvas(contentRect?: { width: number; height: number }): void {
+    const rect =
+      contentRect && contentRect.width > 0 && contentRect.height > 0
+        ? contentRect
+        : this.canvas.getBoundingClientRect();
+    const rawDpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+    const dpr = Math.max(1, Math.min(2, rawDpr));
+    this.dpr = dpr;
+    if (rect.width > 0 && rect.height > 0) {
+      this.cssW = rect.width;
+      this.cssH = rect.height;
+      const targetW = Math.max(1, Math.round(rect.width * dpr));
+      const targetH = Math.max(1, Math.round(rect.height * dpr));
+      if (this.canvas.width !== targetW || this.canvas.height !== targetH) {
+        this.canvas.width = targetW;
+        this.canvas.height = targetH;
+        this.bgCacheKey = '';
+      }
+    } else if (this.canvas.width > 0 && this.canvas.height > 0) {
+      this.cssW = this.canvas.width / dpr;
+      this.cssH = this.canvas.height / dpr;
     }
   }
 
@@ -502,7 +585,9 @@ export class StageRenderer {
     if (this.camera.followBotId) {
       this.syncFollowTarget(input, theme.designSize, false);
     }
-    this.renderNow();
+    if (this.active && this.pageVisible) {
+      this.renderNow();
+    }
     this.ensureAnimationLoopIfNeeded();
   }
 
@@ -627,6 +712,7 @@ export class StageRenderer {
   }
 
   private shouldAnimate(input: StageRenderInput): boolean {
+    if (!this.active || !this.pageVisible) return false;
     if (this.camera.isAnimating()) return true;
     if (input.ownerAvatar?.roaming && (input.ownerAvatar.isMoving || input.ownerAvatar.ripple !== null)) {
       return true;
@@ -937,43 +1023,41 @@ export class StageRenderer {
     this.ensureAnimationLoopIfNeeded();
   };
 
-  renderNow(): void {
-    const input = this.lastInput;
-    if (!input) return;
+  private getBgCache(targetW: number, targetH: number): CanvasRenderingContext2D | null {
+    if (typeof document === 'undefined' || typeof document.createElement !== 'function') {
+      return null;
+    }
+    if (!this.bgCacheCanvas) {
+      const c = document.createElement('canvas') as HTMLCanvasElement;
+      if (!c || typeof c.getContext !== 'function') return null;
+      const cctx = c.getContext('2d');
+      if (!cctx) return null;
+      this.bgCacheCanvas = c;
+      this.bgCacheCtx = cctx;
+      this.bgCacheKey = '';
+    }
+    if (this.bgCacheCanvas.width !== targetW || this.bgCacheCanvas.height !== targetH) {
+      this.bgCacheCanvas.width = targetW;
+      this.bgCacheCanvas.height = targetH;
+      this.bgCacheKey = '';
+    }
+    return this.bgCacheCtx;
+  }
 
-    this.resizeCanvas();
-    const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
-    const cssW = this.canvas.width / dpr;
-    const cssH = this.canvas.height / dpr;
-    const ctx = this.ctx;
-    ctx.save();
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, cssW, cssH);
-
-    // Stage background
+  private paintBackgroundDirect(
+    ctx: CanvasRenderingContext2D,
+    cssW: number,
+    cssH: number,
+    vt: ViewportTransform,
+    bgW: number,
+    bgH: number,
+    bgImg: HTMLImageElement | null,
+    isCustomBg: boolean
+  ): void {
     ctx.fillStyle = '#1c1917';
     ctx.fillRect(0, 0, cssW, cssH);
-
-    const locale = input.locale ?? 'en';
-    const s = tStrings(locale);
-    const theme: ThemeConfig = getThemeConfig(input.themeId, locale);
-    const stageVp = createStageViewport(cssW, cssH, theme.designSize);
-    this.lastStageViewport = stageVp;
-    const vt = composeViewportTransform(stageVp, {
-      zoom: this.camera.zoom,
-      panX: this.camera.panX,
-      panY: this.camera.panY,
-    });
-    this.lastViewport = vt;
-    const bgW = vt.designW * vt.scale;
-    const bgH = vt.designH * vt.scale;
-    const customBgUrl = input.customBackground
-      ? validateCustomAssetDataUrl(input.customBackground, 'background')
-      : null;
-    const customBgImg = customBgUrl ? this.loadImage(customBgUrl) : null;
-    const bgImg = customBgImg ?? this.loadImage(resolveThemeAssetPath(input.themeId));
     if (bgImg) {
-      if (customBgImg) {
+      if (isCustomBg) {
         ctx.save();
         ctx.beginPath();
         ctx.rect(vt.originX, vt.originY, bgW, bgH);
@@ -993,6 +1077,66 @@ export class StageRenderer {
     } else {
       ctx.fillStyle = '#292524';
       ctx.fillRect(vt.originX, vt.originY, bgW, bgH);
+    }
+  }
+
+  renderNow(): void {
+    const input = this.lastInput;
+    if (!input) return;
+
+    const dpr = this.dpr;
+    const cssW = this.cssW > 0 ? this.cssW : this.canvas.width / dpr;
+    const cssH = this.cssH > 0 ? this.cssH : this.canvas.height / dpr;
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const locale = input.locale ?? 'en';
+    const s = tStrings(locale);
+    const theme: ThemeConfig = getThemeConfig(input.themeId, locale);
+    const stageVp = createStageViewport(cssW, cssH, theme.designSize);
+    this.lastStageViewport = stageVp;
+    const vt = composeViewportTransform(stageVp, {
+      zoom: this.camera.zoom,
+      panX: this.camera.panX,
+      panY: this.camera.panY,
+    });
+    this.lastViewport = vt;
+    const bgW = vt.designW * vt.scale;
+    const bgH = vt.designH * vt.scale;
+    const customBgUrl = input.customBackground
+      ? validateCustomAssetDataUrl(input.customBackground, 'background')
+      : null;
+    const customBgImg = customBgUrl ? this.loadImage(customBgUrl) : null;
+    const bgImg = customBgImg ?? this.loadImage(resolveThemeAssetPath(input.themeId));
+    const bgImgDim = bgImg ? `${bgImg.naturalWidth}x${bgImg.naturalHeight}` : 'none';
+    const bgKey = `${this.canvas.width}x${this.canvas.height}:${dpr}:${input.themeId}:${customBgUrl ?? ''}:${bgImgDim}:${vt.originX.toFixed(2)},${vt.originY.toFixed(2)},${vt.scale.toFixed(4)}`;
+    const bgCtx = this.getBgCache(this.canvas.width, this.canvas.height);
+    if (bgCtx && this.bgCacheCanvas) {
+      if (this.bgCacheKey !== bgKey) {
+        bgCtx.save();
+        bgCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        bgCtx.clearRect(0, 0, cssW, cssH);
+        this.paintBackgroundDirect(
+          bgCtx,
+          cssW,
+          cssH,
+          vt,
+          bgW,
+          bgH,
+          bgImg,
+          Boolean(customBgImg)
+        );
+        bgCtx.restore();
+        this.bgCacheKey = bgKey;
+      }
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.drawImage(this.bgCacheCanvas, 0, 0);
+      ctx.restore();
+    } else {
+      this.paintBackgroundDirect(ctx, cssW, cssH, vt, bgW, bgH, bgImg, Boolean(customBgImg));
     }
 
     const { snapshot, motion, redactMode, selectedBotId, botAppearances } = input;
@@ -1057,6 +1201,7 @@ export class StageRenderer {
       dimmed: boolean;
       isMvp: boolean;
       rpgLevel: number | null;
+      stuckMinutes: number | null;
     };
 
     type WorkerOverlay = {
@@ -1077,6 +1222,8 @@ export class StageRenderer {
       screenX: number;
       screenY: number;
     };
+
+    const stuckByBot = stuckAlertByBotMap(input.stuckAlerts ?? []);
 
     const actors: ActorRenderItem[] = [];
     const botOverlays: BotOverlay[] = [];
@@ -1180,6 +1327,7 @@ export class StageRenderer {
           ? scrubAll(bot.currentTaskTitle)
           : null;
 
+      const stuckAlert = stuckByBot.get(bot.id);
       botOverlays.push({
         botId: bot.id,
         name: cleanName,
@@ -1194,6 +1342,7 @@ export class StageRenderer {
         dimmed,
         isMvp: mvpBotId === bot.id,
         rpgLevel: rpgProf ? rpgProf.level : null,
+        stuckMinutes: stuckAlert ? stuckAlert.elapsedMinutes : null,
       });
 
       const hasVisibleWorker =
@@ -1519,14 +1668,12 @@ export class StageRenderer {
           const bw = Math.max(8, sb[2] - pad * 2);
           const bh = Math.max(8, sb[3] - pad * 2);
           const rad = Math.max(6, Math.min(bw, bh) * 0.28);
-          ctx.save();
-          ctx.shadowColor = 'rgba(15, 23, 42, 0.45)';
-          ctx.shadowBlur = 6 * vt.scale;
-          ctx.shadowOffsetY = 2 * vt.scale;
+          drawRoundedRect(ctx, bx, by + 2 * vt.scale, bw, bh, rad);
+          ctx.fillStyle = 'rgba(15, 23, 42, 0.32)';
+          ctx.fill();
           drawRoundedRect(ctx, bx, by, bw, bh, rad);
           ctx.fillStyle = '#181c26';
           ctx.fill();
-          ctx.restore();
 
           ctx.save();
           drawRoundedRect(ctx, bx, by, bw, bh, rad);
@@ -1805,6 +1952,9 @@ export class StageRenderer {
         );
       }
 
+      let hasLvBadge = false;
+      let lvYPos = pillTop;
+      let lvRightEdge = left;
       if (overlay.rpgLevel !== null && overlay.rpgLevel >= 1) {
         const lvText = `Lv.${overlay.rpgLevel}`;
         ctx.font = `700 ${Math.round(8.5 * npScale)}px ${CANVAS_FONT_FAMILY}`;
@@ -1823,6 +1973,41 @@ export class StageRenderer {
         ctx.textBaseline = 'middle';
         ctx.fillText(lvText, lvX + lvW * 0.5, lvY + lvH * 0.52);
         obstacles.push([lvX, lvY, lvW, lvH]);
+        hasLvBadge = true;
+        lvYPos = lvY;
+        lvRightEdge = lvX + lvW + 3 * npScale;
+      }
+
+      if (overlay.stuckMinutes !== null && overlay.stuckMinutes > 0) {
+        const stuckText = s.watchdogBadge(overlay.stuckMinutes);
+        ctx.font = `700 ${Math.round(8.5 * npScale)}px ${CANVAS_FONT_FAMILY}`;
+        const stuckW = Math.max(38 * npScale, ctx.measureText(stuckText).width + 10 * npScale);
+        const stuckH = 13 * npScale;
+        const desiredStuckX = left + boxW - stuckW - 2 * npScale;
+        const overlapsLevel = hasLvBadge && desiredStuckX < lvRightEdge;
+        let stuckX = desiredStuckX;
+        let stuckY = Math.max(bgTop + 3, pillTop - stuckH - 2 * npScale);
+        if (overlapsLevel) {
+          const aboveLvY = lvYPos - stuckH - 2 * npScale;
+          if (aboveLvY >= bgTop + 3) {
+            stuckY = aboveLvY;
+          } else {
+            // At top clamp, shift horizontally beside Lv. badge instead of stacking onto the same Y
+            stuckX = lvRightEdge;
+            stuckY = lvYPos;
+          }
+        }
+        drawRoundedRect(ctx, stuckX, stuckY, stuckW, stuckH, 5 * npScale);
+        ctx.fillStyle = 'rgba(120, 53, 15, 0.90)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(251, 191, 36, 0.82)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = '#fef3c7';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(stuckText, stuckX + stuckW * 0.5, stuckY + stuckH * 0.52);
+        obstacles.push([stuckX, stuckY, stuckW, stuckH]);
       }
       ctx.restore();
 
@@ -2387,9 +2572,6 @@ export class StageRenderer {
     // Rotated courier icon
     const angle = Math.atan2(tyDesign, txDesign);
     ctx.translate(x, y);
-    ctx.shadowColor = 'rgba(15, 23, 42, 0.45)';
-    ctx.shadowBlur = 4 * s;
-    ctx.shadowOffsetY = 2 * s;
 
     if (courier.kind === 'paper_plane') {
       ctx.rotate(angle);
@@ -2855,10 +3037,17 @@ export class StageRenderer {
       ctx.beginPath();
       ctx.moveTo(fx, fy);
       ctx.quadraticCurveTo(cx, cy, tx, ty);
+      ctx.lineWidth = lineW * 2.2;
+      ctx.strokeStyle = strokeCol;
+      ctx.globalAlpha = 0.22 * alphaScale;
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(fx, fy);
+      ctx.quadraticCurveTo(cx, cy, tx, ty);
       ctx.lineWidth = lineW;
       ctx.strokeStyle = strokeCol;
-      ctx.shadowColor = strokeCol;
-      ctx.shadowBlur = 7 * uiScale;
+      ctx.globalAlpha = 1;
       ctx.stroke();
 
       // Animated flow dot along active edge
@@ -2880,7 +3069,6 @@ export class StageRenderer {
         const px = 0.25 * fx + 0.5 * cx + 0.25 * tx;
         const py = 0.25 * fy + 0.5 * cy + 0.25 * ty;
         const pillText = `×${edge.weight}`;
-        ctx.shadowBlur = 0;
         ctx.font = `700 ${Math.round(8.5 * uiScale)}px ${CANVAS_FONT_FAMILY}`;
         const pw = Math.max(20 * uiScale, ctx.measureText(pillText).width + 8 * uiScale);
         const ph = 14 * uiScale;
@@ -3180,6 +3368,12 @@ export class StageRenderer {
       this.rafId = null;
     }
     this.resizeObserver?.disconnect();
+    if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+      window.removeEventListener('resize', this.handleWindowResize);
+    }
+    if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
+      document.removeEventListener('visibilitychange', this.handleVisibilityChange);
+    }
     this.canvas.removeEventListener('click', this.handleClick);
     this.canvas.removeEventListener('dblclick', this.handleDoubleClick);
     this.canvas.removeEventListener('pointerdown', this.handlePointerDown);
@@ -3189,5 +3383,8 @@ export class StageRenderer {
     this.canvas.removeEventListener('pointerleave', this.handlePointerLeave);
     this.canvas.removeEventListener('wheel', this.handleWheel);
     this.imageCache.clear();
+    this.bgCacheCanvas = null;
+    this.bgCacheCtx = null;
+    this.bgCacheKey = '';
   }
 }

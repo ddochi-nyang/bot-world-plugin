@@ -1,7 +1,7 @@
 {
   "id": "startup_office",
   "name": "Startup Office",
-  "background_path": "themes/startup_office/bg.png",
+  "background_path": "themes/startup_office/bg.jpg",
   "design_size": [1376, 768],
   "boss_desk": { "x": 825.0, "y": 215.0, "label": "Owner Desk" },
   "office_door": { "x": 1140.0, "y": 625.0, "label": "Entrance" },

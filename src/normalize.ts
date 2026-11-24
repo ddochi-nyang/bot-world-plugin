@@ -4,6 +4,7 @@ import {
   type AutomationState,
   type BotActivityStatus,
   type BotItemState,
+  type BotQuestionOption,
   type BotState,
   type InboxMessage,
   type WorkerLiveness,
@@ -309,8 +310,60 @@ function isClosedItemStatus(status: string): boolean {
   return status === 'done' || status === 'canceled' || status === 'closed';
 }
 
-function extractQuestionSummary(question: RawObj | null): [string | null, number] {
-  if (!question) return [null, 0];
+export const MAX_QUESTION_OPTIONS = 6;
+const MAX_OPTION_LABEL_CHARS = 100;
+const MAX_OPTION_DETAIL_CHARS = 200;
+
+function sanitizeOptionText(raw: unknown, maxChars: number): string {
+  if (typeof raw !== 'string') return '';
+  const collapsed = scrubAll(raw)
+    .replace(/[\x00-\x1f\x7f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (collapsed.length === 0) return '';
+  const chars = Array.from(collapsed);
+  if (chars.length <= maxChars) return collapsed;
+  return `${chars.slice(0, maxChars - 1).join('').trim()}…`;
+}
+
+export function sanitizeQuestionOptions(rawOptions: unknown): BotQuestionOption[] {
+  if (!Array.isArray(rawOptions)) return [];
+  const out: BotQuestionOption[] = [];
+  for (const rawOpt of rawOptions) {
+    if (out.length >= MAX_QUESTION_OPTIONS) break;
+    if (typeof rawOpt === 'string') {
+      const label = sanitizeOptionText(rawOpt, MAX_OPTION_LABEL_CHARS);
+      if (label.length > 0) {
+        out.push({ label });
+      }
+      continue;
+    }
+    const obj = asObj(rawOpt);
+    if (!obj) continue;
+    const rawLabel =
+      asStr(obj.label) ?? asStr(obj.title) ?? asStr(obj.text) ?? asStr(obj.value);
+    const label = sanitizeOptionText(rawLabel, MAX_OPTION_LABEL_CHARS);
+    if (label.length === 0) continue;
+    const detail = sanitizeOptionText(
+      asStr(obj.detail) ?? asStr(obj.description),
+      MAX_OPTION_DETAIL_CHARS
+    );
+    const opt: BotQuestionOption = { label };
+    if (detail.length > 0) {
+      opt.detail = detail;
+    }
+    if (obj.recommended === true) {
+      opt.recommended = true;
+    }
+    out.push(opt);
+  }
+  return out;
+}
+
+export function extractQuestionSummary(
+  question: RawObj | null
+): [string | null, number, BotQuestionOption[]] {
+  if (!question) return [null, 0, []];
   const ask = asObj(question.ask);
   if (ask) {
     const questions = asArray(ask.questions);
@@ -318,10 +371,11 @@ function extractQuestionSummary(question: RawObj | null): [string | null, number
     if (first) {
       const prompt = asStr(first.prompt) ?? '';
       const opts = asArray(first.options);
-      return [prompt, opts.length];
+      const parsedOptions = sanitizeQuestionOptions(opts);
+      return [prompt, opts.length, parsedOptions];
     }
   }
-  return [asStr(question.text), 0];
+  return [asStr(question.text), 0, []];
 }
 
 export function applyBotItemsScoped(
@@ -361,7 +415,7 @@ export function applyBotItemsScoped(
         ? scrubAll(ownerBotNameRaw)
         : scrubAll(resBotName);
 
-    const [qPrompt, optsCount] = extractQuestionSummary(asObj(raw.question));
+    const [qPrompt, optsCount, qOptions] = extractQuestionSummary(asObj(raw.question));
     const itemState: BotItemState = {
       uid,
       number: asNum(raw.number) ?? 0,
@@ -372,6 +426,7 @@ export function applyBotItemsScoped(
       version: asNum(raw.version) ?? 0,
       lastEventId: asStr(raw.lastEventId),
       questionPrompt: qPrompt !== null ? scrubAll(qPrompt) : null,
+      questionOptions: qOptions,
       optionsCount: optsCount,
       updatedAt: asNum(raw.updatedAt) ?? asNum(raw.lastActivityAt),
     };

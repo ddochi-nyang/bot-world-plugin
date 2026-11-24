@@ -1036,6 +1036,56 @@ function drawRoundedRect(
   ctx.closePath();
 }
 
+export const PET_THROTTLE_ACTIVE_MS = 0;
+export const PET_THROTTLE_IDLE_MS = 33;
+export const PET_THROTTLE_RESTING_MS = 80;
+
+export function resolvePetThrottleIntervalMs(
+  engine: Pick<PocketPetEngine, 'pets' | 'toys' | 'particles' | 'ripples'>,
+  weatherKind: WeatherKind
+): number {
+  if (
+    engine.toys.length > 0 ||
+    engine.ripples.length > 0 ||
+    engine.particles.some((p) => p.kind !== 'zzz')
+  ) {
+    return PET_THROTTLE_ACTIVE_MS;
+  }
+  for (const pet of engine.pets) {
+    if (
+      pet.status.kind === 'NeedsOwner' ||
+      pet.aiState === 'knocking' ||
+      pet.aiState === 'chasing_toy' ||
+      pet.aiState === 'celebrating' ||
+      pet.aiState === 'drinking_coffee' ||
+      pet.celebrateTtl > 0 ||
+      pet.reactionTtl > 0 ||
+      pet.yOffset < 0 ||
+      pet.vy !== 0
+    ) {
+      return PET_THROTTLE_ACTIVE_MS;
+    }
+  }
+  if (weatherKind !== 'clear') {
+    return PET_THROTTLE_IDLE_MS;
+  }
+  for (const pet of engine.pets) {
+    if (
+      pet.aiState === 'wandering' ||
+      pet.aiState === 'typing' ||
+      pet.aiState === 'flustered' ||
+      pet.aiState === 'thinking' ||
+      pet.status.kind === 'Working' ||
+      pet.status.kind === 'Error' ||
+      pet.status.kind === 'Blocked' ||
+      pet.status.kind === 'WaitingAnswer'
+    ) {
+      return PET_THROTTLE_IDLE_MS;
+    }
+  }
+  return PET_THROTTLE_RESTING_MS;
+}
+
 export class PetTerrariumRenderer {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
@@ -1047,10 +1097,13 @@ export class PetTerrariumRenderer {
 
   private lastInput: PetRenderInput | null = null;
   private active = false;
+  private pageVisible = typeof document !== 'undefined' ? !document.hidden : true;
   private rafId: number | null = null;
-  private lastFrameMs = 0;
+  private lastRenderMs = 0;
   private resizeObserver: ResizeObserver | null = null;
+  private hasWindowResizeListener = false;
   private destroyed = false;
+  private dpr = 1;
   private logicalW = 640;
   private logicalH = 280;
   private cssW = 640;
@@ -1078,13 +1131,72 @@ export class PetTerrariumRenderer {
     this.canvas.addEventListener('pointerleave', this.handlePointerLeave);
 
     if (typeof ResizeObserver !== 'undefined') {
-      this.resizeObserver = new ResizeObserver(() => {
-        this.resizeCanvas();
-        if (this.active) this.renderNow();
+      this.resizeObserver = new ResizeObserver((entries) => {
+        const cr = entries[0]?.contentRect;
+        this.resizeCanvas(cr ? { width: cr.width, height: cr.height } : undefined);
+        if (this.active && this.pageVisible) this.renderNow();
       });
       this.resizeObserver.observe(this.canvas);
     }
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('resize', this.handleWindowResize);
+      this.hasWindowResizeListener = true;
+    }
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', this.handleVisibilityChange);
+    }
     this.resizeCanvas();
+  }
+
+  private readonly handleWindowResize = (): void => {
+    this.resizeCanvas();
+    if (this.active && this.pageVisible) this.renderNow();
+  };
+
+  private readonly handleVisibilityChange = (): void => {
+    if (typeof document !== 'undefined') {
+      this.setPageVisible(!document.hidden);
+    }
+  };
+
+  setPageVisible(visible: boolean): void {
+    if (this.pageVisible === visible) return;
+    this.pageVisible = visible;
+    if (!visible) {
+      if (this.rafId !== null) {
+        cancelAnimationFrame(this.rafId);
+        this.rafId = null;
+      }
+      return;
+    }
+    if (this.active && !this.destroyed && this.lastInput) {
+      this.lastRenderMs = 0;
+      this.resizeCanvas();
+      this.renderNow();
+      this.ensureLoop();
+    }
+  }
+
+  isPageVisible(): boolean {
+    return this.pageVisible;
+  }
+
+  getTargetFrameIntervalMs(): number {
+    if (!this.lastInput) return PET_THROTTLE_RESTING_MS;
+    const displayTs =
+      typeof this.lastInput.displayTimestampMs === 'number' &&
+      Number.isFinite(this.lastInput.displayTimestampMs)
+        ? this.lastInput.displayTimestampMs
+        : this.lastInput.snapshot.capturedAt > 0
+          ? this.lastInput.snapshot.capturedAt
+          : Date.now();
+    const phase = resolveAtmospherePhase(this.lastInput.atmosphereMode ?? 'auto', displayTs);
+    const weatherKind = resolveWeatherKind(
+      this.lastInput.weatherMode ?? 'auto',
+      phase,
+      this.lastInput.themeId
+    );
+    return resolvePetThrottleIntervalMs(this.engine, weatherKind);
   }
 
   private loadImage(safePath: string): HTMLImageElement | null {
@@ -1115,11 +1227,16 @@ export class PetTerrariumRenderer {
     return img.complete && img.naturalWidth > 0 ? img : null;
   }
 
-  private resizeCanvas(): void {
-    const rect = this.canvas.getBoundingClientRect();
-    const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
-    const cssW = Math.max(260, rect.width || 640);
-    const cssH = Math.max(160, rect.height || 280);
+  private resizeCanvas(contentRect?: { width: number; height: number }): void {
+    const rect =
+      contentRect && contentRect.width > 0 && contentRect.height > 0
+        ? contentRect
+        : this.canvas.getBoundingClientRect();
+    const rawDpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+    const dpr = Math.max(1, Math.min(2, rawDpr));
+    this.dpr = dpr;
+    const cssW = Math.max(260, rect.width || (this.canvas.width > 0 ? this.canvas.width / dpr : 640));
+    const cssH = Math.max(160, rect.height || (this.canvas.height > 0 ? this.canvas.height / dpr : 280));
     const targetW = Math.round(cssW * dpr);
     const targetH = Math.round(cssH * dpr);
     if (this.canvas.width !== targetW || this.canvas.height !== targetH) {
@@ -1140,9 +1257,12 @@ export class PetTerrariumRenderer {
     if (this.active === active) return;
     this.active = active;
     if (active) {
+      this.lastRenderMs = 0;
       this.resizeCanvas();
-      this.renderNow();
-      this.ensureLoop();
+      if (this.pageVisible) {
+        this.renderNow();
+        this.ensureLoop();
+      }
     } else if (this.rafId !== null) {
       cancelAnimationFrame(this.rafId);
       this.rafId = null;
@@ -1156,27 +1276,22 @@ export class PetTerrariumRenderer {
       redactMode: input.redactMode,
       locale: input.locale,
     });
-    if (this.active) {
+    if (this.active && this.pageVisible) {
       this.renderNow();
       this.ensureLoop();
     }
   }
 
   private ensureLoop(): void {
-    if (this.destroyed || !this.active) return;
+    if (this.destroyed || !this.active || !this.pageVisible) return;
     if (this.rafId === null) {
-      this.lastFrameMs = performance.now();
       this.rafId = requestAnimationFrame(this.frameLoop);
     }
   }
 
   private readonly frameLoop = (nowMs: number): void => {
     this.rafId = null;
-    if (this.destroyed || !this.active || !this.lastInput) return;
-
-    const dtMs = Math.max(0, Math.min(250, nowMs - this.lastFrameMs));
-    this.lastFrameMs = nowMs;
-    const dtSecs = dtMs / 1000;
+    if (this.destroyed || !this.active || !this.pageVisible || !this.lastInput) return;
 
     const displayTs =
       typeof this.lastInput.displayTimestampMs === 'number' &&
@@ -1191,6 +1306,20 @@ export class PetTerrariumRenderer {
       phase,
       this.lastInput.themeId
     );
+    const targetIntervalMs = resolvePetThrottleIntervalMs(this.engine, weatherKind);
+    if (
+      this.lastRenderMs > 0 &&
+      targetIntervalMs > 0 &&
+      nowMs - this.lastRenderMs < targetIntervalMs
+    ) {
+      this.ensureLoop();
+      return;
+    }
+
+    const dtMs =
+      this.lastRenderMs > 0 ? Math.max(0, Math.min(250, nowMs - this.lastRenderMs)) : 16;
+    this.lastRenderMs = nowMs;
+    const dtSecs = dtMs / 1000;
 
     this.engine.step(dtSecs, { locale: this.lastInput.locale });
     this.weather.step(dtSecs, weatherKind, [this.logicalW, this.logicalH]);
@@ -1210,6 +1339,7 @@ export class PetTerrariumRenderer {
     const botId = this.engine.findPetAt(lx, ly);
     if (botId) {
       this.engine.interactWithPet(botId, this.lastInput.locale);
+      this.lastRenderMs = 0;
       this.onSelectAndPet(botId);
       this.renderNow();
     }
@@ -1231,9 +1361,11 @@ export class PetTerrariumRenderer {
   renderNow(): void {
     const input = this.lastInput;
     if (!input) return;
-    this.resizeCanvas();
+    if (!this.resizeObserver && !this.hasWindowResizeListener) {
+      this.resizeCanvas();
+    }
 
-    const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+    const dpr = this.dpr;
     const ctx = this.ctx;
     const s = Math.max(0.4, this.scale);
     const w = this.logicalW;
@@ -2113,10 +2245,6 @@ export class PetTerrariumRenderer {
         ctx.scale(-1, 1);
       }
       if (img) {
-        if (layout.broadcastMode) {
-          ctx.shadowColor = '#0b0f17';
-          ctx.shadowBlur = 2.5;
-        }
         ctx.drawImage(img, -drawW * 0.5, -drawH * 0.92, drawW, drawH);
       } else {
         drawRoundedRect(ctx, -18, -38, 36, 36, 10);
@@ -2357,7 +2485,7 @@ export class PetTerrariumRenderer {
     const narrow = layout?.narrow ?? false;
     const cssW = this.cssW;
     const s = Math.max(0.4, this.scale);
-    const dpr = layout?.dpr ?? (typeof window !== 'undefined' ? Math.max(1, Math.min(3, window.devicePixelRatio || 1)) : 1);
+    const dpr = layout?.dpr ?? (typeof window !== 'undefined' ? Math.max(1, Math.min(2, window.devicePixelRatio || 1)) : 1);
     const isWide = cssW >= 900;
     const fontSize = narrow ? 10 : isWide ? 12.5 : 11;
     const padX = isWide ? 9 : 7;
@@ -2517,6 +2645,12 @@ export class PetTerrariumRenderer {
     if (this.resizeObserver) {
       this.resizeObserver.disconnect();
       this.resizeObserver = null;
+    }
+    if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+      window.removeEventListener('resize', this.handleWindowResize);
+    }
+    if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
+      document.removeEventListener('visibilitychange', this.handleVisibilityChange);
     }
     this.canvas.removeEventListener('click', this.handleClick);
     this.canvas.removeEventListener('pointermove', this.handlePointerMove);

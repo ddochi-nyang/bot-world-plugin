@@ -550,6 +550,40 @@ export type UiDictionary = {
   tipTimelineSpeed: (speed: number) => string;
   tipTimelineDrawer: string;
   tipSwitchCharacter: (displayName: string, roleHint: string) => string;
+  needsYouCardTitle: string;
+  needsYouRecommendedBadge: string;
+  needsYouCustomPlaceholder: string;
+  needsYouSendReply: string;
+  needsYouSending: string;
+  needsYouReadOnlyHint: string;
+  needsYouCopyReply: string;
+  needsYouCopiedReply: string;
+  needsYouJumpTerminal: string;
+  needsYouRedactedPrompt: string;
+  needsYouReplySentToast: (botName: string, itemNumber: number) => string;
+  needsYouReplyFailedToast: (reason: string) => string;
+  needsYouReplyDisabledError: string;
+  needsYouUnknownItemError: string;
+  watchdogBadge: (minutes: number) => string;
+  watchdogStuckTitle: (minutes: number) => string;
+  watchdogStuckDetail: (statusLabel: string, tool: string | null, task: string | null) => string;
+  watchdogStuckRedactedDetail: (minutes: number) => string;
+  notifyStuckTitle: (botName: string, minutes: number) => string;
+  notifyStuckBody: (task: string | null, tool: string | null, minutes: number) => string;
+  notifyStuckTitleRedacted: string;
+  notifyStuckBodyRedacted: (seq: number, minutes: number) => string;
+  reportCopyStandup: string;
+  reportStandupPreviewTitle: string;
+  standupTitle: string;
+  standupColumns: {
+    bot: string;
+    estWork: string;
+    completed: string;
+    needsYou: string;
+    stuck: string;
+    status: string;
+  };
+  standupNoBots: string;
 };
 
 export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
@@ -1063,6 +1097,52 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     tipTimelineSpeed: (speed) => `Set replay playback speed to ${speed}x`,
     tipTimelineDrawer: 'Toggle 24h event log drawer',
     tipSwitchCharacter: (displayName, roleHint) => `${displayName} · ${roleHint}`,
+    needsYouCardTitle: 'Needs You · Quick Decision',
+    needsYouRecommendedBadge: 'Recommended',
+    needsYouCustomPlaceholder: 'Type a custom reply…',
+    needsYouSendReply: 'Reply',
+    needsYouSending: 'Sending…',
+    needsYouReadOnlyHint: 'Read-only mode: copy a reply or jump to terminal to respond in Orca.',
+    needsYouCopyReply: 'Copy Reply',
+    needsYouCopiedReply: 'Copied!',
+    needsYouJumpTerminal: '↗ Jump to Terminal',
+    needsYouRedactedPrompt: 'Decision required (details hidden in Redact mode).',
+    needsYouReplySentToast: (botName, itemNumber) => `Sent decision reply to ${botName} (#${itemNumber})`,
+    needsYouReplyFailedToast: (reason) => `Decision reply failed: ${reason}`,
+    needsYouReplyDisabledError:
+      'Quick Reply is disabled. Enable "Allow Quick Send to Bots" in Plugin Settings.',
+    needsYouUnknownItemError: 'Matching Needs You item was not found on this bot.',
+    watchdogBadge: (minutes) => `⏳ ${minutes}m`,
+    watchdogStuckTitle: (minutes) => `Stuck / Long-running (${minutes}m without change)`,
+    watchdogStuckDetail: (statusLabel, tool, task) => {
+      const parts = [statusLabel];
+      if (tool) parts.push(`[${tool}]`);
+      if (task) parts.push(task);
+      return parts.join(' · ');
+    },
+    watchdogStuckRedactedDetail: (minutes) =>
+      `No status/tool update for ${minutes}m (details hidden in Redact mode).`,
+    notifyStuckTitle: (botName, minutes) => `Bot World: ${botName} stuck (${minutes}m)`,
+    notifyStuckBody: (task, tool, minutes) => {
+      const detail = [task, tool ? `[${tool}]` : null].filter(Boolean).join(' ');
+      return detail
+        ? `No progress for ${minutes}m — ${detail}`
+        : `No status or tool change for ${minutes}m.`;
+    },
+    notifyStuckTitleRedacted: 'Bot World: Bot may be stuck',
+    notifyStuckBodyRedacted: (seq, minutes) => `Bot #${seq} has had no progress for ${minutes}m.`,
+    reportCopyStandup: 'Copy Standup MD',
+    reportStandupPreviewTitle: 'Standup Markdown Preview',
+    standupTitle: 'Daily Bot Standup Summary',
+    standupColumns: {
+      bot: 'Bot',
+      estWork: 'Est. Work',
+      completed: 'Done',
+      needsYou: 'Needs You',
+      stuck: 'Stuck',
+      status: 'Status',
+    },
+    standupNoBots: 'No bot activity recorded for standup yet.',
   },
   ko: {
     appTitlePanel: '봇 월드',
@@ -1098,7 +1178,7 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     tabDetail: '봇 상세',
     tabTimeline: '사건 타임라인',
     backToLive: 'LIVE 복귀',
-    docSynced: '.botworld 저장 동기화',
+    docSynced: '.botworld 동기화',
     docReadOnly: '읽기 전용 보드',
     live: 'LIVE',
     replay: 'REPLAY',
@@ -1571,6 +1651,52 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     tipTimelineSpeed: (speed) => `리플레이 재생 속도를 ${speed}x로 설정`,
     tipTimelineDrawer: '24시간 이벤트 로그 서랍 열기 / 닫기',
     tipSwitchCharacter: (displayName, roleHint) => `${displayName} · ${roleHint}`,
+    needsYouCardTitle: '결정 대기 · 원클릭 응답',
+    needsYouRecommendedBadge: '추천',
+    needsYouCustomPlaceholder: '직접 응답 입력…',
+    needsYouSendReply: '응답 전송',
+    needsYouSending: '전송 중…',
+    needsYouReadOnlyHint: '읽기 전용 모드: 응답 텍스트를 복사하거나 터미널로 이동해 답변하세요.',
+    needsYouCopyReply: '응답 복사',
+    needsYouCopiedReply: '복사됨!',
+    needsYouJumpTerminal: '↗ 터미널로 이동',
+    needsYouRedactedPrompt: '결정이 필요합니다 (가림 모드에서 질문·선택지 숨김).',
+    needsYouReplySentToast: (botName, itemNumber) => `${botName} (#${itemNumber})에 결정 응답 전송됨`,
+    needsYouReplyFailedToast: (reason) => `결정 응답 전송 실패: ${reason}`,
+    needsYouReplyDisabledError:
+      '원클릭 응답이 비활성화되어 있습니다. 플러그인 설정에서 "Allow Quick Send to Bots"를 켜 주세요.',
+    needsYouUnknownItemError: '해당 봇에서 일치하는 결정 대기 항목을 찾지 못했습니다.',
+    watchdogBadge: (minutes) => `⏳ ${minutes}m`,
+    watchdogStuckTitle: (minutes) => `정체 감지 (변화 없이 ${minutes}분 경과)`,
+    watchdogStuckDetail: (statusLabel, tool, task) => {
+      const parts = [statusLabel];
+      if (tool) parts.push(`[${tool}]`);
+      if (task) parts.push(task);
+      return parts.join(' · ');
+    },
+    watchdogStuckRedactedDetail: (minutes) =>
+      `${minutes}분간 상태/도구 변화 없음 (가림 모드에서 세부 내용 숨김).`,
+    notifyStuckTitle: (botName, minutes) => `Bot World: ${botName} 정체 (${minutes}분)`,
+    notifyStuckBody: (task, tool, minutes) => {
+      const detail = [task, tool ? `[${tool}]` : null].filter(Boolean).join(' ');
+      return detail
+        ? `${minutes}분간 진행 변화 없음 — ${detail}`
+        : `${minutes}분간 상태 또는 도구 변화가 없습니다.`;
+    },
+    notifyStuckTitleRedacted: 'Bot World: 봇 작업 정체 감지',
+    notifyStuckBodyRedacted: (seq, minutes) => `봇 #${seq}의 작업이 ${minutes}분간 멈춰 있습니다.`,
+    reportCopyStandup: '스탠드업 요약 복사',
+    reportStandupPreviewTitle: '일일 스탠드업 요약 미리보기 (Markdown)',
+    standupTitle: '일일 봇 스탠드업 요약',
+    standupColumns: {
+      bot: '봇',
+      estWork: '추정 작업 시간',
+      completed: '완료',
+      needsYou: '결정 대기',
+      stuck: '정체',
+      status: '상태',
+    },
+    standupNoBots: '스탠드업 요약에 포함할 봇 활동이 아직 없습니다.',
   },
 };
 

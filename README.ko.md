@@ -4,11 +4,11 @@
 
 **Orca 봇과 실시간 서브 워커의 협업을 아이소메트릭 가상 사무실, 포켓 펫 테라리움, 방송용 크로마키 펫 바, 로컬 봇 RPG로 시각화합니다 — 기본 읽기 전용이며 외부 네트워크 통신이 없습니다.**
 
-![Version 0.9.0](https://img.shields.io/badge/version-0.9.0-2563eb) ![Orca >= 1.4.265](https://img.shields.io/badge/Orca-%3E%3D1.4.265-0f766e) ![License MIT](https://img.shields.io/badge/license-MIT-475569) ![Privacy First](https://img.shields.io/badge/privacy--first-zero%20external%20network-16a34a)
+![Version 1.0.0](https://img.shields.io/badge/version-1.0.0-2563eb) ![Orca >= 1.4.265](https://img.shields.io/badge/Orca-%3E%3D1.4.265-0f766e) ![License MIT](https://img.shields.io/badge/license-MIT-475569) ![Privacy First](https://img.shields.io/badge/privacy--first-zero%20external%20network-16a34a)
 
 ![Bot World live preview](assets/showcase/preview.gif)
 
-*가상 사무실, 포켓 펫 테라리움(`G`), 방송용 크로마키 바(`B`), 크리에이터 스튜디오(`U`), 봇 RPG(`V`/`H`/`K`), 빠른 전송, 24시간 리포트(`I`)를 Orca 안에서 모두 로컬로 실행합니다.*
+*가상 사무실, 포켓 펫 테라리움(`G`), 방송용 크로마키 바(`B`), 크리에이터 스튜디오(`U`), 봇 RPG(`V`/`H`/`K`), 빠른 전송·결정 응답, 멈춤 감시, 24시간 리포트(`I`)를 Orca 안에서 모두 로컬로 실행합니다.*
 
 ## 빠른 시작
 
@@ -36,6 +36,12 @@
 - **봇 RPG와 오너 산책**
   - 개인정보를 저장하지 않는 로컬 XP·레벨 시스템(`Lv.1 인턴` → `Lv.6+ 아크메이지`)으로 6종의 픽셀 책상 소품(`🦆`, `🪴`, `⌨️`, `🖥️`, `🐱`, `🏆`)을 해금해 책상 위에 배치합니다.
   - **오너 아바타 산책(`V`)**을 켜고 `WASD` · 방향키 · 캔버스 더블클릭으로 이동하며, 봇 근처에서 `H`(**하이파이브**, `+8 XP`)와 `K`(**커피 건네기**, `+10 XP`)를 실행하고 대기 중 소소한 잡담 말풍선을 확인합니다.
+- **고정 레이아웃 툴바 및 성능 엔진**
+  - 고정 높이·고정 폭 상단바(440px 패널 2단 · 1280px 에디터 단일 행, 클릭 시 `0px` 변동)와 JPEG 오피스 배경 경량화를 적용했습니다.
+  - CLI 병렬 폴링, 스냅샷 지문 무변화 시 IPC 억제, UI 비활성 12초 백오프, `ResizeObserver`, `visibilitychange` 정지, 오프스크린 배경 캐시, `DPR <= 2` 상한, 포켓 펫 3단계 감속을 지원합니다.
+- **운영 제어 및 스탠드업 내보내기**
+  - 옵트인 **결정 대기 1클릭 응답**(`allowQuickSend` 기본 `false`, 데모 즉시 체험)과 **멈춤 봇 감시(Stuck Bot Watchdog)**(`stuckThresholdMin` 기본 15분: 책상 `⏳` 배지 · 상세 배너 · 15분 쿨다운 마스킹 알림)를 제공합니다.
+  - 24시간 오피스 리포트(`I`)에서 **일간 스탠드업 Markdown 내보내기**를 1클릭으로 복사합니다.
 - **리플레이, 다이제스트와 프라이버시**
   - 24시간 스냅샷 탐색, **10초 일간 타임랩스**, **24시간 오피스 리포트(`I`)**(오늘의 MVP, 봇 성장·레벨, **7일 주간 추이**, Markdown 복사), **PNG 포토 카드(`P`)** 저장을 제공합니다.
   - 기본 읽기 전용, 원클릭 **가림 모드(`R`)**, `connect-src 'none'` CSP, 옵트인 빠른 전송 및 OS 데스크톱 알림 보호 장치를 적용합니다.
@@ -58,12 +64,12 @@
   <tr>
     <td width="50%" align="center" valign="top">
       <img src="assets/showcase/broadcast-chroma.jpg" alt="Bot World 방송용 크로마키 펫 바 초록 배경과 마우스 오버 종료 바 화면" />
-      <br /><strong>방송용 크로마키 펫 바 (v0.9.0)</strong><br />
+      <br /><strong>방송용 크로마키 펫 바</strong><br />
       <sub>초록/파랑/검정/차콜 OBS 크로마키 배경과 마우스 오버 종료 버튼(<code>B</code>).</sub>
     </td>
     <td width="50%" align="center" valign="top">
       <img src="assets/showcase/creator-studio.jpg" alt="Bot World 크리에이터 스튜디오 커스텀 아바타, 배경 업로드, .botworld-pack.json 공유 모달" />
-      <br /><strong>크리에이터 스튜디오 &amp; 에셋 팩 (v0.9.0)</strong><br />
+      <br /><strong>크리에이터 스튜디오 &amp; 에셋 팩</strong><br />
       <sub>드래그 앤 드롭 커스텀 아바타·배경 등록과 <code>.botworld-pack.json</code> 공유(<code>U</code>).</sub>
     </td>
   </tr>
@@ -109,7 +115,7 @@
 
 ## 보안 및 프라이버시 요약
 
-- **기본 읽기 전용 및 옵트인 쓰기**: CLI 조회는 `assertAllowedSubcommand()` 허용 목록(`execFile`, `shell: false`)으로만 실행합니다. `allowQuickSend`와 `desktopNotifications`는 모두 기본값이 `false`이며, `workspace:write`는 `terminal.focus` / `workspace.open` 1클릭 이동에만 사용합니다.
+- **기본 읽기 전용 및 옵트인 쓰기**: CLI 조회는 `assertAllowedSubcommand()` 허용 목록(`execFile`, `shell: false`)으로만 실행합니다. `allowQuickSend`(빠른 전송 및 1클릭 `결정 대기` 응답)와 `desktopNotifications`(`결정 대기` / `오류` / `멈춤 감시`)는 모두 기본값이 `false`이며, `workspace:write`는 `terminal.focus` / `workspace.open` 1클릭 이동에만 사용합니다.
 - **외부 네트워크 통신 없음**: 격리된 에디터 프레임(`frame: "isolated"`)과 `connect-src 'none'` CSP를 적용해 오디오, 날씨 입자, PNG 포토 카드, 크리에이터 스튜디오 이미지 재인코딩, XP 저장이 전부 로컬에서 동작합니다.
 - **개인정보 마스킹 및 가림 모드**: 비밀 키, 토큰, 이메일, 카드번호, 12자리 AWS 계정 ID를 저장·렌더링 전에 마스킹하며 `botWorld.weeklyTrend`, `botWorld.rpg.v1`, `botWorld.creator.v1`에는 개인정보를 저장하지 않습니다.
 - **XSS 방지 DOM**: `textContent`와 `createTextNode`만 사용해 렌더링합니다(`innerHTML`, `eval` 미사용).

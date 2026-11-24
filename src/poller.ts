@@ -16,10 +16,56 @@ import { type OrcaClient, OrcaCliError } from './orca-cli.ts';
 import { scrubAll } from './redact.ts';
 import { type WorldSnapshot, createEmptySnapshot } from './types.ts';
 
-const FAST_INTERVAL_MS = 2_000;
+export const FAST_INTERVAL_MS = 2_000;
+export const INACTIVE_FAST_INTERVAL_MS = 12_000;
 const DEFAULT_MEDIUM_INTERVAL_MS = 5_000;
 const SLOW_INTERVAL_MS = 25_000;
 const MAX_BACKOFF_SECS = 30;
+const MAX_CONCURRENT_CLI = 4;
+
+export function computeSnapshotFingerprint(snapshot: WorldSnapshot): string {
+  return JSON.stringify({
+    runtime: snapshot.runtime,
+    bots: snapshot.bots,
+    botOrder: snapshot.botOrder,
+    chatIndex: snapshot.chatIndex,
+    runBotIndex: snapshot.runBotIndex,
+    workers: snapshot.workers,
+    items: snapshot.items,
+    automations: snapshot.automations,
+    inboxCursor: {
+      lastSequence: snapshot.inboxCursor.lastSequence,
+      needsBackfill: snapshot.inboxCursor.needsBackfill,
+    },
+    recentMessages: snapshot.recentMessages,
+    rebaselineNeeded: snapshot.rebaselineNeeded,
+    initialSyncComplete: snapshot.initialSyncComplete,
+  });
+}
+
+async function runWithConcurrency<T>(
+  tasks: ReadonlyArray<() => Promise<T>>,
+  maxConcurrency: number = MAX_CONCURRENT_CLI
+): Promise<Array<PromiseSettledResult<T>>> {
+  const results: Array<PromiseSettledResult<T>> = new Array(tasks.length);
+  if (tasks.length === 0) return results;
+  let nextIndex = 0;
+  const workerCount = Math.max(1, Math.min(maxConcurrency, tasks.length));
+  const runners = Array.from({ length: workerCount }, async () => {
+    for (;;) {
+      const idx = nextIndex++;
+      if (idx >= tasks.length) break;
+      try {
+        const value = await tasks[idx]();
+        results[idx] = { status: 'fulfilled', value };
+      } catch (reason) {
+        results[idx] = { status: 'rejected', reason };
+      }
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
 
 export class PollerSession {
   snapshot: WorldSnapshot = createEmptySnapshot();
@@ -35,10 +81,27 @@ export class PollerSession {
   mediumSynced = false;
   rebaselineSuppressEmpty = false;
   mediumIntervalMs = DEFAULT_MEDIUM_INTERVAL_MS;
+  fastIntervalMs = FAST_INTERVAL_MS;
+  uiActive = true;
+  private lastEmittedFingerprint: string | null = null;
+  private hasEmittedInitial = false;
 
   setPollIntervalSec(sec: number): void {
     const clamped = Math.max(2, Math.min(60, Math.trunc(sec)));
     this.mediumIntervalMs = clamped * 1000;
+  }
+
+  setUiActive(active: boolean): void {
+    this.uiActive = active;
+    this.fastIntervalMs = active ? FAST_INTERVAL_MS : INACTIVE_FAST_INTERVAL_MS;
+  }
+
+  isUiActive(): boolean {
+    return this.uiActive;
+  }
+
+  getFastIntervalMs(): number {
+    return this.fastIntervalMs;
   }
 
   getLatestSnapshot(): WorldSnapshot {
@@ -47,9 +110,10 @@ export class PollerSession {
 
   prepareDue(): { runSlow: boolean; runFast: boolean; runMedium: boolean } {
     const runSlow = !this.slowSynced || this.elapsedMs - this.lastSlowMs >= SLOW_INTERVAL_MS;
-    const runFast = !this.fastSynced || this.elapsedMs - this.lastFastMs >= FAST_INTERVAL_MS;
+    const runFast = !this.fastSynced || this.elapsedMs - this.lastFastMs >= this.fastIntervalMs;
+    const effectiveMediumMs = Math.max(this.mediumIntervalMs, this.fastIntervalMs);
     const runMedium =
-      !this.mediumSynced || this.elapsedMs - this.lastMediumMs >= this.mediumIntervalMs;
+      !this.mediumSynced || this.elapsedMs - this.lastMediumMs >= effectiveMediumMs;
     return { runSlow, runFast, runMedium };
   }
 
@@ -78,13 +142,15 @@ export class PollerSession {
     if (runtimeUnavailable) {
       this.snapshot.runtime.retryAfterSecs = this.backoffSecs;
       this.snapshot.initialSyncComplete = false;
-      this.snapshot.capturedAt = nowMs;
       const sleepMs = this.backoffSecs * 1000;
       this.elapsedMs += sleepMs;
       this.backoffSecs = Math.min(MAX_BACKOFF_SECS, this.backoffSecs * 2);
-      const emitted =
-        this.rebaselineSuppressEmpty && !this.fastSynced ? null : structuredClone(this.snapshot);
-      return { emitted, sleepMs };
+      if (this.rebaselineSuppressEmpty && !this.fastSynced) {
+        return { emitted: null, sleepMs };
+      }
+      this.snapshot.capturedAt = nowMs;
+      this.lastEmittedFingerprint = computeSnapshotFingerprint(this.snapshot);
+      return { emitted: structuredClone(this.snapshot), sleepMs };
     }
 
     this.backoffSecs = 2;
@@ -102,29 +168,31 @@ export class PollerSession {
         ? (() => {
             this.snapshot.capturedAt = nowMs;
             pruneSnapshotState(this.snapshot, nowMs);
+            this.lastEmittedFingerprint = computeSnapshotFingerprint(this.snapshot);
+            this.hasEmittedInitial = true;
             return structuredClone(this.snapshot);
           })()
         : null;
-    this.elapsedMs += FAST_INTERVAL_MS;
-    return { emitted, sleepMs: FAST_INTERVAL_MS };
+    this.elapsedMs += this.fastIntervalMs;
+    return { emitted, sleepMs: this.fastIntervalMs };
   }
 
   async step(
     cli: OrcaClient,
-    options?: { forceFull?: boolean; nowMs?: number }
+    options?: { forceFull?: boolean; forceFast?: boolean; nowMs?: number }
   ): Promise<{ snapshot: WorldSnapshot | null; sleepMs: number }> {
     const due = this.prepareDue();
     let runSlow = options?.forceFull ? true : due.runSlow;
-    let runFast = options?.forceFull ? true : due.runFast;
+    let runFast = options?.forceFull || options?.forceFast ? true : due.runFast;
     let runMedium = options?.forceFull ? true : due.runMedium;
-    let anyChanged = false;
+    const prevConnected = this.snapshot.runtime.connected;
+    const prevInitialSync = this.snapshot.initialSyncComplete;
     let runtimeUnavailable = false;
 
     if (runSlow) {
       this.lastSlowMs = this.elapsedMs;
       try {
         const rebaselined = await pollSlowTier(cli, this.snapshot, this.slowItemCursor);
-        anyChanged = true;
         this.slowItemCursor = (this.slowItemCursor + 1) >>> 0;
         if (rebaselined || this.snapshot.rebaselineNeeded) {
           if (this.snapshot.rebaselineNeeded) {
@@ -159,7 +227,6 @@ export class PollerSession {
       this.lastFastMs = this.elapsedMs;
       try {
         await pollFastTier(cli, this.snapshot);
-        anyChanged = true;
         if (this.snapshot.rebaselineNeeded) {
           this.triggerRebaseline();
           runMedium = true;
@@ -188,7 +255,6 @@ export class PollerSession {
       const fetchAll = !this.mediumSynced;
       try {
         await pollMediumTier(cli, this.snapshot, this.mediumBotCursor, fetchAll);
-        anyChanged = true;
         this.mediumBotCursor = (this.mediumBotCursor + 1) >>> 0;
         if (this.snapshot.rebaselineNeeded) {
           this.triggerRebaseline();
@@ -205,6 +271,23 @@ export class PollerSession {
           this.markRuntimeUnavailable(err);
         }
       }
+    }
+
+    let anyChanged = false;
+    if (!runtimeUnavailable) {
+      const nextInitialSync =
+        this.slowSynced &&
+        this.fastSynced &&
+        this.mediumSynced &&
+        !this.snapshot.rebaselineNeeded;
+      this.snapshot.initialSyncComplete = nextInitialSync;
+      const nextFingerprint = computeSnapshotFingerprint(this.snapshot);
+      anyChanged =
+        !this.hasEmittedInitial ||
+        Boolean(options?.forceFull) ||
+        prevConnected !== this.snapshot.runtime.connected ||
+        (!prevInitialSync && nextInitialSync) ||
+        nextFingerprint !== this.lastEmittedFingerprint;
     }
 
     const { emitted, sleepMs } = this.finishTick(
@@ -238,35 +321,28 @@ async function pollSlowTier(
   }
 
   if (cli.isStopped()) throw new OrcaCliError('stopped', 'Poller stopped');
-  try {
-    const bots = await cli.botList();
-    applyBotList(snapshot, bots);
-  } catch (err) {
-    if (err instanceof OrcaCliError && err.code === 'stopped') throw err;
+  const [botsRes, runsRes, autoListRes, autoRunsRes] = await Promise.allSettled([
+    cli.botList(),
+    cli.orchestrationRunList(),
+    cli.automationsList(),
+    cli.automationsRuns(),
+  ]);
+
+  for (const res of [botsRes, runsRes, autoListRes, autoRunsRes]) {
+    if (res.status === 'rejected') {
+      const err = res.reason;
+      if (err instanceof OrcaCliError && err.code === 'stopped') throw err;
+    }
   }
 
-  if (cli.isStopped()) throw new OrcaCliError('stopped', 'Poller stopped');
-  try {
-    const runs = await cli.orchestrationRunList();
-    applyRunList(snapshot, runs);
-  } catch (err) {
-    if (err instanceof OrcaCliError && err.code === 'stopped') throw err;
+  if (botsRes.status === 'fulfilled') {
+    applyBotList(snapshot, botsRes.value);
   }
-
-  if (cli.isStopped()) throw new OrcaCliError('stopped', 'Poller stopped');
-  let autoList = null;
-  let autoRuns = null;
-  try {
-    autoList = await cli.automationsList();
-  } catch (err) {
-    if (err instanceof OrcaCliError && err.code === 'stopped') throw err;
+  if (runsRes.status === 'fulfilled') {
+    applyRunList(snapshot, runsRes.value);
   }
-  if (cli.isStopped()) throw new OrcaCliError('stopped', 'Poller stopped');
-  try {
-    autoRuns = await cli.automationsRuns();
-  } catch (err) {
-    if (err instanceof OrcaCliError && err.code === 'stopped') throw err;
-  }
+  const autoList = autoListRes.status === 'fulfilled' ? autoListRes.value : null;
+  const autoRuns = autoRunsRes.status === 'fulfilled' ? autoRunsRes.value : null;
   applyAutomations(snapshot, autoList, autoRuns);
 
   if (cli.isStopped()) throw new OrcaCliError('stopped', 'Poller stopped');
@@ -289,7 +365,12 @@ async function pollSlowTier(
 
 async function pollFastTier(cli: OrcaClient, snapshot: WorldSnapshot): Promise<void> {
   if (cli.isStopped()) throw new OrcaCliError('stopped', 'Poller stopped');
-  const inbox = await cli.orchestrationInbox(30);
+  const [inbox, firstWorkers, worktrees] = await Promise.all([
+    cli.orchestrationInbox(30),
+    cli.orchestrationWorkerList(100, null),
+    cli.worktreePs('24h'),
+  ]);
+
   applyInbox(snapshot, inbox);
   if (snapshot.inboxCursor.needsBackfill) {
     if (cli.isStopped()) throw new OrcaCliError('stopped', 'Poller stopped');
@@ -301,40 +382,44 @@ async function pollFastTier(cli: OrcaClient, snapshot: WorldSnapshot): Promise<v
     }
   }
 
-  let cursor: string | null = null;
-  for (let page = 0; page < 5; page++) {
+  applyWorkerList(snapshot, firstWorkers);
+  let cursor = extractNextWorkerCursor(firstWorkers);
+  for (let page = 1; page < 5 && cursor !== null; page++) {
     if (cli.isStopped()) throw new OrcaCliError('stopped', 'Poller stopped');
     let workers: Awaited<ReturnType<OrcaClient['orchestrationWorkerList']>>;
     try {
       workers = await cli.orchestrationWorkerList(100, cursor);
     } catch (err) {
-      if (cursor !== null && err instanceof OrcaCliError && err.code === 'invalid_argument') {
+      if (err instanceof OrcaCliError && err.code === 'invalid_argument') {
         break;
       }
       throw err;
     }
     applyWorkerList(snapshot, workers);
-    const res =
-      workers.result && typeof workers.result === 'object' && !Array.isArray(workers.result)
-        ? (workers.result as Record<string, unknown>)
-        : null;
-    const pageObj =
-      res?.page && typeof res.page === 'object' && !Array.isArray(res.page)
-        ? (res.page as Record<string, unknown>)
-        : null;
-    const nextRaw = pageObj?.hasMore === true && typeof pageObj.nextCursor === 'string'
-      ? pageObj.nextCursor.trim()
-      : '';
-    if (nextRaw.length === 0 || nextRaw.startsWith('-')) break;
-    cursor = nextRaw;
+    cursor = extractNextWorkerCursor(workers);
   }
 
-  if (cli.isStopped()) throw new OrcaCliError('stopped', 'Poller stopped');
-  const worktrees = await cli.worktreePs('24h');
   applyWorktreePs(snapshot, worktrees);
   snapshot.runtime.connected = true;
   snapshot.runtime.reachable = true;
   snapshot.runtime.retryAfterSecs = null;
+}
+
+function extractNextWorkerCursor(workers: Awaited<ReturnType<OrcaClient['orchestrationWorkerList']>>): string | null {
+  const res =
+    workers.result && typeof workers.result === 'object' && !Array.isArray(workers.result)
+      ? (workers.result as Record<string, unknown>)
+      : null;
+  const pageObj =
+    res?.page && typeof res.page === 'object' && !Array.isArray(res.page)
+      ? (res.page as Record<string, unknown>)
+      : null;
+  const nextRaw =
+    pageObj?.hasMore === true && typeof pageObj.nextCursor === 'string'
+      ? pageObj.nextCursor.trim()
+      : '';
+  if (nextRaw.length === 0 || nextRaw.startsWith('-')) return null;
+  return nextRaw;
 }
 
 async function pollMediumTier(
@@ -362,10 +447,36 @@ async function pollMediumTier(
     }
   }
 
-  for (const { id: botId, name: botName } of targets) {
-    if (cli.isStopped()) throw new OrcaCliError('stopped', 'Poller stopped');
-    try {
-      const items = await cli.botItemList(botName, false);
+  if (targets.length === 0) return;
+  if (cli.isStopped()) throw new OrcaCliError('stopped', 'Poller stopped');
+
+  type BotFetchPair = {
+    id: string;
+    name: string;
+    itemsRes: PromiseSettledResult<Awaited<ReturnType<OrcaClient['botItemList']>>>;
+    chatsRes: PromiseSettledResult<Awaited<ReturnType<OrcaClient['botChats']>>>;
+  };
+
+  const tasks: Array<() => Promise<unknown>> = [];
+  for (const t of targets) {
+    tasks.push(() => cli.botItemList(t.name, false));
+    tasks.push(() => cli.botChats(t.name));
+  }
+  const rawResults = await runWithConcurrency(tasks, MAX_CONCURRENT_CLI);
+
+  const pairs: BotFetchPair[] = [];
+  for (let i = 0; i < targets.length; i++) {
+    pairs.push({
+      id: targets[i].id,
+      name: targets[i].name,
+      itemsRes: rawResults[i * 2] as PromiseSettledResult<Awaited<ReturnType<OrcaClient['botItemList']>>>,
+      chatsRes: rawResults[i * 2 + 1] as PromiseSettledResult<Awaited<ReturnType<OrcaClient['botChats']>>>,
+    });
+  }
+
+  for (const { id: botId, name: botName, itemsRes, chatsRes } of pairs) {
+    if (itemsRes.status === 'fulfilled') {
+      const items = itemsRes.value;
       const res =
         items.result && typeof items.result === 'object' && !Array.isArray(items.result)
           ? (items.result as Record<string, unknown>)
@@ -400,7 +511,8 @@ async function pollMediumTier(
       } else {
         applyBotItemsScoped(snapshot, items, false);
       }
-    } catch (err) {
+    } else {
+      const err = itemsRes.reason;
       if (
         allOnBoot ||
         (err instanceof OrcaCliError &&
@@ -410,11 +522,10 @@ async function pollMediumTier(
       }
     }
 
-    if (cli.isStopped()) throw new OrcaCliError('stopped', 'Poller stopped');
-    try {
-      const chats = await cli.botChats(botName);
-      applyBotChats(snapshot, chats);
-    } catch (err) {
+    if (chatsRes.status === 'fulfilled') {
+      applyBotChats(snapshot, chatsRes.value);
+    } else {
+      const err = chatsRes.reason;
       if (
         allOnBoot ||
         (err instanceof OrcaCliError &&

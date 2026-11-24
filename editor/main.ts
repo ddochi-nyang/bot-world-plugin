@@ -17,17 +17,16 @@ import {
   type PetToyKind,
   type RpgXpAction,
   type SoundMode,
+  type StuckAlert,
   type TeamZone,
   type ThemeId,
   type UiLocale,
-  VALID_THEME_IDS,
   type ViewMode,
   type WeatherMode,
   type WorldSnapshot,
   type ZoneColor,
   createEmptySnapshot,
   isSafeKey,
-  isValidThemeId,
 } from '../src/types.ts';
 import { getThemeConfig } from '../shared/assets-catalog.ts';
 import {
@@ -65,13 +64,7 @@ import {
   orderedSnapshotBotIds,
 } from '../shared/filter.ts';
 import { effectiveLocale, getHostLocale, resolveUiLocale, tStrings } from '../shared/i18n.ts';
-import {
-  atmosphereIconName,
-  setButtonContent,
-  soundIconName,
-  svgIcon,
-  weatherIconName,
-} from '../shared/icons.ts';
+import { setButtonContent, svgIcon } from '../shared/icons.ts';
 import {
   MilestoneTracker,
   MotionDirector,
@@ -83,8 +76,14 @@ import { computeOfficeBadges } from '../shared/office-badges.ts';
 import {
   buildOfficeReport,
   formatReportMarkdown,
+  formatStandupMarkdown,
   renderOfficeReportModal,
 } from '../shared/office-report.ts';
+import {
+  computeStuckAlerts,
+  stuckAlertByBotMap,
+  stuckAlertsSignature,
+} from '../shared/watchdog.ts';
 import { OwnerAvatarController, type OwnerInteractionAction } from '../shared/owner-avatar.ts';
 import { PetTerrariumRenderer } from '../shared/pet-terrarium.ts';
 import { capturePhotoCard } from '../shared/photo-card.ts';
@@ -101,6 +100,11 @@ import {
 import { SoundscapeEngine } from '../shared/soundscape.ts';
 import { StageRenderer, resolveAtmospherePhase } from '../shared/stage-renderer.ts';
 import { TimelapseController } from '../shared/timelapse.ts';
+import {
+  createToolbarChrome,
+  syncToolbarChrome,
+  watchDocumentVisibility,
+} from '../shared/toolbar-chrome.ts';
 import { attachTooltips, setTooltip } from '../shared/tooltip.ts';
 import { resolveWeatherKind } from '../shared/weather.ts';
 import {
@@ -135,6 +139,7 @@ const state: {
   broadcastChromaKey: BroadcastChromaKey;
   lastNonBroadcastViewMode: 'office' | 'pet';
   reportCopied: boolean;
+  standupCopied: boolean;
   selectionCleared: boolean;
   filterPreset: StatusFilterPreset;
   searchQuery: string;
@@ -178,6 +183,7 @@ const state: {
   broadcastChromaKey: 'green',
   lastNonBroadcastViewMode: 'office',
   reportCopied: false,
+  standupCopied: false,
   selectionCleared: false,
   filterPreset: 'all',
   searchQuery: '',
@@ -200,6 +206,8 @@ let livePayload: BotWorldStatePayload = state.payload;
 let replayTimerId: number | null = null;
 let lastReplayTickMs = 0;
 let reportCopiedTimer: number | null = null;
+let standupCopiedTimer: number | null = null;
+let copiedReplyTimer: number | null = null;
 let followNoticeTimer: number | null = null;
 let followNoticeActive = false;
 let stageToastTimer: number | null = null;
@@ -223,6 +231,20 @@ let demoCreatorAssets: CreatorAssetsState = createEmptyCreatorAssetsState();
 let lastCreatorFetchedAtMs = -1;
 let creatorAssetsFetching = false;
 let quickSending = false;
+let replyingItemKey: string | null = null;
+let copiedReplyText: string | null = null;
+const needsYouDrafts = new Map<string, string>();
+function setNeedsYouDraft(itemKey: string, value: string): void {
+  if (value.length === 0) {
+    needsYouDrafts.delete(itemKey);
+    return;
+  }
+  if (!needsYouDrafts.has(itemKey) && needsYouDrafts.size >= 128) {
+    const oldest = needsYouDrafts.keys().next().value;
+    if (oldest !== undefined) needsYouDrafts.delete(oldest);
+  }
+  needsYouDrafts.set(itemKey, value);
+}
 const demoReplyTimers = new Set<number>();
 const tooltipController = attachTooltips(root);
 
@@ -236,338 +258,74 @@ function currentLocale(): UiLocale {
 }
 
 // Toolbar
-const titleEl = el('span', { className: 'bw-title' }, initialStrings.appTitleEditor);
-const themeOptions = new Map<ThemeId, HTMLOptionElement>();
-const themeSelect = el('select', {
-  className: 'bw-select',
-  ariaLabel: initialStrings.themeAriaLabel,
-  tooltip: initialStrings.tipThemeSelect,
-  tooltipKbd: 'T',
-  onChange: () => {
-    const val = themeSelect.value;
-    if (isValidThemeId(val)) {
-      void switchTheme(val).catch(() => {});
+const uiClientId = `editor-${Math.random().toString(36).slice(2, 10)}`;
+let lastReportedUiActive: boolean | null = null;
+function reportUiActive(active: boolean): void {
+  if (lastReportedUiActive === active) return;
+  lastReportedUiActive = active;
+  if (typeof orca === 'undefined' || !orca.plugin?.request) return;
+  void orca.plugin.request('botWorld.setUiActive', { active, clientId: uiClientId }).catch(() => {});
+}
+
+const toolbarChrome = createToolbarChrome('editor', initialLocale, {
+  onSelectTheme: (themeId) => void switchTheme(themeId).catch(() => {}),
+  onToggleViewMode: () => void toggleViewMode().catch(() => {}),
+  onToggleRoam: () => void toggleRoamMode().catch(() => {}),
+  onToggleBroadcast: () => void toggleBroadcastMode().catch(() => {}),
+  onCycleAtmosphere: () => void cycleAtmosphere().catch(() => {}),
+  onCycleWeather: () => void cycleWeather().catch(() => {}),
+  onCycleSound: () => void cycleSound(true).catch(() => {}),
+  onFocusSpotlight: () => cycleFocusSpotlight(),
+  onToggleCollab: () => {
+    state.showCollabNetwork = !state.showCollabNetwork;
+    renderUi();
+  },
+  onToggleZones: () => toggleZonesModal(),
+  onToggleCreatorStudio: () => toggleCreatorStudioModal(),
+  onTakePhoto: () => void triggerPhotoCardSnapshot().catch(() => {}),
+  onToggleReport: () => toggleReportModal(),
+  onToggleRedact: () => void toggleRedact().catch(() => {}),
+  onToggleLanguage: () => void toggleLanguage().catch(() => {}),
+  onToggleDemo: () => {
+    if (isDemoMode()) {
+      exitDemoMode();
+    } else {
+      enterDemoMode();
     }
   },
-}) as HTMLSelectElement;
-for (const tid of VALID_THEME_IDS) {
-  const opt = el(
-    'option',
-    { value: tid, selected: tid === 'startup_office' },
-    initialStrings.themeFull[tid]
-  ) as HTMLOptionElement;
-  themeOptions.set(tid, opt);
-  themeSelect.appendChild(opt);
-}
+  onToggleHelp: () => {
+    state.shortcutsOpen = !state.shortcutsOpen;
+    if (state.shortcutsOpen) {
+      ownerAvatar.clearKeys();
+      state.reportOpen = false;
+      state.zonesOpen = false;
+      state.creatorOpen = false;
+      renderReportModal();
+      renderZonesManager();
+      renderCreatorStudio();
+    }
+    renderShortcutsHelp();
+    syncChromeLocale(currentLocale());
+  },
+  onRefresh: () => void triggerRefresh().catch(() => {}),
+});
+const toolbar = toolbarChrome.root;
+const refreshBtn = toolbarChrome.refreshBtn;
 
 const resetSeatsBtn = el(
   'button',
   {
     type: 'button',
-    className: 'bw-btn bw-hidden',
+    className: 'bw-hud-btn bw-hud-reset-seats',
     tooltip: initialStrings.tipResetSeats,
+    disabled: true,
     onClick: () => resetCustomSeats(),
   },
   initialStrings.resetSeats
-);
-
-const atmoBtn = el(
-  'button',
-  {
-    type: 'button',
-    className: 'bw-btn',
-    ariaLabel: initialStrings.atmosphereAriaLabel,
-    tooltip: initialStrings.tipAtmosphere(initialStrings.atmosphereModes.auto),
-    tooltipKbd: 'A',
-    onClick: () => void cycleAtmosphere().catch(() => {}),
-  },
-  svgIcon(atmosphereIconName('auto')),
-  el('span', { className: 'bw-btn-label' }, initialStrings.atmosphereModes.auto)
 ) as HTMLButtonElement;
 
-const weatherBtn = el(
-  'button',
-  {
-    type: 'button',
-    className: 'bw-btn',
-    ariaLabel: initialStrings.weatherAriaLabel,
-    tooltip: initialStrings.tipWeather(initialStrings.weatherModes.auto),
-    tooltipKbd: 'W',
-    onClick: () => void cycleWeather().catch(() => {}),
-  },
-  svgIcon(weatherIconName('auto')),
-  el('span', { className: 'bw-btn-label' }, initialStrings.weatherModes.auto)
-) as HTMLButtonElement;
-
-const viewModeBtn = el(
-  'button',
-  {
-    type: 'button',
-    className: 'bw-btn',
-    tooltip: initialStrings.tipPetMode,
-    tooltipKbd: 'G',
-    ariaLabel: initialStrings.tipPetMode,
-    onClick: () => void toggleViewMode().catch(() => {}),
-  },
-  svgIcon('paw'),
-  el('span', { className: 'bw-btn-label' }, initialStrings.viewModePetButton)
-) as HTMLButtonElement;
-
-const roamBtn = el(
-  'button',
-  {
-    type: 'button',
-    className: 'bw-btn',
-    tooltip: initialStrings.tipRoam,
-    tooltipKbd: 'V',
-    ariaLabel: initialStrings.tipRoam,
-    onClick: () => void toggleRoamMode().catch(() => {}),
-  },
-  svgIcon('walk'),
-  el('span', { className: 'bw-btn-label' }, initialStrings.roamButton)
-) as HTMLButtonElement;
-
-const broadcastBtn = el(
-  'button',
-  {
-    type: 'button',
-    className: 'bw-btn',
-    tooltip: initialStrings.tipStream,
-    tooltipKbd: 'B',
-    ariaLabel: initialStrings.tipStream,
-    onClick: () => void toggleBroadcastMode().catch(() => {}),
-  },
-  svgIcon('tv'),
-  el('span', { className: 'bw-btn-label' }, initialStrings.broadcastButton)
-) as HTMLButtonElement;
-
-const soundBtn = el(
-  'button',
-  {
-    type: 'button',
-    className: 'bw-btn',
-    ariaLabel: initialStrings.soundAriaLabel,
-    tooltip: initialStrings.tipSound(initialStrings.soundModes.off),
-    tooltipKbd: 'M',
-    onClick: () => void cycleSound(true).catch(() => {}),
-  },
-  svgIcon(soundIconName('off')),
-  el('span', { className: 'bw-btn-label' }, initialStrings.soundModes.off)
-) as HTMLButtonElement;
-
-const focusBtn = el(
-  'button',
-  {
-    type: 'button',
-    className: 'bw-btn',
-    tooltip: initialStrings.tipFocus,
-    tooltipKbd: 'N',
-    ariaLabel: initialStrings.tipFocus,
-    onClick: () => cycleFocusSpotlight(),
-  },
-  svgIcon('crosshair'),
-  el('span', { className: 'bw-btn-label' }, initialStrings.focusButton)
-) as HTMLButtonElement;
-
-const collabBtn = el(
-  'button',
-  {
-    type: 'button',
-    className: 'bw-btn',
-    tooltip: initialStrings.tipCollab,
-    tooltipKbd: 'C',
-    ariaLabel: initialStrings.tipCollab,
-    onClick: () => {
-      state.showCollabNetwork = !state.showCollabNetwork;
-      renderUi();
-    },
-  },
-  svgIcon('network'),
-  el('span', { className: 'bw-btn-label' }, initialStrings.collabButton)
-) as HTMLButtonElement;
-
-const redactBtn = el(
-  'button',
-  {
-    type: 'button',
-    className: 'bw-btn',
-    tooltip: initialStrings.tipRedact,
-    tooltipKbd: 'R',
-    onClick: () => void toggleRedact().catch(() => {}),
-  },
-  svgIcon('eye'),
-  el('span', { className: 'bw-btn-label' }, initialStrings.redactOff)
-) as HTMLButtonElement;
-
-const langBtn = el(
-  'button',
-  {
-    type: 'button',
-    className: 'bw-btn',
-    tooltip: initialStrings.tipLanguage,
-    tooltipKbd: 'L',
-    ariaLabel: initialStrings.langToggleTitle,
-    onClick: () => void toggleLanguage().catch(() => {}),
-  },
-  svgIcon('globe'),
-  el('span', { className: 'bw-btn-label' }, initialStrings.langToggleText)
-) as HTMLButtonElement;
-
-const demoBtn = el(
-  'button',
-  {
-    type: 'button',
-    className: 'bw-btn',
-    tooltip: initialStrings.tipDemo,
-    tooltipKbd: 'D',
-    onClick: () => {
-      if (isDemoMode()) {
-        exitDemoMode();
-      } else {
-        enterDemoMode();
-      }
-    },
-  },
-  svgIcon('play-circle'),
-  el('span', { className: 'bw-btn-label' }, initialStrings.demoButton)
-) as HTMLButtonElement;
-
-const reportBtn = el(
-  'button',
-  {
-    type: 'button',
-    className: 'bw-btn',
-    tooltip: initialStrings.tipReport,
-    tooltipKbd: 'I',
-    ariaLabel: initialStrings.tipReport,
-    onClick: () => toggleReportModal(),
-  },
-  svgIcon('bar-chart'),
-  el('span', { className: 'bw-btn-label' }, initialStrings.reportButton)
-) as HTMLButtonElement;
-
-const zonesBtn = el(
-  'button',
-  {
-    type: 'button',
-    className: 'bw-btn',
-    tooltip: initialStrings.tipZones,
-    tooltipKbd: 'Z',
-    ariaLabel: initialStrings.tipZones,
-    onClick: () => toggleZonesModal(),
-  },
-  svgIcon('map'),
-  el('span', { className: 'bw-btn-label' }, initialStrings.zonesButton)
-) as HTMLButtonElement;
-
-const studioBtn = el(
-  'button',
-  {
-    type: 'button',
-    className: 'bw-btn',
-    tooltip: initialStrings.tipStudio,
-    tooltipKbd: 'U',
-    ariaLabel: initialStrings.tipStudio,
-    onClick: () => toggleCreatorStudioModal(),
-  },
-  svgIcon('palette'),
-  el('span', { className: 'bw-btn-label' }, initialStrings.studioButton)
-) as HTMLButtonElement;
-
-const photoBtn = el(
-  'button',
-  {
-    type: 'button',
-    className: 'bw-btn',
-    tooltip: initialStrings.tipPhoto,
-    tooltipKbd: 'P',
-    ariaLabel: initialStrings.tipPhoto,
-    onClick: () => void triggerPhotoCardSnapshot().catch(() => {}),
-  },
-  svgIcon('camera'),
-  el('span', { className: 'bw-btn-label' }, initialStrings.photoButton)
-) as HTMLButtonElement;
-
-const helpBtn = el(
-  'button',
-  {
-    type: 'button',
-    className: 'bw-btn bw-icon-btn',
-    tooltip: initialStrings.tipShortcuts,
-    tooltipKbd: '?',
-    ariaLabel: initialStrings.tipShortcuts,
-    onClick: () => {
-      state.shortcutsOpen = !state.shortcutsOpen;
-      if (state.shortcutsOpen) {
-        ownerAvatar.clearKeys();
-        state.reportOpen = false;
-        state.zonesOpen = false;
-        state.creatorOpen = false;
-        renderReportModal();
-        renderZonesManager();
-        renderCreatorStudio();
-      }
-      renderShortcutsHelp();
-      syncChromeLocale(currentLocale());
-    },
-  },
-  svgIcon('help-circle')
-) as HTMLButtonElement;
-
-const refreshBtn = el(
-  'button',
-  {
-    type: 'button',
-    className: 'bw-btn',
-    tooltip: initialStrings.tipRefresh,
-    onClick: () => void triggerRefresh().catch(() => {}),
-  },
-  svgIcon('refresh-cw'),
-  el('span', { className: 'bw-btn-label' }, initialStrings.refresh)
-) as HTMLButtonElement;
-
-const connPill = el('span', { className: 'bw-status-pill' }, initialStrings.connecting);
-const docSyncPill = el('span', { className: 'bw-chip' }, initialStrings.docSynced);
 const demoHintText = el('span', null, initialStrings.demoModeHint);
 const demoHintBanner = el('div', { className: 'bw-hint-banner bw-hidden' }, demoHintText);
-
-const toolbar = el(
-  'div',
-  { className: 'bw-toolbar' },
-  el(
-    'div',
-    { className: 'bw-toolbar-group' },
-    titleEl,
-    connPill,
-    docSyncPill
-  ),
-  el(
-    'div',
-    { className: 'bw-toolbar-group' },
-    themeSelect,
-    resetSeatsBtn,
-    viewModeBtn,
-    roamBtn,
-    broadcastBtn,
-    el('span', { className: 'bw-toolbar-sep' }),
-    atmoBtn,
-    weatherBtn,
-    soundBtn,
-    el('span', { className: 'bw-toolbar-sep' }),
-    focusBtn,
-    collabBtn,
-    zonesBtn,
-    studioBtn,
-    photoBtn,
-    reportBtn,
-    el('span', { className: 'bw-toolbar-sep' }),
-    redactBtn,
-    langBtn,
-    demoBtn,
-    helpBtn,
-    refreshBtn
-  )
-);
 
 // Filter & Search bar
 const filterChipButtons = new Map<StatusFilterPreset, HTMLButtonElement>();
@@ -739,7 +497,8 @@ const cameraHud = el(
   zoomOutBtn,
   zoomResetBtn,
   zoomInBtn,
-  followHudBtn
+  followHudBtn,
+  resetSeatsBtn
 );
 const roamHudTarget = el('span', { className: 'bw-roam-hud-target' });
 const roamHighFiveBtn = el(
@@ -1225,11 +984,11 @@ async function triggerOwnerProximityInteraction(action: OwnerInteractionAction):
 }
 
 function syncOwnerRoamLoop(): void {
-  if (ownerAvatar.roaming && !isPetMode()) {
+  if (ownerAvatar.roaming && !isPetMode() && visibilityWatcher.isVisible()) {
     if (ownerRoamRafId === null) {
       lastOwnerRoamMs = performance.now();
       const tick = (nowMs: number) => {
-        if (!ownerAvatar.roaming || isPetMode()) {
+        if (!ownerAvatar.roaming || isPetMode() || !visibilityWatcher.isVisible()) {
           ownerRoamRafId = null;
           return;
         }
@@ -1298,9 +1057,10 @@ function syncOwnerRoamLoop(): void {
             timelapseActive: timelapse.active,
             customBackground: activeCreatorAssets().customBackground,
             customAvatars: activeCreatorAssets().customAvatars,
+            stuckAlerts: activeStuckAlerts(snap, displayTimestampMs, redactMode, locale),
           });
         }
-        if (ownerAvatar.roaming && !isPetMode()) {
+        if (ownerAvatar.roaming && !isPetMode() && visibilityWatcher.isVisible()) {
           ownerRoamRafId = requestAnimationFrame(tick);
         } else {
           ownerRoamRafId = null;
@@ -1545,7 +1305,60 @@ function renderShortcutsHelp(): void {
   });
 }
 
-async function copyReportMarkdown(text: string): Promise<void> {
+function activeStuckAlerts(
+  snap: WorldSnapshot = currentDisplayedSnapshot(),
+  displayTimestampMs: number = snap.capturedAt > 0 ? snap.capturedAt : Date.now(),
+  redactMode: boolean = activeRedactMode(),
+  locale: UiLocale = currentLocale()
+): StuckAlert[] {
+  if (replay.isReplay) {
+    return [];
+  }
+  if (isDemoMode()) {
+    return computeStuckAlerts(snap, {
+      thresholdMin: state.payload.stuckThresholdMin ?? 15,
+      nowMs: displayTimestampMs,
+      redactMode,
+      locale,
+    });
+  }
+  return state.payload.stuckAlerts ?? [];
+}
+
+async function copyReportMarkdown(text: string, target: 'report' | 'standup' = 'report'): Promise<void> {
+  const ok = await copyTextToClipboard(text);
+  if (ok) {
+    if (target === 'standup') {
+      state.standupCopied = true;
+      renderReportModal();
+      if (standupCopiedTimer !== null) {
+        clearTimeout(standupCopiedTimer);
+      }
+      standupCopiedTimer = window.setTimeout(() => {
+        state.standupCopied = false;
+        standupCopiedTimer = null;
+        if (state.reportOpen) {
+          renderReportModal();
+        }
+      }, 1800);
+      return;
+    }
+    state.reportCopied = true;
+    renderReportModal();
+    if (reportCopiedTimer !== null) {
+      clearTimeout(reportCopiedTimer);
+    }
+    reportCopiedTimer = window.setTimeout(() => {
+      state.reportCopied = false;
+      reportCopiedTimer = null;
+      if (state.reportOpen) {
+        renderReportModal();
+      }
+    }, 1800);
+  }
+}
+
+async function copyTextToClipboard(text: string): Promise<boolean> {
   let ok = false;
   try {
     if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
@@ -1572,20 +1385,7 @@ async function copyReportMarkdown(text: string): Promise<void> {
       }
     }
   }
-  if (ok) {
-    state.reportCopied = true;
-    renderReportModal();
-    if (reportCopiedTimer !== null) {
-      clearTimeout(reportCopiedTimer);
-    }
-    reportCopiedTimer = window.setTimeout(() => {
-      state.reportCopied = false;
-      reportCopiedTimer = null;
-      if (state.reportOpen) {
-        renderReportModal();
-      }
-    }, 1800);
-  }
+  return ok;
 }
 
 function renderReportModal(): void {
@@ -1596,11 +1396,21 @@ function renderReportModal(): void {
   }
   const locale = currentLocale();
   const redactMode = activeRedactMode();
-  const report = buildOfficeReport(state.payload.events, state.payload.snapshot, {
+  const snap = state.payload.snapshot;
+  const stuckAlerts = isDemoMode()
+    ? computeStuckAlerts(snap, {
+        thresholdMin: state.payload.stuckThresholdMin ?? 15,
+        nowMs: snap.capturedAt > 0 ? snap.capturedAt : Date.now(),
+        redactMode,
+        locale,
+      })
+    : (state.payload.stuckAlerts ?? []);
+  const report = buildOfficeReport(state.payload.events, snap, {
     redactMode,
     locale,
     weeklyTrend: state.payload.weeklyTrend,
     rpgProfiles: activeRpgProfiles(),
+    stuckAlerts,
   });
   renderOfficeReportModal(reportBackdrop, {
     open: state.reportOpen,
@@ -1608,9 +1418,14 @@ function renderReportModal(): void {
     redactMode,
     locale,
     copied: state.reportCopied,
+    standupCopied: state.standupCopied,
     onCopyMarkdown: () => {
       const md = formatReportMarkdown(report, { redactMode, locale });
-      void copyReportMarkdown(md).catch(() => {});
+      void copyReportMarkdown(md, 'report').catch(() => {});
+    },
+    onCopyStandupMarkdown: () => {
+      const md = formatStandupMarkdown(report, { redactMode, locale });
+      void copyReportMarkdown(md, 'standup').catch(() => {});
     },
     onClose: () => {
       state.reportOpen = false;
@@ -1628,6 +1443,7 @@ function toggleReportModal(): void {
     state.zonesOpen = false;
     state.creatorOpen = false;
     state.reportCopied = false;
+    state.standupCopied = false;
     renderShortcutsHelp();
     renderZonesManager();
     renderCreatorStudio();
@@ -2059,6 +1875,10 @@ function updateCameraHud(locale: UiLocale): void {
   followHudBtn.textContent = `📌 ${following ? s.followButtonActive : s.followButton}`;
   setTooltip(followHudBtn, s.tipFollowCam, 'F');
   followHudBtn.className = following ? 'bw-hud-btn bw-hud-btn-active' : 'bw-hud-btn';
+  const hasCustomSeats = Object.keys(activeCustomPositions()).length > 0;
+  resetSeatsBtn.textContent = s.resetSeats;
+  resetSeatsBtn.disabled = !hasCustomSeats;
+  setTooltip(resetSeatsBtn, s.tipResetSeats);
 }
 
 function cycleFocusSpotlight(): void {
@@ -2135,48 +1955,29 @@ function toggleFollowCam(): void {
 
 function syncChromeLocale(locale: UiLocale): void {
   const s = tStrings(locale);
-  const atmoMode = activeAtmosphereMode();
-  const atmoLabel = s.atmosphereModes[atmoMode];
-  const wMode = activeWeatherMode();
-  const wLabel = s.weatherModes[wMode];
-  const sndMode = activeSoundMode();
-  const sndLabel = s.soundModes[sndMode];
-  document.documentElement.lang = locale;
-  document.title = s.appTitleEditor;
-  titleEl.textContent = s.appTitleEditor;
-  for (const [tid, opt] of themeOptions.entries()) {
-    opt.textContent = s.themeFull[tid];
-  }
-  themeSelect.setAttribute('aria-label', s.themeAriaLabel);
-  setTooltip(themeSelect, s.tipThemeSelect, 'T');
-  resetSeatsBtn.textContent = s.resetSeats;
-  setTooltip(resetSeatsBtn, s.tipResetSeats);
-  setButtonContent(atmoBtn, atmosphereIconName(atmoMode), atmoLabel);
-  setTooltip(atmoBtn, s.tipAtmosphere(atmoLabel), 'A');
-  atmoBtn.className = atmoMode !== 'auto' ? 'bw-btn bw-btn-active' : 'bw-btn';
-  setButtonContent(weatherBtn, weatherIconName(wMode), wLabel);
-  setTooltip(weatherBtn, s.tipWeather(wLabel), 'W');
-  weatherBtn.className = wMode !== 'auto' ? 'bw-btn bw-btn-active' : 'bw-btn';
-  setButtonContent(soundBtn, soundIconName(sndMode), sndLabel);
-  setTooltip(soundBtn, s.tipSound(sndLabel), 'M');
-  soundBtn.className = sndMode !== 'off' ? 'bw-btn bw-btn-active' : 'bw-btn';
-  const vMode = activeViewMode();
-  setButtonContent(
-    viewModeBtn,
-    vMode === 'pet' ? 'building' : 'paw',
-    vMode === 'pet' ? s.viewModeOfficeButton : s.viewModePetButton
-  );
-  setTooltip(viewModeBtn, vMode === 'pet' ? s.tipOfficeMode : s.tipPetMode, 'G');
-  viewModeBtn.setAttribute('aria-label', s.viewModeToggleTitle(vMode));
-  viewModeBtn.className = vMode === 'pet' ? 'bw-btn bw-btn-active' : 'bw-btn';
-  setButtonContent(roamBtn, 'walk', s.roamButton);
-  setTooltip(roamBtn, s.tipRoam, 'V');
-  roamBtn.setAttribute('aria-label', s.roamButtonTitle);
-  roamBtn.className = ownerAvatar.roaming && vMode === 'office' ? 'bw-btn bw-btn-active' : 'bw-btn';
-  setButtonContent(broadcastBtn, 'tv', s.broadcastButton);
-  setTooltip(broadcastBtn, s.tipStream, 'B');
-  broadcastBtn.setAttribute('aria-label', s.broadcastButtonTitle);
-  broadcastBtn.className = vMode === 'broadcast' ? 'bw-btn bw-btn-active' : 'bw-btn';
+  const snap = currentDisplayedSnapshot();
+  const botCount = Object.keys(snap.bots).length;
+  syncToolbarChrome(toolbarChrome, {
+    mode: 'editor',
+    locale,
+    themeId: activeThemeId(),
+    atmosphereMode: activeAtmosphereMode(),
+    weatherMode: activeWeatherMode(),
+    soundMode: activeSoundMode(),
+    viewMode: activeViewMode(),
+    redactMode: activeRedactMode(),
+    demoMode: isDemoMode(),
+    roaming: ownerAvatar.roaming,
+    showCollabNetwork: state.showCollabNetwork,
+    zonesActive: state.zonesOpen || (activeShowZones() && activeZones().length > 0),
+    creatorOpen: state.creatorOpen,
+    reportOpen: state.reportOpen,
+    shortcutsOpen: state.shortcutsOpen,
+    connected: snap.runtime.connected,
+    retryAfterSecs: snap.runtime.retryAfterSecs,
+    botCount,
+    docReadOnly: docSession?.readOnly ?? false,
+  });
   setTooltip(roamHighFiveBtn, s.tipRoamHighFive, 'H');
   setTooltip(roamCoffeeBtn, s.tipRoamCoffee, 'K');
   setButtonContent(petCoffeeBtn, 'coffee', s.petActionCoffee);
@@ -2187,44 +1988,6 @@ function syncChromeLocale(locale: UiLocale): void {
   setTooltip(petTreatBtn, s.petActionTreatTitle);
   setButtonContent(petExitBtn, 'building', s.petExitButton);
   setTooltip(petExitBtn, s.petExitTip, 'G');
-  setButtonContent(focusBtn, 'crosshair', s.focusButton);
-  setTooltip(focusBtn, s.tipFocus, 'N');
-  focusBtn.setAttribute('aria-label', s.focusButtonTitle);
-  setButtonContent(collabBtn, 'network', s.collabButton);
-  setTooltip(collabBtn, s.tipCollab, 'C');
-  collabBtn.setAttribute('aria-label', s.collabButtonTitle);
-  collabBtn.className = state.showCollabNetwork ? 'bw-btn bw-btn-active' : 'bw-btn';
-  setButtonContent(zonesBtn, 'map', s.zonesButton);
-  setTooltip(zonesBtn, s.tipZones, 'Z');
-  zonesBtn.setAttribute('aria-label', s.zonesButtonTitle);
-  zonesBtn.className =
-    state.zonesOpen || (activeShowZones() && activeZones().length > 0)
-      ? 'bw-btn bw-btn-active'
-      : 'bw-btn';
-  setButtonContent(studioBtn, 'palette', s.studioButton);
-  setTooltip(studioBtn, s.tipStudio, 'U');
-  studioBtn.setAttribute('aria-label', s.studioButtonTitle);
-  studioBtn.className = state.creatorOpen ? 'bw-btn bw-btn-active' : 'bw-btn';
-  setButtonContent(photoBtn, 'camera', s.photoButton);
-  setTooltip(photoBtn, s.tipPhoto, 'P');
-  photoBtn.setAttribute('aria-label', s.photoButtonTitle);
-  setTooltip(redactBtn, s.tipRedact, 'R');
-  setButtonContent(langBtn, 'globe', s.langToggleText);
-  setTooltip(langBtn, s.tipLanguage, 'L');
-  langBtn.setAttribute('aria-label', s.langToggleTitle);
-  setButtonContent(demoBtn, 'play-circle', isDemoMode() ? s.exitDemoOffice : s.demoButton);
-  setTooltip(demoBtn, s.tipDemo, 'D');
-  demoBtn.className = isDemoMode() ? 'bw-btn bw-btn-active' : 'bw-btn';
-  setButtonContent(reportBtn, 'bar-chart', s.reportButton);
-  setTooltip(reportBtn, s.tipReport, 'I');
-  reportBtn.setAttribute('aria-label', s.reportButtonTitle);
-  reportBtn.className = state.reportOpen ? 'bw-btn bw-btn-active' : 'bw-btn';
-  setButtonContent(helpBtn, 'help-circle');
-  setTooltip(helpBtn, s.tipShortcuts, '?');
-  helpBtn.setAttribute('aria-label', s.shortcutsButtonTitle);
-  helpBtn.className = state.shortcutsOpen
-    ? 'bw-btn bw-icon-btn bw-btn-active'
-    : 'bw-btn bw-icon-btn';
   searchInput.placeholder = s.searchPlaceholder;
   searchInput.setAttribute('aria-label', s.searchPlaceholder);
   setTooltip(searchInput, s.tipSearchInput, '/');
@@ -2233,8 +1996,6 @@ function syncChromeLocale(locale: UiLocale): void {
   updateCameraHud(locale);
   demoHintText.textContent = s.demoModeHint;
   demoHintBanner.classList.toggle('bw-hidden', !isDemoMode());
-  setButtonContent(refreshBtn, 'refresh-cw', s.refresh);
-  setTooltip(refreshBtn, s.tipRefresh);
   liveBtn.textContent = s.live;
   setTooltip(liveBtn, s.tipTimelineLive);
   setTooltip(playBtn, s.tipTimelinePlay, 'Space');
@@ -2255,32 +2016,30 @@ function renderToolbarOnly(
 ): void {
   const s = tStrings(locale);
   const botCount = Object.keys(snap.bots).length;
-  themeSelect.value = themeId;
+  syncToolbarChrome(toolbarChrome, {
+    mode: 'editor',
+    locale,
+    themeId,
+    atmosphereMode: activeAtmosphereMode(),
+    weatherMode: activeWeatherMode(),
+    soundMode: activeSoundMode(),
+    viewMode: activeViewMode(),
+    redactMode,
+    demoMode: isDemoMode(),
+    roaming: ownerAvatar.roaming,
+    showCollabNetwork: state.showCollabNetwork,
+    zonesActive: state.zonesOpen || (activeShowZones() && activeZones().length > 0),
+    creatorOpen: state.creatorOpen,
+    reportOpen: state.reportOpen,
+    shortcutsOpen: state.shortcutsOpen,
+    connected: snap.runtime.connected,
+    retryAfterSecs: snap.runtime.retryAfterSecs,
+    botCount,
+    docReadOnly: docSession?.readOnly ?? false,
+  });
   const hasCustomSeats = Object.keys(activeCustomPositions()).length > 0;
-  resetSeatsBtn.classList.toggle('bw-hidden', !hasCustomSeats);
-
-  setButtonContent(
-    redactBtn,
-    redactMode ? 'eye-off' : 'eye',
-    redactMode ? s.redactOn : s.redactOff
-  );
-  redactBtn.className = redactMode ? 'bw-btn bw-btn-warn' : 'bw-btn';
-
-  if (isDemoMode()) {
-    connPill.textContent = s.demoModeBadge(botCount);
-    connPill.className = 'bw-status-pill bw-status-demo';
-    docSyncPill.textContent = s.docReadOnly;
-  } else if (snap.runtime.connected) {
-    connPill.textContent = s.connectedBots(botCount);
-    connPill.className = 'bw-status-pill bw-status-online';
-    docSyncPill.textContent = docSession?.readOnly ? s.docReadOnly : s.docSynced;
-  } else {
-    connPill.textContent = snap.runtime.retryAfterSecs
-      ? s.offlineRetry(snap.runtime.retryAfterSecs)
-      : s.offline;
-    connPill.className = 'bw-status-pill bw-status-offline';
-    docSyncPill.textContent = docSession?.readOnly ? s.docReadOnly : s.docSynced;
-  }
+  resetSeatsBtn.textContent = s.resetSeats;
+  resetSeatsBtn.disabled = !hasCustomSeats;
 }
 
 function renderTimelineControlsOnly(snap: WorldSnapshot, locale: UiLocale): void {
@@ -2384,6 +2143,7 @@ function renderStageFrame(
     redactMode,
     locale,
   });
+  renderer.setActive(!petActive);
   petRenderer.setActive(petActive);
   if (petActive) {
     petRenderer.update({
@@ -2452,6 +2212,7 @@ function renderStageFrame(
       timelapseActive: timelapse.active,
       customBackground: creatorAssets.customBackground,
       customAvatars: creatorAssets.customAvatars,
+      stuckAlerts: activeStuckAlerts(snap, displayTimestampMs, redactMode, locale),
     });
   } else {
     roamHud.classList.add('bw-hidden');
@@ -2472,6 +2233,10 @@ let lastDetailLocale: UiLocale | null = null;
 let lastDetailAppearancesJson = '';
 let lastDetailRpgJson = '';
 let lastDetailCreatorTs = -1;
+let lastDetailAllowQuickSend: boolean | null = null;
+let lastDetailReplyingKey: string | null = null;
+let lastDetailCopiedReply: string | null = null;
+let lastDetailStuckSig = '';
 
 let lastEventsRef: BotWorldStatePayload['events'] | null = null;
 let lastEventsRedact: boolean | null = null;
@@ -2491,6 +2256,14 @@ function renderSidePanelsIfNeeded(
   const rpgJson = JSON.stringify(rpgProfiles);
   const creatorAssets = activeCreatorAssets();
   const demoActive = isDemoMode();
+  const allowQuickSend = Boolean(state.payload.allowQuickSend);
+  const displayTs = replay.isReplay
+    ? replay.cursorMs
+    : snap.capturedAt > 0
+      ? snap.capturedAt
+      : Date.now();
+  const stuckAlerts = activeStuckAlerts(snap, displayTs, redactMode, locale);
+  const stuckSig = stuckAlertsSignature(stuckAlerts);
   const detailChanged =
     force ||
     demoActive !== lastDetailDemoMode ||
@@ -2506,7 +2279,11 @@ function renderSidePanelsIfNeeded(
     locale !== lastDetailLocale ||
     appearancesJson !== lastDetailAppearancesJson ||
     rpgJson !== lastDetailRpgJson ||
-    creatorAssets.updatedAtMs !== lastDetailCreatorTs;
+    creatorAssets.updatedAtMs !== lastDetailCreatorTs ||
+    allowQuickSend !== lastDetailAllowQuickSend ||
+    replyingItemKey !== lastDetailReplyingKey ||
+    copiedReplyText !== lastDetailCopiedReply ||
+    stuckSig !== lastDetailStuckSig;
 
   if (detailChanged) {
     lastDetailDemoMode = demoActive;
@@ -2523,6 +2300,10 @@ function renderSidePanelsIfNeeded(
     lastDetailAppearancesJson = appearancesJson;
     lastDetailRpgJson = rpgJson;
     lastDetailCreatorTs = creatorAssets.updatedAtMs;
+    lastDetailAllowQuickSend = allowQuickSend;
+    lastDetailReplyingKey = replyingItemKey;
+    lastDetailCopiedReply = copiedReplyText;
+    lastDetailStuckSig = stuckSig;
 
     const selectedBot =
       selectedId && isSafeKey(selectedId) && Object.hasOwn(snap.bots, selectedId)
@@ -2536,6 +2317,7 @@ function renderSidePanelsIfNeeded(
       selectedBot && Object.hasOwn(creatorAssets.customAvatars, selectedBot.id)
         ? validateCustomAssetDataUrl(creatorAssets.customAvatars[selectedBot.id], 'avatar')
         : null;
+    const stuckByBot = stuckAlertByBotMap(stuckAlerts);
 
     renderBotDetail(detailSidebar, {
       snapshot: snap,
@@ -2555,6 +2337,16 @@ function renderSidePanelsIfNeeded(
       onUploadCustomAvatar: (botId, file) => void handleUploadCustomAvatar(botId, file).catch(() => {}),
       onResetCustomAvatar: (botId) => void handleResetCustomAvatar(botId).catch(() => {}),
       onOpenCreatorStudio: () => toggleCreatorStudioModal('avatars'),
+      allowQuickSend,
+      demoMode: demoActive,
+      replyingItemKey,
+      copiedReplyText,
+      stuckAlert: selectedBot ? (stuckByBot.get(selectedBot.id) ?? null) : null,
+      needsYouDrafts,
+      onNeedsYouDraftChange: setNeedsYouDraft,
+      onReplyNeedsOwnerItem: (botId, itemNumber, answerText) =>
+        void handleReplyNeedsOwnerItem(botId, itemNumber, answerText).catch(() => {}),
+      onCopyReplyText: (text) => void handleCopyReplyText(text).catch(() => {}),
     });
   }
 
@@ -2599,11 +2391,11 @@ function renderSidePanelsIfNeeded(
 }
 
 function syncReplayLoop(): void {
-  if ((replay.isReplay && replay.isPlaying) || timelapse.active) {
+  if (((replay.isReplay && replay.isPlaying) || timelapse.active) && visibilityWatcher.isVisible()) {
     if (replayTimerId === null) {
       lastReplayTickMs = performance.now();
       const tick = (nowMs: number) => {
-        if ((!replay.isReplay || !replay.isPlaying) && !timelapse.active) {
+        if (((!replay.isReplay || !replay.isPlaying) && !timelapse.active) || !visibilityWatcher.isVisible()) {
           replayTimerId = null;
           return;
         }
@@ -2650,7 +2442,7 @@ function syncReplayLoop(): void {
         renderTimelineControlsOnly(snap, locale);
         renderStageFrame(themeId, redactMode, appearances, snap, selectedId, locale);
         renderSidePanelsIfNeeded(snap, selectedId, redactMode, appearances, locale, false);
-        if (replay.isPlaying || timelapse.active) {
+        if ((replay.isPlaying || timelapse.active) && visibilityWatcher.isVisible()) {
           replayTimerId = requestAnimationFrame(tick);
         } else {
           replayTimerId = null;
@@ -2732,6 +2524,20 @@ function syncDemoTick(advance: boolean, forceSidePanels = false): void {
   renderUi(forceSidePanels);
 }
 
+function syncDemoInterval(): void {
+  if (isDemoMode() && visibilityWatcher.isVisible()) {
+    if (demoTimerId === null) {
+      demoTimerId = window.setInterval(() => {
+        if (!demoSession || replay.isReplay || !visibilityWatcher.isVisible()) return;
+        syncDemoTick(true);
+      }, 2600);
+    }
+  } else if (demoTimerId !== null) {
+    clearInterval(demoTimerId);
+    demoTimerId = null;
+  }
+}
+
 function enterDemoMode(): void {
   if (isDemoMode()) return;
   state.selectionCleared = false;
@@ -2766,10 +2572,7 @@ function enterDemoMode(): void {
   } else {
     demoMilestones.reset();
   }
-  demoTimerId = window.setInterval(() => {
-    if (!demoSession || replay.isReplay) return;
-    syncDemoTick(true);
-  }, 2600);
+  syncDemoInterval();
   renderUi(true);
 }
 
@@ -3108,6 +2911,100 @@ async function handleQuickSend(botId: string, message: string): Promise<void> {
   }
 }
 
+async function handleCopyReplyText(text: string): Promise<void> {
+  const ok = await copyTextToClipboard(text);
+  if (!ok) return;
+  copiedReplyText = text;
+  renderUi(true);
+  if (copiedReplyTimer !== null) {
+    clearTimeout(copiedReplyTimer);
+  }
+  copiedReplyTimer = window.setTimeout(() => {
+    copiedReplyText = null;
+    copiedReplyTimer = null;
+    renderUi(true);
+  }, 1800);
+}
+
+async function handleReplyNeedsOwnerItem(
+  botId: string,
+  itemNumber: number,
+  answerText: string
+): Promise<void> {
+  if (replyingItemKey !== null) return;
+  const locale = currentLocale();
+  const s = tStrings(locale);
+  const redactMode = activeRedactMode();
+  const theme = getThemeConfig(activeThemeId(), locale);
+
+  if (isDemoMode() && demoSession) {
+    const res = demoSession.replyNeedsOwnerItem(botId, itemNumber, answerText);
+    if (!res) return;
+    needsYouDrafts.delete(`${botId}:${itemNumber}`);
+    const snap = state.payload.snapshot;
+    liveMotion.launchQuickMessageCourier(
+      botId,
+      snap,
+      theme,
+      answerText,
+      redactMode,
+      activeCustomPositions(),
+      locale
+    );
+    petRenderer.engine.dropQuickMessageLetter(botId, locale);
+    soundscape.playCue('handoff', { suppressed: false });
+    const targetDisplay = redactMode
+      ? getBotRedactedAlias(botId, snap, locale)
+      : scrubAll(res.botName);
+    showStageToast(s.needsYouReplySentToast(targetDisplay, itemNumber));
+    syncDemoTick(false, true);
+    return;
+  }
+
+  if (!state.payload.allowQuickSend) {
+    showStageToast(s.needsYouReplyDisabledError);
+    return;
+  }
+
+  replyingItemKey = `${botId}:${itemNumber}`;
+  renderUi(true);
+  try {
+    const res = await orca.plugin.request('botWorld.replyNeedsOwnerItem', {
+      botId,
+      itemNumber,
+      answerText,
+    });
+    if (res.ok) {
+      needsYouDrafts.delete(`${botId}:${itemNumber}`);
+      const snap = state.payload.snapshot;
+      liveMotion.launchQuickMessageCourier(
+        botId,
+        snap,
+        theme,
+        answerText,
+        redactMode,
+        activeCustomPositions(),
+        locale
+      );
+      petRenderer.engine.dropQuickMessageLetter(botId, locale);
+      soundscape.playCue('handoff', { suppressed: false });
+      const targetDisplay = redactMode
+        ? getBotRedactedAlias(botId, snap, locale)
+        : scrubAll(res.botName);
+      showStageToast(s.needsYouReplySentToast(targetDisplay, itemNumber));
+      const fresh = await orca.plugin.request('botWorld.getState', { locale: getHostLocale() });
+      applyIncomingPayload(fresh);
+    } else {
+      showStageToast(s.needsYouReplyFailedToast(res.error));
+    }
+  } catch {
+    showStageToast(s.needsYouReplyFailedToast('request failed'));
+  } finally {
+    replyingItemKey = null;
+    renderUi(true);
+  }
+}
+
 async function toggleRedact(): Promise<void> {
   if (isDemoMode()) {
     demoRedactMode = !demoRedactMode;
@@ -3206,6 +3103,7 @@ async function triggerRefresh(): Promise<void> {
 
 async function boot(): Promise<void> {
   renderUi(true);
+  reportUiActive(visibilityWatcher.isVisible());
   try {
     orca.on('theme', ({ colorScheme }) => {
       document.documentElement.classList.toggle('light', colorScheme === 'light');
@@ -3433,6 +3331,18 @@ const handleWindowBlur = (): void => {
   ownerAvatar.clearKeys();
 };
 
+const visibilityWatcher = watchDocumentVisibility((visible) => {
+  reportUiActive(visible);
+  renderer.setPageVisible(visible);
+  petRenderer.setPageVisible(visible);
+  syncOwnerRoamLoop();
+  syncReplayLoop();
+  syncDemoInterval();
+  if (visible && isDemoMode() && !replay.isReplay) {
+    syncDemoTick(false);
+  }
+});
+
 window.addEventListener('keydown', handleKeyDown);
 window.addEventListener('keyup', handleKeyUp);
 window.addEventListener('blur', handleWindowBlur);
@@ -3442,6 +3352,8 @@ let cleanedUp = false;
 function cleanup(): void {
   if (cleanedUp) return;
   cleanedUp = true;
+  reportUiActive(false);
+  visibilityWatcher.dispose();
   clearDemoReplyTimers();
   if (demoTimerId !== null) {
     clearInterval(demoTimerId);
@@ -3450,6 +3362,14 @@ function cleanup(): void {
   if (reportCopiedTimer !== null) {
     clearTimeout(reportCopiedTimer);
     reportCopiedTimer = null;
+  }
+  if (standupCopiedTimer !== null) {
+    clearTimeout(standupCopiedTimer);
+    standupCopiedTimer = null;
+  }
+  if (copiedReplyTimer !== null) {
+    clearTimeout(copiedReplyTimer);
+    copiedReplyTimer = null;
   }
   if (followNoticeTimer !== null) {
     clearTimeout(followNoticeTimer);
@@ -3469,6 +3389,7 @@ function cleanup(): void {
     ownerRoamRafId = null;
   }
   ownerAvatar.clearKeys();
+  needsYouDrafts.clear();
   window.removeEventListener('keydown', handleKeyDown);
   window.removeEventListener('keyup', handleKeyUp);
   window.removeEventListener('blur', handleWindowBlur);

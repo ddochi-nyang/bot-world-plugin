@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "bot-world",
   "name": "Bot World",
-  "version": "0.9.0",
+  "version": "1.0.0",
   "description": "Virtual office & Pocket Pet visualizer for Orca bots and live sub-workers (read-only by default, opt-in Quick Send)",
   "license": "MIT",
   "author": {
@@ -244,14 +244,23 @@
         "title": "Allow Quick Send to Bots",
         "type": "boolean",
         "default": false,
-        "description": "Opt-in: allow sending messages to Orca bots directly from Bot World's Quick Send bar (disabled by default for read-only safety)"
+        "description": "Opt-in: allow sending messages and 1-click Needs You decision replies to Orca bots from Bot World (disabled by default for read-only safety)"
       },
       {
         "key": "desktopNotifications",
         "title": "OS Desktop Notifications",
         "type": "boolean",
         "default": false,
-        "description": "Opt-in OS alerts when a bot enters Needs You or Error state (disabled by default; Redact-safe when Redact Mode is enabled)."
+        "description": "Opt-in OS alerts when a bot enters Needs You, Error, or Stuck Watchdog state (disabled by default; Redact-safe when Redact Mode is enabled)."
+      },
+      {
+        "key": "stuckThresholdMin",
+        "title": "Stuck Bot Threshold (minutes)",
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 180,
+        "default": 15,
+        "description": "Minutes without status, task, or tool change before flagging a Working bot or active sub-worker as stuck (0 disables watchdog)."
       }
     ]
   }

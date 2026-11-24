@@ -1,7 +1,7 @@
 {
   "id": "corporate_office",
   "name": "Corporate Office",
-  "background_path": "themes/corporate_office/bg.png",
+  "background_path": "themes/corporate_office/bg.jpg",
   "design_size": [1376, 768],
   "boss_desk": { "x": 750.0, "y": 200.0, "label": "Owner Desk" },
   "office_door": { "x": 1015.0, "y": 625.0, "label": "Entrance" },

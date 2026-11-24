@@ -91,6 +91,10 @@ const KO_DEMO_TEXT = new Map<string, string>([
   ['Draft release notes summary', '릴리스 노트 초안 요약'],
   ['Canary rollout verification', '카나리 롤아웃 검증'],
   ['Should staging role restrict S3 list scope?', '스테이징 역할의 S3 조회 범위를 제한할까요?'],
+  ['Restrict to staging prefix', '스테이징 경로로 제한'],
+  ['Allow s3:ListBucket only for staging/* objects', 'staging/* 접두사에 대해서만 s3:ListBucket 허용'],
+  ['Keep read-only bucket scope', '버킷 전체 읽기 범위 유지'],
+  ['Allow full bucket listing in staging', '스테이징 버킷 전체 목록 조회 허용'],
 
   // Automations
   ['Hourly Dependency Advisory Check', '시간별 의존성 권고 점검'],
@@ -209,6 +213,15 @@ function formatDemoSnapshot(
           : `Private Item #${it.number}`
         : scrubAll(tx(it.title, locale)),
       questionPrompt: redactMode ? null : txNullable(it.questionPrompt, locale),
+      questionOptions: redactMode
+        ? []
+        : Array.isArray(it.questionOptions)
+          ? it.questionOptions.map((opt) => ({
+              label: scrubAll(tx(opt.label, locale)),
+              ...(opt.detail ? { detail: scrubAll(tx(opt.detail, locale)) } : {}),
+              ...(opt.recommended === true ? { recommended: true } : {}),
+            }))
+          : [],
     };
     Object.defineProperty(items, id, {
       value: nextItem,
@@ -523,6 +536,17 @@ function buildInitialDemoSnapshot(nowMs: number): WorldSnapshot {
       version: 2,
       lastEventId: null,
       questionPrompt: 'Should staging role restrict S3 list scope?',
+      questionOptions: [
+        {
+          label: 'Restrict to staging prefix',
+          detail: 'Allow s3:ListBucket only for staging/* objects',
+          recommended: true,
+        },
+        {
+          label: 'Keep read-only bucket scope',
+          detail: 'Allow full bucket listing in staging',
+        },
+      ],
       optionsCount: 2,
       updatedAt: nowMs - 14_000,
     },
@@ -1510,6 +1534,71 @@ export class DemoOfficeSession {
     };
     this.pushEvent(ev, ts);
     return { botId: bot.id, botName: bot.name, event: ev };
+  }
+
+  replyNeedsOwnerItem(
+    botId: string,
+    itemNumber: number,
+    answerText: string,
+    nowMs: number = Date.now()
+  ): { botId: string; botName: string; itemNumber: number; event: WorldEvent } | null {
+    if (!isSafeKey(botId) || !Object.hasOwn(this.snapshot.bots, botId)) {
+      return null;
+    }
+    const clean = answerText.trim().slice(0, 500);
+    if (clean.length === 0) return null;
+    const bot = this.snapshot.bots[botId];
+    const item = Object.values(this.snapshot.items).find(
+      (it) =>
+        it.status === 'needs_you' &&
+        it.number === itemNumber &&
+        (it.ownerBotId === bot.id || it.ownerBotName === bot.name)
+    );
+    if (!item) return null;
+
+    const ts = Math.max(nowMs, this.lastTickMs + 1);
+    this.lastTickMs = ts;
+    this.snapshot.capturedAt = ts;
+
+    item.status = 'in_progress';
+    item.updatedAt = ts;
+
+    const remainingNeeds = Object.values(this.snapshot.items).filter(
+      (it) =>
+        it.status === 'needs_you' &&
+        (it.ownerBotId === bot.id || it.ownerBotName === bot.name)
+    );
+    bot.needsYouCount = remainingNeeds.length;
+    if (remainingNeeds.length === 0) {
+      bot.status = { kind: 'Working', tool: 'execute' };
+      bot.currentTool = 'execute';
+      bot.currentTaskTitle = item.title;
+    }
+    bot.lastActivityAt = ts;
+
+    const msgId = `demo-reply-${this.msgSeq}`;
+    this.pushMessage({
+      id: msgId,
+      msgType: 'handoff',
+      fromHandle: 'orca:items',
+      toHandle: bot.homeChatId ? `orca_session_id:${bot.homeChatId}` : `bot:${bot.id}`,
+      runId: null,
+      subject: `Reply #${itemNumber}: ${clean.slice(0, 64)}`,
+      body: clean,
+      createdAt: new Date(ts).toISOString(),
+      threadId: null,
+      payload: null,
+    });
+
+    const ev: WorldEvent = {
+      kind: 'BossReplied',
+      botId: bot.id,
+      botName: bot.name,
+      itemNumber,
+      subject: clean.slice(0, 80),
+    };
+    this.pushEvent(ev, ts);
+    return { botId: bot.id, botName: bot.name, itemNumber, event: ev };
   }
 
   receiveQuickMessageReply(

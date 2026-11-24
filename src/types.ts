@@ -200,8 +200,8 @@ export const THEME_CONFIG_PATHS: Readonly<Record<ThemeId, string>> = Object.free
 });
 
 export const THEME_BG_PATHS: Readonly<Record<ThemeId, string>> = Object.freeze({
-  startup_office: '../assets/themes/startup_office/bg.png',
-  corporate_office: '../assets/themes/corporate_office/bg.png',
+  startup_office: '../assets/themes/startup_office/bg.jpg',
+  corporate_office: '../assets/themes/corporate_office/bg.jpg',
   cozy_cafe: '../assets/themes/cozy_cafe/bg.jpg',
   cyber_ops: '../assets/themes/cyber_ops/bg.jpg',
 });
@@ -725,6 +725,12 @@ export function isWorkerUnverifiableWarning(w: WorkerState): boolean {
   return isWorkerActive(w) && w.liveness === 'Unverifiable';
 }
 
+export type BotQuestionOption = {
+  label: string;
+  detail?: string;
+  recommended?: boolean;
+};
+
 export type BotItemState = {
   uid: string;
   number: number;
@@ -735,6 +741,7 @@ export type BotItemState = {
   version: number;
   lastEventId: string | null;
   questionPrompt: string | null;
+  questionOptions?: ReadonlyArray<BotQuestionOption>;
   optionsCount: number;
   updatedAt: number | null;
 };
@@ -940,6 +947,25 @@ export type QuickSendResponse =
   | { ok: true; botId: string; botName: string }
   | { ok: false; code: QuickSendErrorCode; error: string };
 
+export type ItemReplyErrorCode = QuickSendErrorCode | 'unknown_item';
+
+export type ItemReplyResponse =
+  | { ok: true; botId: string; botName: string; itemNumber: number }
+  | { ok: false; code: ItemReplyErrorCode; error: string };
+
+export type StuckAlert = {
+  targetKind: 'bot' | 'worker';
+  botId: string;
+  botName: string;
+  workerDispatchId?: string;
+  elapsedMs: number;
+  elapsedMinutes: number;
+  lastChangedAtMs: number;
+  lastStatusKind: string;
+  lastTool: string | null;
+  lastTaskTitle: string | null;
+};
+
 export type FocusTerminalResponse = {
   ok: boolean;
   focused: boolean;
@@ -977,6 +1003,8 @@ export type BotWorldStatePayload = {
   viewMode?: ViewMode;
   allowQuickSend?: boolean;
   desktopNotifications?: boolean;
+  stuckThresholdMin?: number;
+  stuckAlerts?: StuckAlert[];
   redactMode: boolean;
   botAppearances: Record<string, CharacterId>;
   rpgProfiles?: Record<string, BotRpgProfile>;

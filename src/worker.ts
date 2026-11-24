@@ -23,6 +23,12 @@ import {
   normalizeLanguageSetting,
   tStrings,
 } from '../shared/i18n.ts';
+import {
+  DEFAULT_STUCK_THRESHOLD_MIN,
+  StuckWatchdogTracker,
+  clampStuckThresholdMin,
+  stuckAlertsSignature,
+} from '../shared/watchdog.ts';
 import { DesktopNotificationManager } from './desktop-notify.ts';
 import {
   diffSnapshots,
@@ -33,9 +39,11 @@ import {
 } from './events.ts';
 import {
   type CliEnvelope,
+  MAX_ITEM_NUMBER,
   OrcaCli,
   OrcaCliError,
   type OrcaClient,
+  replyNeedsOwnerItem,
   sendQuickBotMessage,
   validateQuickMessageBody,
 } from './orca-cli.ts';
@@ -51,11 +59,13 @@ import {
   type CharacterId,
   type CreatorAssetsState,
   type FocusTerminalResponse,
+  type ItemReplyResponse,
   type LanguageSetting,
   MAX_BOT_APPEARANCES,
   type OpenWorkspaceResponse,
   type QuickSendResponse,
   type SoundMode,
+  type StuckAlert,
   type ThemeId,
   type UiLocale,
   type ViewMode,
@@ -143,6 +153,11 @@ type StoredPrefs = {
 };
 
 export type QuickSendFn = (botName: string, message: string) => Promise<CliEnvelope<unknown>>;
+export type ItemReplyFn = (
+  botName: string,
+  itemNumber: number,
+  answerText: string
+) => Promise<CliEnvelope<unknown>>;
 export const QUICK_SEND_COOLDOWN_MS = 2_000;
 
 function validateHostTargetId(raw: unknown, fieldName: string): string {
@@ -273,12 +288,20 @@ export function prepareSnapshotForUi(
     const items: WorldSnapshot['items'] = {};
     for (const [id, it] of Object.entries(scrubbed.items)) {
       if (!isSafeKey(id)) continue;
+      const safeOptions = Array.isArray(it.questionOptions)
+        ? it.questionOptions.slice(0, 6).map((opt) => ({
+            label: truncateUiText(opt.label, 100),
+            ...(opt.detail ? { detail: truncateUiText(opt.detail, 200) } : {}),
+            ...(opt.recommended === true ? { recommended: true } : {}),
+          }))
+        : [];
       Object.defineProperty(items, id, {
         value: {
           ...it,
           title: truncateUiText(it.title, 200),
           questionPrompt:
             it.questionPrompt !== null ? truncateUiText(it.questionPrompt, 300) : null,
+          questionOptions: safeOptions,
         },
         enumerable: true,
         writable: true,
@@ -389,6 +412,7 @@ export function prepareSnapshotForUi(
         ...it,
         title: `#${it.number}`,
         questionPrompt: null,
+        questionOptions: [],
       },
       enumerable: true,
       writable: true,
@@ -559,11 +583,16 @@ export class BotWorldWorkerController {
   private readonly orca: OrcaWorkerApi;
   private readonly cli: OrcaClient;
   private readonly quickSendFn: QuickSendFn;
+  private readonly itemReplyFn: ItemReplyFn;
   private readonly nowMs: () => number;
   private readonly quickSendCooldowns = new Map<string, number>();
+  private readonly itemReplyCooldowns = new Map<string, number>();
   private readonly rpgActionCooldowns = new Map<string, number>();
   private readonly seenRpgEventIds = new Set<string>();
   private readonly desktopNotifier = new DesktopNotificationManager();
+  private readonly watchdogTracker = new StuckWatchdogTracker();
+  private lastStuckAlerts: StuckAlert[] = [];
+  private lastStuckSig = '';
   private readonly session = new PollerSession();
   private timeline = new TimelineBuffer();
   private weeklyTrendStore: WeeklyTrendStore = { days: [], seenIds: [] };
@@ -594,6 +623,7 @@ export class BotWorldWorkerController {
     viewMode: ViewMode;
     allowQuickSend: boolean;
     desktopNotifications: boolean;
+    stuckThresholdMin: number;
     redactMode: boolean;
     pollIntervalSec: number;
     language: LanguageSetting;
@@ -604,6 +634,7 @@ export class BotWorldWorkerController {
     viewMode: 'office',
     allowQuickSend: false,
     desktopNotifications: false,
+    stuckThresholdMin: DEFAULT_STUCK_THRESHOLD_MIN,
     redactMode: false,
     pollIntervalSec: 5,
     language: 'auto',
@@ -615,18 +646,23 @@ export class BotWorldWorkerController {
   private eventDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private pollInFlight: Promise<void> | null = null;
   private settingsUpdateQueue: Promise<void> = Promise.resolve();
+  private readonly activeUiClients = new Set<string>();
+  private autoLoopEnabled = false;
   private disposed = false;
   private readonly disposables: Array<{ dispose(): void }> = [];
 
   constructor(
     orca: OrcaWorkerApi,
     cli?: OrcaClient,
-    options?: { quickSend?: QuickSendFn; nowMs?: () => number }
+    options?: { quickSend?: QuickSendFn; replyNeedsOwnerItem?: ItemReplyFn; nowMs?: () => number }
   ) {
     this.orca = orca;
     this.cli = cli ?? new OrcaCli();
     this.quickSendFn =
       options?.quickSend ?? ((botName, message) => sendQuickBotMessage(botName, message));
+    this.itemReplyFn =
+      options?.replyNeedsOwnerItem ??
+      ((botName, itemNumber, answerText) => replyNeedsOwnerItem(botName, itemNumber, answerText));
     this.nowMs = options?.nowMs ?? (() => Date.now());
     try {
       this.hostLocale = Intl.DateTimeFormat().resolvedOptions().locale || 'en';
@@ -715,6 +751,7 @@ export class BotWorldWorkerController {
     await this.updateStatusBar();
 
     if (!options?.disableAutoLoop) {
+      this.autoLoopEnabled = true;
       void this.executeScheduledPoll();
     }
   }
@@ -726,6 +763,7 @@ export class BotWorldWorkerController {
     viewMode: ViewMode;
     allowQuickSend: boolean;
     desktopNotifications: boolean;
+    stuckThresholdMin: number;
     redactMode: boolean;
     pollIntervalSec: number;
     language: LanguageSetting;
@@ -736,6 +774,7 @@ export class BotWorldWorkerController {
     let viewMode: ViewMode = 'office';
     let allowQuickSend = false;
     let desktopNotifications = false;
+    let stuckThresholdMin = DEFAULT_STUCK_THRESHOLD_MIN;
     let redactMode = false;
     let pollIntervalSec = 5;
     let language: LanguageSetting = 'auto';
@@ -760,6 +799,9 @@ export class BotWorldWorkerController {
         if (typeof all.desktopNotifications === 'boolean') {
           desktopNotifications = all.desktopNotifications;
         }
+        if (all.stuckThresholdMin !== undefined) {
+          stuckThresholdMin = clampStuckThresholdMin(all.stuckThresholdMin);
+        }
         if (typeof all.redactMode === 'boolean') {
           redactMode = all.redactMode;
         }
@@ -778,6 +820,7 @@ export class BotWorldWorkerController {
       viewMode,
       allowQuickSend,
       desktopNotifications,
+      stuckThresholdMin,
       redactMode,
       pollIntervalSec,
       language,
@@ -802,6 +845,12 @@ export class BotWorldWorkerController {
     const s = tStrings(locale);
     const safeSnapshot = prepareSnapshotForUi(this.session.snapshot, redact, locale);
     const trendNowMs = this.session.snapshot.capturedAt > 0 ? this.session.snapshot.capturedAt : Date.now();
+    const stuckAlerts = this.watchdogTracker.getAlerts(this.session.snapshot, {
+      thresholdMin: this.lastSettings.stuckThresholdMin,
+      nowMs: this.nowMs(),
+      redactMode: redact,
+      locale,
+    });
     const payload: BotWorldStatePayload = {
       snapshot: safeSnapshot,
       events: [],
@@ -813,6 +862,8 @@ export class BotWorldWorkerController {
       viewMode: this.prefs.viewMode,
       allowQuickSend: this.lastSettings.allowQuickSend,
       desktopNotifications: this.lastSettings.desktopNotifications,
+      stuckThresholdMin: this.lastSettings.stuckThresholdMin,
+      stuckAlerts,
       redactMode: redact,
       botAppearances: { ...this.prefs.botAppearances },
       rpgProfiles: buildRpgProfilesForSnapshot(this.rpgStore, safeSnapshot),
@@ -943,6 +994,7 @@ export class BotWorldWorkerController {
           if (it.questionPrompt !== null) {
             it.questionPrompt = truncateUiText(it.questionPrompt, 48);
           }
+          it.questionOptions = [];
         }
       }
       totalBytes = utf8ByteLength(payload);
@@ -967,6 +1019,7 @@ export class BotWorldWorkerController {
     }
     if (totalBytes > MAX_IPC_PAYLOAD_BYTES) {
       payload.rpgProfiles = {};
+      payload.stuckAlerts = [];
       totalBytes = utf8ByteLength(payload);
     }
     while (totalBytes > MAX_IPC_PAYLOAD_BYTES && payload.snapshot.botOrder.length > 0) {
@@ -1049,12 +1102,16 @@ export class BotWorldWorkerController {
     }
   }
 
-  async runPollTick(forceFull = false): Promise<void> {
+  async runPollTick(
+    options: boolean | { forceFull?: boolean; forceFast?: boolean } = false
+  ): Promise<void> {
+    const forceFull = typeof options === 'boolean' ? options : Boolean(options.forceFull);
+    const forceFast = typeof options === 'boolean' ? false : Boolean(options.forceFast);
     if (this.disposed) return;
     if (this.pollInFlight) {
       let coalesced = false;
       while (this.pollInFlight) {
-        if (!forceFull) {
+        if (!forceFull && !forceFast) {
           coalesced = true;
         }
         try {
@@ -1069,13 +1126,44 @@ export class BotWorldWorkerController {
     if (this.disposed) return;
 
     const work = (async () => {
-      const nowMs = Date.now();
+      const nowMs = this.nowMs();
       const hadPrevBots = Object.keys(this.prevSnapshot.bots).length > 0;
-      const { snapshot } = await this.session.step(this.cli, { forceFull, nowMs });
-      if (!snapshot || this.disposed) return;
+      const { snapshot } = await this.session.step(this.cli, { forceFull, forceFast, nowMs });
+      if (this.disposed) return;
+
+      const locale = this.currentLocale();
+      if (!snapshot) {
+        const latest = this.session.getLatestSnapshot();
+        if (latest.initialSyncComplete && Object.keys(latest.bots).length > 0) {
+          const nextAlerts = this.watchdogTracker.evaluate(latest, {
+            thresholdMin: this.lastSettings.stuckThresholdMin,
+            nowMs,
+            redactMode: this.prefs.redactMode,
+            locale,
+          });
+          const nextSig = stuckAlertsSignature(nextAlerts);
+          if (nextSig !== this.lastStuckSig) {
+            this.lastStuckAlerts = nextAlerts;
+            this.lastStuckSig = nextSig;
+            if (nextAlerts.length > 0) {
+              await this.desktopNotifier.notifyStuckAlerts({
+                alerts: nextAlerts,
+                snapshot: latest,
+                enabled: this.lastSettings.desktopNotifications,
+                thresholdMin: this.lastSettings.stuckThresholdMin,
+                redactMode: this.prefs.redactMode,
+                locale,
+                nowMs,
+                orca: this.orca,
+              });
+            }
+            this.postStateUpdated();
+          }
+        }
+        return;
+      }
 
       const suppressDiff = !hadPrevBots || !snapshot.initialSyncComplete;
-      const locale = this.currentLocale();
       const newEvents = diffSnapshots(this.prevSnapshot, snapshot, suppressDiff, locale);
       for (const ev of newEvents) {
         const seqHint = ev.kind === 'WorkerStart' ? this.assignWorkerSeq(ev.dispatchId) : 1;
@@ -1099,6 +1187,15 @@ export class BotWorldWorkerController {
         rpgChanged = rpgRes.changed;
       }
 
+      const stuckAlerts = this.watchdogTracker.evaluate(snapshot, {
+        thresholdMin: this.lastSettings.stuckThresholdMin,
+        nowMs,
+        redactMode: this.prefs.redactMode,
+        locale,
+      });
+      this.lastStuckAlerts = stuckAlerts;
+      this.lastStuckSig = stuckAlertsSignature(stuckAlerts);
+
       if (!suppressDiff) {
         await this.desktopNotifier.evaluateAndNotify({
           prevSnapshot: this.prevSnapshot,
@@ -1106,7 +1203,17 @@ export class BotWorldWorkerController {
           enabled: this.lastSettings.desktopNotifications,
           redactMode: this.prefs.redactMode,
           locale,
-          nowMs: this.nowMs(),
+          nowMs,
+          orca: this.orca,
+        });
+        await this.desktopNotifier.notifyStuckAlerts({
+          alerts: stuckAlerts,
+          snapshot,
+          enabled: this.lastSettings.desktopNotifications,
+          thresholdMin: this.lastSettings.stuckThresholdMin,
+          redactMode: this.prefs.redactMode,
+          locale,
+          nowMs,
           orca: this.orca,
         });
       }
@@ -1152,7 +1259,7 @@ export class BotWorldWorkerController {
     } finally {
       if (!this.disposed) {
         const retrySecs = this.session.snapshot.runtime.retryAfterSecs;
-        const nextDelay = retrySecs !== null ? retrySecs * 1000 : 2_000;
+        const nextDelay = retrySecs !== null ? retrySecs * 1000 : this.session.getFastIntervalMs();
         this.scheduleNextPoll(nextDelay);
       }
     }
@@ -1164,7 +1271,7 @@ export class BotWorldWorkerController {
       clearTimeout(this.pollTimer);
       this.pollTimer = null;
     }
-    const clamped = Math.max(500, Math.min(60_000, delayMs));
+    const clamped = Math.max(50, Math.min(60_000, delayMs));
     this.pollTimer = setTimeout(() => {
       void this.executeScheduledPoll();
     }, clamped);
@@ -1399,6 +1506,88 @@ export class BotWorldWorkerController {
         }
 
         return { ok: true, botId: bot.id, botName: scrubAll(bot.name) };
+      }),
+
+      this.orca.panels.handle('botWorld.replyNeedsOwnerItem', async (input): Promise<ItemReplyResponse> => {
+        await this.settingsUpdateQueue;
+        if (!input || typeof input !== 'object' || Array.isArray(input)) {
+          throw makeHostError('invalid_params', 'input must be an object');
+        }
+        const s = tStrings(this.currentLocale());
+        if (!this.lastSettings.allowQuickSend) {
+          return { ok: false, code: 'disabled', error: s.needsYouReplyDisabledError };
+        }
+        const clean = stripDangerousKeys(input as Record<string, unknown>);
+        const rawBotId = clean.botId;
+        if (
+          typeof rawBotId !== 'string' ||
+          !isSafeKey(rawBotId) ||
+          rawBotId.length > 128 ||
+          CONTROL_CHAR_RE.test(rawBotId)
+        ) {
+          return { ok: false, code: 'invalid_params', error: s.quickSendUnknownBotError };
+        }
+        const rawItemNumber = clean.itemNumber;
+        if (
+          typeof rawItemNumber !== 'number' ||
+          !Number.isSafeInteger(rawItemNumber) ||
+          rawItemNumber < 1 ||
+          rawItemNumber > MAX_ITEM_NUMBER
+        ) {
+          return { ok: false, code: 'invalid_params', error: s.quickSendInvalidError };
+        }
+        let cleanAnswer: string;
+        try {
+          cleanAnswer = validateQuickMessageBody(clean.answerText as string);
+        } catch {
+          return { ok: false, code: 'invalid_params', error: s.quickSendInvalidError };
+        }
+
+        const latestSnap = this.session.getLatestSnapshot();
+        if (!Object.hasOwn(latestSnap.bots, rawBotId)) {
+          return { ok: false, code: 'unknown_bot', error: s.quickSendUnknownBotError };
+        }
+        const bot = latestSnap.bots[rawBotId];
+        const matchingItem = Object.values(latestSnap.items).find(
+          (it) =>
+            it.status === 'needs_you' &&
+            it.number === rawItemNumber &&
+            (it.ownerBotId === bot.id || it.ownerBotName === bot.name)
+        );
+        if (!matchingItem) {
+          return { ok: false, code: 'unknown_item', error: s.needsYouUnknownItemError };
+        }
+
+        const now = this.nowMs();
+        const prevSentAt = this.itemReplyCooldowns.get(rawBotId);
+        if (prevSentAt !== undefined && now - prevSentAt < QUICK_SEND_COOLDOWN_MS) {
+          return { ok: false, code: 'rate_limited', error: s.quickSendRateLimitedError };
+        }
+        if (this.itemReplyCooldowns.size >= 256) {
+          const oldestKey = this.itemReplyCooldowns.keys().next().value;
+          if (oldestKey !== undefined) this.itemReplyCooldowns.delete(oldestKey);
+        }
+        this.itemReplyCooldowns.set(rawBotId, now);
+
+        try {
+          await this.itemReplyFn(bot.name, rawItemNumber, cleanAnswer);
+        } catch (err) {
+          const rawMsg = err instanceof Error ? err.message : 'Decision reply failed';
+          return { ok: false, code: 'cli_error', error: scrubAll(rawMsg) };
+        }
+
+        try {
+          await this.runPollTick(true);
+        } catch {
+          // Best-effort immediate refresh after successful item reply
+        }
+
+        return {
+          ok: true,
+          botId: bot.id,
+          botName: scrubAll(bot.name),
+          itemNumber: rawItemNumber,
+        };
       }),
 
       this.orca.panels.handle('botWorld.awardRpgXp', async (input) => {
@@ -1662,12 +1851,57 @@ export class BotWorldWorkerController {
         return this.cloneCreatorState();
       }),
 
+      this.orca.panels.handle('botWorld.setUiActive', async (input) => {
+        if (!input || typeof input !== 'object' || Array.isArray(input)) {
+          throw makeHostError('invalid_params', 'input must be an object');
+        }
+        const clean = stripDangerousKeys(input as Record<string, unknown>);
+        if (typeof clean.active !== 'boolean') {
+          throw makeHostError('invalid_params', 'active must be a boolean');
+        }
+        let clientId = 'default';
+        if (clean.clientId !== undefined) {
+          clientId = validateHostTargetId(clean.clientId, 'clientId');
+          if (!isSafeKey(clientId)) {
+            throw makeHostError('invalid_params', 'Invalid clientId');
+          }
+        }
+        const wasActive = this.session.isUiActive();
+        if (clean.active) {
+          if (!this.activeUiClients.has(clientId) && this.activeUiClients.size >= 64) {
+            const oldest = this.activeUiClients.values().next().value;
+            if (oldest !== undefined) this.activeUiClients.delete(oldest);
+          }
+          this.activeUiClients.add(clientId);
+        } else {
+          this.activeUiClients.delete(clientId);
+        }
+        const uiActive = this.activeUiClients.size > 0;
+        this.session.setUiActive(uiActive);
+        if (!wasActive && uiActive && !this.disposed && this.autoLoopEnabled) {
+          this.scheduleNextPoll(50);
+        }
+        return {
+          uiActive,
+          fastIntervalMs: this.session.getFastIntervalMs(),
+        };
+      }),
+
       this.orca.events.on('agent.status.changed', () => {
         if (this.disposed) return;
         if (this.eventDebounceTimer) clearTimeout(this.eventDebounceTimer);
         this.eventDebounceTimer = setTimeout(() => {
           this.eventDebounceTimer = null;
-          void this.runPollTick(false).catch(() => {});
+          void this.runPollTick({ forceFast: true })
+            .catch(() => {})
+            .finally(() => {
+              if (!this.disposed && this.autoLoopEnabled) {
+                const retrySecs = this.session.snapshot.runtime.retryAfterSecs;
+                const nextDelay =
+                  retrySecs !== null ? retrySecs * 1000 : this.session.getFastIntervalMs();
+                this.scheduleNextPoll(nextDelay);
+              }
+            });
         }, 250);
       }),
 
