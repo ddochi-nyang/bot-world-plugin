@@ -6,14 +6,26 @@ import type {
   WorldEvent,
 } from '../src/types.ts';
 
-export type SoundCueKind = 'needs_you' | 'task_done' | 'error' | 'handoff';
+export type SoundCueKind =
+  | 'needs_you'
+  | 'task_done'
+  | 'error'
+  | 'handoff'
+  | 'raid_spawn'
+  | 'raid_hit'
+  | 'raid_victory';
 export type AmbientProfile = 'rain' | 'cafe_hum' | 'night_breeze';
+
+export const MAX_ACTIVE_CUES = 16;
 
 export const DEFAULT_CUE_COOLDOWNS_MS: Readonly<Record<SoundCueKind, number>> = Object.freeze({
   needs_you: 3500,
   task_done: 1800,
   error: 4000,
   handoff: 900,
+  raid_spawn: 4000,
+  raid_hit: 180,
+  raid_victory: 3000,
 });
 
 export function classifyEventSoundCue(event: WorldEvent): SoundCueKind | null {
@@ -227,6 +239,9 @@ export class SoundscapeEngine {
     if (this.disposed || options?.suppressed || this.mode === 'off' || !this.unlocked || !this.audioCtx) {
       return false;
     }
+    if (this.activeCueStoppers.size >= MAX_ACTIVE_CUES) {
+      return false;
+    }
     const now = this.nowMs();
     const cooldown = this.cooldownsMs[cue] ?? 1000;
     const prev = this.lastPlayedAt.get(cue);
@@ -362,6 +377,24 @@ export class SoundscapeEngine {
         // Subtle muted low double-pulse (A3 -> F3, gain ~0.08)
         this.scheduleTone(ctx, 220.0, 0, 0.14, 0.08, 'triangle');
         this.scheduleTone(ctx, 174.61, 0.13, 0.18, 0.08, 'triangle');
+        break;
+      case 'raid_spawn':
+        // Low dramatic encounter chord (D3 -> A3 -> D4)
+        this.scheduleTone(ctx, 146.83, 0, 0.18, 0.085, 'triangle');
+        this.scheduleTone(ctx, 220.0, 0.09, 0.18, 0.08, 'triangle');
+        this.scheduleTone(ctx, 293.66, 0.18, 0.24, 0.075, 'sine');
+        break;
+      case 'raid_hit':
+        // Crisp pixel impact tap (G4 -> C4)
+        this.scheduleTone(ctx, 392.0, 0, 0.055, 0.075, 'triangle');
+        this.scheduleTone(ctx, 261.63, 0.035, 0.07, 0.06, 'sine');
+        break;
+      case 'raid_victory':
+        // Triumphant 4-note fanfare (C5 -> E5 -> G5 -> C6)
+        this.scheduleTone(ctx, 523.25, 0, 0.13, 0.08, 'sine');
+        this.scheduleTone(ctx, 659.25, 0.09, 0.13, 0.08, 'sine');
+        this.scheduleTone(ctx, 783.99, 0.18, 0.14, 0.085, 'sine');
+        this.scheduleTone(ctx, 1046.5, 0.27, 0.28, 0.09, 'triangle');
         break;
       case 'handoff': {
         // Ultra-subtle short filtered noise brush (~45ms, gain ~0.04)

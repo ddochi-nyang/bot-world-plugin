@@ -1,5 +1,6 @@
 import type {
   AtmosphereMode,
+  BossRaidStats,
   BotRpgProfile,
   BotWorldCreatorPack,
   BotWorldStatePayload,
@@ -11,6 +12,7 @@ import type {
   LanguageSetting,
   OpenWorkspaceResponse,
   QuickSendResponse,
+  RecordRaidOutcomeInput,
   RpgXpAction,
   SoundMode,
   ThemeId,
@@ -121,6 +123,14 @@ declare module 'orca' {
     'botWorld.setUiActive': {
       input: { active: boolean; clientId?: string };
       output: { uiActive: boolean; fastIntervalMs: number };
+    };
+    'botWorld.getRaidStats': {
+      input?: undefined;
+      output: BossRaidStats;
+    };
+    'botWorld.recordRaidOutcome': {
+      input: RecordRaidOutcomeInput;
+      output: BossRaidStats;
     };
   }
 

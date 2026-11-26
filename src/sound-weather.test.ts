@@ -786,7 +786,7 @@ describe('Bot World v0.5.0 — Cozy Sound & Weather + v0.4.0 Audit Refinements',
       const src = fs.readFileSync(path.resolve(relPath), 'utf8');
       assert.ok(
         src.includes(
-          'const modalOpen = state.shortcutsOpen || state.reportOpen || state.zonesOpen || state.creatorOpen;'
+          'const modalOpen = state.shortcutsOpen || state.reportOpen || state.raidOpen || state.zonesOpen || state.creatorOpen;'
         )
       );
       assert.ok(src.includes('shouldIgnoreShortcutEvent(ev, { modalOpen })'));

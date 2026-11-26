@@ -261,6 +261,21 @@
         "maximum": 180,
         "default": 15,
         "description": "Minutes without status, task, or tool change before flagging a Working bot or active sub-worker as stuck (0 disables watchdog)."
+      },
+      {
+        "key": "bossRaidMode",
+        "title": "Boss Raid & Pomodoro Co-op",
+        "type": "string",
+        "enum": [
+          "auto",
+          "off"
+        ],
+        "enumLabels": [
+          "Auto (Threats & Pomodoro)",
+          "Off"
+        ],
+        "default": "auto",
+        "description": "Enable automatic office Boss Raid encounters and canvas rendering (set to off to suppress boss raid spawning and rendering)."
       }
     ]
   }

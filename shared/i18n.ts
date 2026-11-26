@@ -1,5 +1,6 @@
 import {
   type AtmosphereMode,
+  type BossKind,
   type BroadcastChromaKey,
   type CharacterId,
   type DeskPropId,
@@ -584,6 +585,53 @@ export type UiDictionary = {
     status: string;
   };
   standupNoBots: string;
+  raidButton: string;
+  raidButtonTitle: string;
+  tipRaid: string;
+  shortcutToggleRaid: string;
+  raidModalTitle: string;
+  raidModalSubtitle: string;
+  raidClose: string;
+  raidBossNames: Record<BossKind, string>;
+  raidBossTriggers: Record<BossKind, string>;
+  raidPracticeTag: string;
+  raidCalmTitle: string;
+  raidCalmDesc: string;
+  raidSuppressedNote: (reason: 'off' | 'replay' | 'pet' | 'broadcast') => string;
+  raidCoopStrike: string;
+  raidSummonPractice: string;
+  raidTopContributor: (name: string, dmg: number) => string;
+  raidTopContributorNone: string;
+  raidCritLabel: (dmg: number) => string;
+  raidVictoryBanner: (bossName: string) => string;
+  raidRespawnCooldown: (secs: number) => string;
+  raidPomoSectionTitle: string;
+  raidPomoStart: string;
+  raidPomoPause: string;
+  raidPomoResume: string;
+  raidPomoStop: string;
+  raidPomoPresetLabel: (mins: number) => string;
+  raidPomoRunningBadge: (hms: string) => string;
+  raidPomoPausedBadge: (hms: string) => string;
+  raidPomoCompletedToast: (mins: number) => string;
+  raidStatsSectionTitle: string;
+  raidStatsDemoNote: string;
+  raidStatCleared: string;
+  raidStatPomodoros: string;
+  raidStatFocusMin: string;
+  raidStatDamage: string;
+  raidStatStreak: (current: number, best: number) => string;
+  raidHudCalm: string;
+  raidHudClickTip: string;
+  reportSectionBossRaid: string;
+  reportBossRaidSummary: (
+    cleared: number,
+    pomodoros: number,
+    focusMin: number,
+    damage: number,
+    streak: number,
+    bestStreak: number
+  ) => string;
 };
 
 export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
@@ -1143,6 +1191,68 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
       status: 'Status',
     },
     standupNoBots: 'No bot activity recorded for standup yet.',
+    raidButton: 'Raid',
+    raidButtonTitle: 'Boss Raid & Pomodoro Co-op [X]',
+    tipRaid: 'Open Boss Raid & Pomodoro Co-op',
+    shortcutToggleRaid: 'Toggle Boss Raid & Pomodoro Co-op',
+    raidModalTitle: 'Boss Raid & Pomodoro Co-op',
+    raidModalSubtitle: 'Team up with bots against office threats or run a Pomodoro focus sprint',
+    raidClose: 'Close',
+    raidBossNames: {
+      error_blob: '503 Glitch Blob',
+      stall_golem: 'Stall Stone Golem',
+      ci_wyvern: 'Red-Build Spark Wyvern',
+      sprint_titan: 'Sprint Deadline Titan',
+    },
+    raidBossTriggers: {
+      error_blob: 'Triggered by Bot or Automation error',
+      stall_golem: 'Triggered by stuck alert or 2+ Needs You bots',
+      ci_wyvern: 'Triggered by multi-error (2+) or Pomodoro streak 2+',
+      sprint_titan: 'Triggered by 4+ active bots/workers or Pomodoro sprint',
+    },
+    raidPracticeTag: 'Practice',
+    raidCalmTitle: 'Office is Calm',
+    raidCalmDesc: 'No threat boss is active. Start a Pomodoro sprint or summon a practice boss to test co-op attacks.',
+    raidSuppressedNote: (reason) => {
+      switch (reason) {
+        case 'off':
+          return 'Boss Raid is turned OFF in plugin settings (bossRaidMode = off).';
+        case 'replay':
+          return 'Boss Raid is paused during 24h timeline replay.';
+        case 'pet':
+          return 'Boss Raid is hidden while viewing Pocket Pet Terrarium.';
+        case 'broadcast':
+          return 'Boss Raid is hidden in Broadcast Chroma Bar mode.';
+      }
+    },
+    raidCoopStrike: '⚡ Co-op Strike',
+    raidSummonPractice: 'Summon Practice Boss',
+    raidTopContributor: (name, dmg) => `Top striker: ${name} (${dmg} DMG)`,
+    raidTopContributorNone: 'No bot strikes landed yet',
+    raidCritLabel: (dmg) => `CRIT -${dmg}!`,
+    raidVictoryBanner: (bossName) => `🏆 ${bossName} Defeated!`,
+    raidRespawnCooldown: (secs) => `Next encounter cooldown: ${secs}s`,
+    raidPomoSectionTitle: 'Pomodoro Co-op Sprint',
+    raidPomoStart: 'Start Focus',
+    raidPomoPause: 'Pause',
+    raidPomoResume: 'Resume',
+    raidPomoStop: 'Abandon',
+    raidPomoPresetLabel: (mins) => `${mins}m`,
+    raidPomoRunningBadge: (hms) => `🍅 Focus ${hms}`,
+    raidPomoPausedBadge: (hms) => `⏸ Paused ${hms}`,
+    raidPomoCompletedToast: (mins) => `🍅 ${mins}m Pomodoro completed! Streak +1`,
+    raidStatsSectionTitle: 'Co-op Raid & Focus Stats',
+    raidStatsDemoNote: 'Demo Office preview: stats stay in memory and are never saved to plugin storage.',
+    raidStatCleared: 'Bosses Cleared',
+    raidStatPomodoros: 'Pomodoros',
+    raidStatFocusMin: 'Focus Minutes',
+    raidStatDamage: 'Total Damage',
+    raidStatStreak: (current, best) => `Streak: ${current} (Best: ${best})`,
+    raidHudCalm: 'Co-op Raid',
+    raidHudClickTip: 'Click boss to strike · Click HUD to manage Pomodoro Co-op',
+    reportSectionBossRaid: 'Boss Raid & Pomodoro',
+    reportBossRaidSummary: (cleared, pomodoros, focusMin, damage, streak, bestStreak) =>
+      `Cleared ${cleared} · Pomodoros ${pomodoros} (${focusMin}m) · Damage ${damage} · Streak ${streak} (Best ${bestStreak})`,
   },
   ko: {
     appTitlePanel: '봇 월드',
@@ -1697,6 +1807,68 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
       status: '상태',
     },
     standupNoBots: '스탠드업 요약에 포함할 봇 활동이 아직 없습니다.',
+    raidButton: '레이드',
+    raidButtonTitle: '보스 레이드 & 포모도로 코옵 [X]',
+    tipRaid: '보스 레이드 & 포모도로 코옵 패널 보기',
+    shortcutToggleRaid: '보스 레이드 & 포모도로 코옵 전환',
+    raidModalTitle: '보스 레이드 & 포모도로 코옵',
+    raidModalSubtitle: '봇들과 힘을 모아 오피스 위협에 맞서거나 포모도로 집중 스프린트를 진행하세요',
+    raidClose: '숨기기',
+    raidBossNames: {
+      error_blob: '503 글리치 블롭',
+      stall_golem: '정체 스톤 골렘',
+      ci_wyvern: '레드빌드 스파크 와이번',
+      sprint_titan: '스프린트 마감 타이탄',
+    },
+    raidBossTriggers: {
+      error_blob: '봇 또는 자동화 오류로 출현',
+      stall_golem: '정체 경보 또는 결정 대기 2명 이상으로 출현',
+      ci_wyvern: '다중 오류(2건+) 또는 포모도로 연속 2회 이상으로 출현',
+      sprint_titan: '활성 봇·워커 4명 이상 또는 포모도로 코옵으로 출현',
+    },
+    raidPracticeTag: '연습',
+    raidCalmTitle: '평온한 사무실',
+    raidCalmDesc: '현재 활성 위협 보스가 없습니다. 포모도로 집중을 시작하거나 연습 보스를 소환해 코옵 전투를 체험해 보세요.',
+    raidSuppressedNote: (reason) => {
+      switch (reason) {
+        case 'off':
+          return '플러그인 설정(bossRaidMode = off)으로 보스 레이드가 비활성화되어 있습니다.';
+        case 'replay':
+          return '24시간 타임라인 리플레이 중에는 보스 레이드가 일시 억제됩니다.';
+        case 'pet':
+          return '포켓 펫 테라리움 화면에서는 보스 레이드를 숨깁니다.';
+        case 'broadcast':
+          return '방송 크로마 바 화면에서는 보스 레이드를 숨깁니다.';
+      }
+    },
+    raidCoopStrike: '⚡ 코옵 일격',
+    raidSummonPractice: '연습 보스 소환',
+    raidTopContributor: (name, dmg) => `최다 타격: ${name} (${dmg} 피해)`,
+    raidTopContributorNone: '아직 적중한 봇 타격이 없습니다',
+    raidCritLabel: (dmg) => `CRIT -${dmg}!`,
+    raidVictoryBanner: (bossName) => `🏆 ${bossName} 처치 완료!`,
+    raidRespawnCooldown: (secs) => `재출현 대기: ${secs}초`,
+    raidPomoSectionTitle: '포모도로 코옵 스프린트',
+    raidPomoStart: '집중 시작',
+    raidPomoPause: '일시정지',
+    raidPomoResume: '재개',
+    raidPomoStop: '중단',
+    raidPomoPresetLabel: (mins) => `${mins}분`,
+    raidPomoRunningBadge: (hms) => `🍅 집중 ${hms}`,
+    raidPomoPausedBadge: (hms) => `⏸ 정지 ${hms}`,
+    raidPomoCompletedToast: (mins) => `🍅 ${mins}분 포모도로 완료! 연속 기록 +1`,
+    raidStatsSectionTitle: '코옵 레이드 & 집중 통계',
+    raidStatsDemoNote: '데모 오피스 미리보기: 통계는 메모리에만 머무르며 영속 저장소에 기록하지 않습니다.',
+    raidStatCleared: '처치한 보스',
+    raidStatPomodoros: '완료 포모도로',
+    raidStatFocusMin: '누적 집중(분)',
+    raidStatDamage: '누적 피해량',
+    raidStatStreak: (current, best) => `연속 ${current}회 (최고 ${best}회)`,
+    raidHudCalm: '코옵 레이드',
+    raidHudClickTip: '보스를 클릭해 직접 타격 · 배지를 눌러 포모도로 관리',
+    reportSectionBossRaid: '보스 레이드 & 포모도로',
+    reportBossRaidSummary: (cleared, pomodoros, focusMin, damage, streak, bestStreak) =>
+      `처치 ${cleared}회 · 포모도로 ${pomodoros}회 (${focusMin}분) · 피해 ${damage} · 연속 ${streak}회 (최고 ${bestStreak}회)`,
   },
 };
 

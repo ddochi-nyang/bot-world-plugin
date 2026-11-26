@@ -4,6 +4,8 @@ import { scrubAll } from '../src/redact.ts';
 import { formatTimeHms } from '../src/timeline.ts';
 import {
   type AtmosphereMode,
+  type BossRaidMode,
+  type BossRaidStats,
   type BotRpgProfile,
   type BotWorldDocumentData,
   type BotWorldStatePayload,
@@ -15,6 +17,7 @@ import {
   type DeskPropId,
   type LanguageSetting,
   type PetToyKind,
+  type RecordRaidOutcomeInput,
   type RpgXpAction,
   type SoundMode,
   type StuckAlert,
@@ -29,6 +32,16 @@ import {
   isSafeKey,
 } from '../src/types.ts';
 import { getThemeConfig } from '../shared/assets-catalog.ts';
+import {
+  BossRaidEngine,
+  type BossRaidStepInput,
+  applyRaidOutcomeToStats,
+  createEmptyBossRaidStats,
+  formatCountdownMmSs,
+  renderBossRaidModal,
+  resolveRaidSuppressionReason,
+  sanitizeBossRaidStats,
+} from '../shared/boss-raid.ts';
 import {
   renderBotDetail,
   renderEventTimelineList,
@@ -130,6 +143,7 @@ const state: {
   eventsDrawerOpen: boolean;
   shortcutsOpen: boolean;
   reportOpen: boolean;
+  raidOpen: boolean;
   zonesOpen: boolean;
   creatorOpen: boolean;
   creatorTab: CreatorStudioTab;
@@ -174,6 +188,7 @@ const state: {
   eventsDrawerOpen: true,
   shortcutsOpen: false,
   reportOpen: false,
+  raidOpen: false,
   zonesOpen: false,
   creatorOpen: false,
   creatorTab: 'avatars',
@@ -198,6 +213,11 @@ const soundscape = new SoundscapeEngine();
 const liveMilestones = new MilestoneTracker();
 const demoMilestones = new MilestoneTracker();
 const ownerAvatar = new OwnerAvatarController();
+const liveRaidEngine = new BossRaidEngine();
+const demoRaidEngine = new BossRaidEngine();
+let liveRaidStats: BossRaidStats = createEmptyBossRaidStats();
+let demoRaidStats: BossRaidStats = createEmptyBossRaidStats();
+let raidTimerId: number | null = null;
 const prevBotLevels = new Map<string, number>();
 let ownerRoamRafId: number | null = null;
 let lastOwnerRoamMs = 0;
@@ -284,6 +304,7 @@ const toolbarChrome = createToolbarChrome('editor', initialLocale, {
   onToggleCreatorStudio: () => toggleCreatorStudioModal(),
   onTakePhoto: () => void triggerPhotoCardSnapshot().catch(() => {}),
   onToggleReport: () => toggleReportModal(),
+  onToggleRaid: () => toggleRaidModal(),
   onToggleRedact: () => void toggleRedact().catch(() => {}),
   onToggleLanguage: () => void toggleLanguage().catch(() => {}),
   onToggleDemo: () => {
@@ -298,9 +319,11 @@ const toolbarChrome = createToolbarChrome('editor', initialLocale, {
     if (state.shortcutsOpen) {
       ownerAvatar.clearKeys();
       state.reportOpen = false;
+      state.raidOpen = false;
       state.zonesOpen = false;
       state.creatorOpen = false;
       renderReportModal();
+      renderRaidModal();
       renderZonesManager();
       renderCreatorStudio();
     }
@@ -322,6 +345,19 @@ const resetSeatsBtn = el(
     onClick: () => resetCustomSeats(),
   },
   initialStrings.resetSeats
+) as HTMLButtonElement;
+
+const raidHudBtn = el(
+  'button',
+  {
+    type: 'button',
+    className: 'bw-raid-hud bw-hidden',
+    tooltip: initialStrings.raidHudClickTip,
+    tooltipKbd: 'X',
+    ariaLabel: initialStrings.raidHudClickTip,
+    onClick: () => toggleRaidModal(),
+  },
+  initialStrings.raidHudCalm
 ) as HTMLButtonElement;
 
 const demoHintText = el('span', null, initialStrings.demoModeHint);
@@ -533,6 +569,7 @@ const stageWrap = el(
   petCanvasEl,
   stageOverlayNote,
   stageToast,
+  raidHudBtn,
   cameraHud,
   roamHud,
   petActionStrip,
@@ -724,6 +761,15 @@ const creatorBackdrop = el('div', {
   },
 });
 
+const raidBackdrop = el('div', {
+  className: 'bw-modal-backdrop bw-hidden',
+  onClick: () => {
+    state.raidOpen = false;
+    renderRaidModal();
+    syncChromeLocale(currentLocale());
+  },
+});
+
 root.appendChild(toolbar);
 root.appendChild(filterBar);
 root.appendChild(demoHintBanner);
@@ -731,6 +777,7 @@ root.appendChild(editorBody);
 root.appendChild(timelineBar);
 root.appendChild(shortcutsBackdrop);
 root.appendChild(reportBackdrop);
+root.appendChild(raidBackdrop);
 root.appendChild(zonesBackdrop);
 root.appendChild(creatorBackdrop);
 
@@ -778,7 +825,229 @@ const renderer = new StageRenderer(canvasEl, {
     syncOwnerRoamLoop();
     renderUi();
   },
+  onStrikeBoss: () => {
+    handleOwnerBossStrike();
+  },
 });
+
+function activeRaidEngine(): BossRaidEngine {
+  return isDemoMode() ? demoRaidEngine : liveRaidEngine;
+}
+
+function activeRaidStats(): BossRaidStats {
+  return isDemoMode() ? demoRaidStats : liveRaidStats;
+}
+
+function activeBossRaidMode(): BossRaidMode {
+  return livePayload.bossRaidMode ?? 'auto';
+}
+
+function currentRaidSuppression() {
+  return resolveRaidSuppressionReason({
+    isReplay: replay.isReplay,
+    viewMode: activeViewMode(),
+    bossRaidMode: activeBossRaidMode(),
+  });
+}
+
+function handleRaidOutcome(outcome: RecordRaidOutcomeInput): void {
+  const s = tStrings(currentLocale());
+  if (outcome.pomodoroCompleted && outcome.focusMinutes) {
+    showStageToast(s.raidPomoCompletedToast(outcome.focusMinutes));
+  }
+  if (isDemoMode()) {
+    demoRaidStats = applyRaidOutcomeToStats(demoRaidStats, outcome, Date.now());
+    renderUi();
+    return;
+  }
+  liveRaidStats = applyRaidOutcomeToStats(liveRaidStats, outcome, Date.now());
+  if (typeof orca !== 'undefined' && orca.plugin?.request) {
+    void orca.plugin
+      .request('botWorld.recordRaidOutcome', outcome)
+      .then((saved) => {
+        liveRaidStats = saved;
+        state.payload = { ...state.payload, bossRaidStats: saved };
+        livePayload = state.payload;
+        renderUi();
+      })
+      .catch(() => {});
+  }
+}
+
+function buildRaidStepCtx(
+  snap: WorldSnapshot = currentDisplayedSnapshot(),
+  locale: UiLocale = currentLocale()
+): BossRaidStepInput {
+  const theme = getThemeConfig(activeThemeId(), locale);
+  const displayTs = replay.isReplay ? replay.cursorMs : snap.capturedAt > 0 ? snap.capturedAt : Date.now();
+  return {
+    snapshot: snap,
+    theme,
+    motion: replay.isReplay ? replay.motion : liveMotion,
+    stuckAlerts: activeStuckAlerts(snap, displayTs, activeRedactMode(), locale),
+    bossRaidMode: activeBossRaidMode(),
+    viewMode: activeViewMode(),
+    isReplay: replay.isReplay,
+    demoMode: isDemoMode(),
+    currentStreak: activeRaidStats().currentStreak,
+    nowMs: Date.now(),
+    onOutcome: handleRaidOutcome,
+    onSoundCue: (cue) => {
+      soundscape.playCue(cue, { suppressed: currentRaidSuppression() !== null });
+    },
+  };
+}
+
+function handleOwnerBossStrike(): void {
+  const engine = activeRaidEngine();
+  const ctx = buildRaidStepCtx();
+  const origin: [number, number] | undefined = ownerAvatar.roaming
+    ? [ownerAvatar.x * ctx.theme.designSize[0], ownerAvatar.y * ctx.theme.designSize[1] - 20]
+    : undefined;
+  if (engine.strikeFromOwner({ ...ctx, fromPos: origin })) {
+    syncRaidLoop();
+    renderUi();
+  }
+}
+
+function updateRaidHudBadge(locale: UiLocale): void {
+  const s = tStrings(locale);
+  const suppression = currentRaidSuppression();
+  const engine = activeRaidEngine();
+  if (suppression !== null || (!engine.activeBoss && !engine.isPomodoroActive())) {
+    raidHudBtn.classList.add('bw-hidden');
+    return;
+  }
+  const parts: string[] = [];
+  if (engine.isPomodoroActive()) {
+    const mmss = formatCountdownMmSs(engine.pomodoro.remainingSecs);
+    parts.push(
+      engine.pomodoro.paused ? s.raidPomoPausedBadge(mmss) : s.raidPomoRunningBadge(mmss)
+    );
+  }
+  if (engine.activeBoss) {
+    parts.push(
+      `⚔ ${s.raidBossNames[engine.activeBoss.kind]} ${engine.activeBoss.hp}/${engine.activeBoss.maxHp}`
+    );
+  }
+  raidHudBtn.textContent = parts.join(' · ');
+  raidHudBtn.classList.toggle('bw-raid-hud-pomo', engine.isPomodoroActive() && !engine.activeBoss);
+  setTooltip(raidHudBtn, s.raidHudClickTip, 'X');
+  raidHudBtn.setAttribute('aria-label', `${raidHudBtn.textContent} — ${s.raidHudClickTip}`);
+  raidHudBtn.classList.remove('bw-hidden');
+}
+
+function renderRaidModal(): void {
+  const locale = currentLocale();
+  renderBossRaidModal(raidBackdrop, {
+    open: state.raidOpen,
+    locale,
+    redactMode: activeRedactMode(),
+    demoMode: isDemoMode(),
+    snapshot: currentDisplayedSnapshot(),
+    engine: activeRaidEngine(),
+    stats: activeRaidStats(),
+    suppressionReason: currentRaidSuppression(),
+    onCoopStrike: () => handleOwnerBossStrike(),
+    onSummonPractice: () => {
+      const ctx = buildRaidStepCtx();
+      activeRaidEngine().summonPracticeBoss(undefined, {
+        nowMs: Date.now(),
+        bossRaidMode: ctx.bossRaidMode,
+        viewMode: ctx.viewMode,
+        isReplay: ctx.isReplay,
+        onSoundCue: ctx.onSoundCue,
+      });
+      syncRaidLoop();
+      renderUi();
+    },
+    onSelectPreset: (mins) => {
+      activeRaidEngine().setPomodoroPreset(mins);
+      renderRaidModal();
+    },
+    onStartPomodoro: () => {
+      const ctx = buildRaidStepCtx();
+      const engine = activeRaidEngine();
+      engine.startPomodoro(engine.pomodoro.presetMinutes, {
+        currentStreak: activeRaidStats().currentStreak,
+        nowMs: Date.now(),
+        bossRaidMode: ctx.bossRaidMode,
+        viewMode: ctx.viewMode,
+        isReplay: ctx.isReplay,
+        onSoundCue: ctx.onSoundCue,
+      });
+      syncRaidLoop();
+      renderUi();
+    },
+    onPausePomodoro: () => {
+      activeRaidEngine().pausePomodoro();
+      syncRaidLoop();
+      renderUi();
+    },
+    onResumePomodoro: () => {
+      activeRaidEngine().resumePomodoro();
+      syncRaidLoop();
+      renderUi();
+    },
+    onAbandonPomodoro: () => {
+      activeRaidEngine().abandonPomodoro({
+        demoMode: isDemoMode(),
+        onOutcome: handleRaidOutcome,
+      });
+      syncRaidLoop();
+      renderUi();
+    },
+    onClose: () => {
+      state.raidOpen = false;
+      renderRaidModal();
+      syncChromeLocale(currentLocale());
+    },
+  });
+}
+
+function toggleRaidModal(): void {
+  state.raidOpen = !state.raidOpen;
+  if (state.raidOpen) {
+    ownerAvatar.clearKeys();
+    state.shortcutsOpen = false;
+    state.reportOpen = false;
+    state.zonesOpen = false;
+    state.creatorOpen = false;
+    renderShortcutsHelp();
+    renderReportModal();
+    renderZonesManager();
+    renderCreatorStudio();
+  }
+  renderRaidModal();
+  syncChromeLocale(currentLocale());
+}
+
+function syncRaidLoop(): void {
+  const engine = activeRaidEngine();
+  const needsTick =
+    (engine.isPomodoroRunning() || engine.isInRespawnCooldown()) && visibilityWatcher.isVisible();
+  if (needsTick) {
+    if (raidTimerId === null) {
+      raidTimerId = window.setInterval(() => {
+        const curEngine = activeRaidEngine();
+        if (!curEngine.isPomodoroRunning() && !curEngine.isInRespawnCooldown()) {
+          syncRaidLoop();
+          return;
+        }
+        const ctx = buildRaidStepCtx();
+        if (curEngine.isPomodoroRunning()) {
+          curEngine.stepPomodoro(1, { ...ctx, nowMs: Date.now() });
+        } else {
+          curEngine.syncState({ ...ctx, nowMs: Date.now() });
+        }
+        renderUi();
+      }, 1000);
+    }
+  } else if (raidTimerId !== null) {
+    clearInterval(raidTimerId);
+    raidTimerId = null;
+  }
+}
 
 const petRenderer = new PetTerrariumRenderer(petCanvasEl, {
   onSelectAndPet: (botId) => {
@@ -1058,6 +1327,8 @@ function syncOwnerRoamLoop(): void {
             customBackground: activeCreatorAssets().customBackground,
             customAvatars: activeCreatorAssets().customAvatars,
             stuckAlerts: activeStuckAlerts(snap, displayTimestampMs, redactMode, locale),
+            bossRaid: activeRaidEngine(),
+            bossRaidSuppressed: currentRaidSuppression() !== null,
           });
         }
         if (ownerAvatar.roaming && !isPetMode() && visibilityWatcher.isVisible()) {
@@ -1411,6 +1682,7 @@ function renderReportModal(): void {
     weeklyTrend: state.payload.weeklyTrend,
     rpgProfiles: activeRpgProfiles(),
     stuckAlerts,
+    bossRaidStats: activeRaidStats(),
   });
   renderOfficeReportModal(reportBackdrop, {
     open: state.reportOpen,
@@ -1440,11 +1712,13 @@ function toggleReportModal(): void {
   if (state.reportOpen) {
     ownerAvatar.clearKeys();
     state.shortcutsOpen = false;
+    state.raidOpen = false;
     state.zonesOpen = false;
     state.creatorOpen = false;
     state.reportCopied = false;
     state.standupCopied = false;
     renderShortcutsHelp();
+    renderRaidModal();
     renderZonesManager();
     renderCreatorStudio();
   }
@@ -1508,9 +1782,11 @@ function toggleZonesModal(): void {
     ownerAvatar.clearKeys();
     state.shortcutsOpen = false;
     state.reportOpen = false;
+    state.raidOpen = false;
     state.creatorOpen = false;
     renderShortcutsHelp();
     renderReportModal();
+    renderRaidModal();
     renderCreatorStudio();
   }
   renderZonesManager();
@@ -1823,11 +2099,13 @@ function toggleCreatorStudioModal(forceTab?: CreatorStudioTab): void {
     ownerAvatar.clearKeys();
     state.shortcutsOpen = false;
     state.reportOpen = false;
+    state.raidOpen = false;
     state.zonesOpen = false;
     state.creatorStatusMessage = null;
     state.creatorTargetBotId = resolveSelectedBotId(currentDisplayedSnapshot());
     renderShortcutsHelp();
     renderReportModal();
+    renderRaidModal();
     renderZonesManager();
   }
   renderCreatorStudio();
@@ -1972,6 +2250,8 @@ function syncChromeLocale(locale: UiLocale): void {
     zonesActive: state.zonesOpen || (activeShowZones() && activeZones().length > 0),
     creatorOpen: state.creatorOpen,
     reportOpen: state.reportOpen,
+    raidOpen: state.raidOpen,
+    raidActive: Boolean(activeRaidEngine().activeBoss || activeRaidEngine().isPomodoroActive()),
     shortcutsOpen: state.shortcutsOpen,
     connected: snap.runtime.connected,
     retryAfterSecs: snap.runtime.retryAfterSecs,
@@ -2031,6 +2311,8 @@ function renderToolbarOnly(
     zonesActive: state.zonesOpen || (activeShowZones() && activeZones().length > 0),
     creatorOpen: state.creatorOpen,
     reportOpen: state.reportOpen,
+    raidOpen: state.raidOpen,
+    raidActive: Boolean(activeRaidEngine().activeBoss || activeRaidEngine().isPomodoroActive()),
     shortcutsOpen: state.shortcutsOpen,
     connected: snap.runtime.connected,
     retryAfterSecs: snap.runtime.retryAfterSecs,
@@ -2178,6 +2460,29 @@ function renderStageFrame(
   if (!petActive) {
     const s = tStrings(locale);
     const nearbyBotId = updateOwnerRoamHud(snap, redactMode, locale);
+    const raidEngine = activeRaidEngine();
+    const raidSuppressed = currentRaidSuppression() !== null;
+    const themeCfg = getThemeConfig(themeId, locale);
+    const activeMotion = replay.isReplay ? replay.motion : liveMotion;
+    const stuckAlerts = activeStuckAlerts(snap, displayTimestampMs, redactMode, locale);
+    raidEngine.syncState({
+      snapshot: snap,
+      theme: themeCfg,
+      motion: activeMotion,
+      stuckAlerts,
+      bossRaidMode: activeBossRaidMode(),
+      viewMode: activeViewMode(),
+      isReplay: replay.isReplay,
+      demoMode: isDemoMode(),
+      currentStreak: activeRaidStats().currentStreak,
+      nowMs: Date.now(),
+      onOutcome: handleRaidOutcome,
+      onSoundCue: (cue) => {
+        soundscape.playCue(cue, { suppressed: raidSuppressed });
+      },
+    });
+    updateRaidHudBadge(locale);
+    syncRaidLoop();
     renderer.update({
       snapshot: snap,
       themeId,
@@ -2200,7 +2505,7 @@ function renderStageFrame(
         nearbyBotId,
         ownerTag: s.ownerTag,
       },
-      motion: replay.isReplay ? replay.motion : liveMotion,
+      motion: activeMotion,
       replay,
       locale,
       filterMatchedBotIds,
@@ -2212,10 +2517,14 @@ function renderStageFrame(
       timelapseActive: timelapse.active,
       customBackground: creatorAssets.customBackground,
       customAvatars: creatorAssets.customAvatars,
-      stuckAlerts: activeStuckAlerts(snap, displayTimestampMs, redactMode, locale),
+      stuckAlerts,
+      bossRaid: raidEngine,
+      bossRaidSuppressed: raidSuppressed,
     });
   } else {
     roamHud.classList.add('bw-hidden');
+    raidHudBtn.classList.add('bw-hidden');
+    syncRaidLoop();
   }
 }
 
@@ -2471,8 +2780,10 @@ function renderUi(forceSidePanels = false): void {
   renderSidePanelsIfNeeded(snap, selectedId, redactMode, appearances, locale, forceSidePanels);
   renderShortcutsHelp();
   renderReportModal();
+  renderRaidModal();
   renderZonesManager();
   renderCreatorStudio();
+  syncRaidLoop();
 }
 
 function buildDemoPayload(): BotWorldStatePayload | null {
@@ -2510,6 +2821,28 @@ function syncDemoTick(advance: boolean, forceSidePanels = false): void {
       soundscape.playMilestoneCue({ suppressed: false });
     }
     soundscape.playEvents(newEvents, { suppressed: false });
+    demoRaidEngine.onEvents(newEvents, {
+      snapshot: nextPayload.snapshot,
+      theme,
+      motion: liveMotion,
+      stuckAlerts: activeStuckAlerts(
+        nextPayload.snapshot,
+        nextPayload.snapshot.capturedAt || Date.now(),
+        activeRedactMode(),
+        locale
+      ),
+      bossRaidMode: activeBossRaidMode(),
+      viewMode: activeViewMode(),
+      isReplay: false,
+      demoMode: true,
+      currentStreak: demoRaidStats.currentStreak,
+      nowMs: Date.now(),
+      onOutcome: handleRaidOutcome,
+      onSoundCue: (cue) => {
+        soundscape.playCue(cue, { suppressed: currentRaidSuppression() !== null });
+      },
+    });
+    syncRaidLoop();
   }
   state.payload = nextPayload;
   if (replay.isReplay) {
@@ -2555,10 +2888,13 @@ function enterDemoMode(): void {
   demoShowZones = state.docData.showZones !== false;
   demoSelectedBotId = null;
   demoSession = createDemoOfficeSession();
+  demoRaidEngine.reset();
+  demoRaidStats = createEmptyBossRaidStats();
   timelapse.stop();
   replay.returnToLive();
   liveMotion.clearTransients();
   syncReplayLoop();
+  syncRaidLoop();
   const initialDemo = buildDemoPayload();
   prevBotLevels.clear();
   if (initialDemo) {
@@ -2589,6 +2925,10 @@ function exitDemoMode(): void {
     clearInterval(demoTimerId);
     demoTimerId = null;
   }
+  if (raidTimerId !== null) {
+    clearInterval(raidTimerId);
+    raidTimerId = null;
+  }
   state.selectionCleared = false;
   demoSession = null;
   demoCreatorAssets = createEmptyCreatorAssetsState();
@@ -2597,10 +2937,13 @@ function exitDemoMode(): void {
   demoShowZones = true;
   demoSelectedBotId = null;
   demoMilestones.reset();
+  demoRaidEngine.reset();
+  demoRaidStats = createEmptyBossRaidStats();
   timelapse.stop();
   replay.returnToLive();
   liveMotion.clearTransients();
   syncReplayLoop();
+  syncRaidLoop();
   state.payload = livePayload;
   prevBotLevels.clear();
   seedOrCelebrateRpgLevels(livePayload.rpgProfiles, true, currentLocale());
@@ -2615,6 +2958,9 @@ function exitDemoMode(): void {
 
 function applyIncomingPayload(nextPayload: BotWorldStatePayload): void {
   livePayload = nextPayload;
+  if (nextPayload.bossRaidStats) {
+    liveRaidStats = sanitizeBossRaidStats(nextPayload.bossRaidStats);
+  }
   if (isDemoMode()) {
     return;
   }
@@ -2640,6 +2986,30 @@ function applyIncomingPayload(nextPayload: BotWorldStatePayload): void {
         soundscape.playMilestoneCue({ suppressed: replay.isReplay });
       }
       soundscape.playEvents(newEvents, { suppressed: replay.isReplay });
+      liveRaidEngine.onEvents(newEvents, {
+        snapshot: nextPayload.snapshot,
+        theme,
+        motion: liveMotion,
+        stuckAlerts: nextPayload.stuckAlerts,
+        bossRaidMode: nextPayload.bossRaidMode ?? 'auto',
+        viewMode: nextPayload.viewMode ?? 'office',
+        isReplay: replay.isReplay,
+        demoMode: false,
+        currentStreak: liveRaidStats.currentStreak,
+        nowMs: Date.now(),
+        onOutcome: handleRaidOutcome,
+        onSoundCue: (cue) => {
+          soundscape.playCue(cue, {
+            suppressed:
+              resolveRaidSuppressionReason({
+                isReplay: replay.isReplay,
+                viewMode: nextPayload.viewMode ?? 'office',
+                bossRaidMode: nextPayload.bossRaidMode ?? 'auto',
+              }) !== null,
+          });
+        },
+      });
+      syncRaidLoop();
     }
   }
   prevLiveSnapshot = nextPayload.snapshot;
@@ -3155,7 +3525,7 @@ const handleGestureUnlock = (): void => {
 
 const handleKeyDown = (ev: KeyboardEvent): void => {
   handleGestureUnlock();
-  const modalOpen = state.shortcutsOpen || state.reportOpen || state.zonesOpen || state.creatorOpen;
+  const modalOpen = state.shortcutsOpen || state.reportOpen || state.raidOpen || state.zonesOpen || state.creatorOpen;
   if (shouldIgnoreShortcutEvent(ev, { modalOpen })) return;
   if (!modalOpen && ownerAvatar.roaming && activeViewMode() === 'office') {
     if (ownerAvatar.setMoveKey(ev.key, true)) {
@@ -3216,6 +3586,9 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
     case 'toggleReport':
       toggleReportModal();
       break;
+    case 'toggleRaid':
+      toggleRaidModal();
+      break;
     case 'takePhotoCard':
       void triggerPhotoCardSnapshot().catch(() => {});
       break;
@@ -3263,9 +3636,11 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
       if (state.shortcutsOpen) {
         ownerAvatar.clearKeys();
         state.reportOpen = false;
+        state.raidOpen = false;
         state.zonesOpen = false;
         state.creatorOpen = false;
         renderReportModal();
+        renderRaidModal();
         renderZonesManager();
         renderCreatorStudio();
       }
@@ -3286,6 +3661,10 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
       } else if (state.zonesOpen) {
         state.zonesOpen = false;
         renderZonesManager();
+        syncChromeLocale(currentLocale());
+      } else if (state.raidOpen) {
+        state.raidOpen = false;
+        renderRaidModal();
         syncChromeLocale(currentLocale());
       } else if (state.reportOpen) {
         state.reportOpen = false;
@@ -3337,6 +3716,7 @@ const visibilityWatcher = watchDocumentVisibility((visible) => {
   petRenderer.setPageVisible(visible);
   syncOwnerRoamLoop();
   syncReplayLoop();
+  syncRaidLoop();
   syncDemoInterval();
   if (visible && isDemoMode() && !replay.isReplay) {
     syncDemoTick(false);
@@ -3358,6 +3738,10 @@ function cleanup(): void {
   if (demoTimerId !== null) {
     clearInterval(demoTimerId);
     demoTimerId = null;
+  }
+  if (raidTimerId !== null) {
+    clearInterval(raidTimerId);
+    raidTimerId = null;
   }
   if (reportCopiedTimer !== null) {
     clearTimeout(reportCopiedTimer);

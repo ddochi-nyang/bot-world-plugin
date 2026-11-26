@@ -36,7 +36,8 @@ export type IconName =
   | 'clock'
   | 'coffee'
   | 'ball'
-  | 'cookie';
+  | 'cookie'
+  | 'swords';
 
 type SvgShape =
   | { tag: 'path'; attrs: Record<string, string> }
@@ -234,6 +235,16 @@ const ICON_SHAPES: Readonly<Record<IconName, readonly SvgShape[]>> = Object.free
     { tag: 'path', attrs: { d: 'M12 12v.01' } },
     { tag: 'path', attrs: { d: 'M11 17v.01' } },
     { tag: 'path', attrs: { d: 'M7 14v.01' } },
+  ],
+  swords: [
+    { tag: 'polyline', attrs: { points: '14.5 17.5 3 6 3 3 6 3 17.5 14.5' } },
+    { tag: 'line', attrs: { x1: '13', y1: '19', x2: '19', y2: '13' } },
+    { tag: 'line', attrs: { x1: '16', y1: '16', x2: '20', y2: '20' } },
+    { tag: 'line', attrs: { x1: '19', y1: '21', x2: '21', y2: '19' } },
+    { tag: 'polyline', attrs: { points: '14.5 6.5 18 3 21 3 21 6 17.5 9.5' } },
+    { tag: 'line', attrs: { x1: '5', y1: '14', x2: '9', y2: '18' } },
+    { tag: 'line', attrs: { x1: '7', y1: '17', x2: '4', y2: '20' } },
+    { tag: 'line', attrs: { x1: '3', y1: '19', x2: '5', y2: '21' } },
   ],
 });
 

@@ -36,6 +36,8 @@ export type ToolbarSyncState = {
   zonesActive: boolean;
   creatorOpen: boolean;
   reportOpen: boolean;
+  raidOpen?: boolean;
+  raidActive?: boolean;
   shortcutsOpen: boolean;
   connected: boolean;
   retryAfterSecs: number | null;
@@ -57,6 +59,7 @@ export type ToolbarChromeHandlers = {
   onToggleCreatorStudio: () => void;
   onTakePhoto: () => void;
   onToggleReport: () => void;
+  onToggleRaid?: () => void;
   onToggleRedact: () => void;
   onToggleLanguage: () => void;
   onToggleDemo: () => void;
@@ -84,6 +87,7 @@ export type ToolbarChrome = {
   studioBtn: HTMLButtonElement;
   photoBtn: HTMLButtonElement;
   reportBtn: HTMLButtonElement;
+  raidBtn: HTMLButtonElement;
   redactBtn: HTMLButtonElement;
   langBtn: HTMLButtonElement;
   demoBtn: HTMLButtonElement;
@@ -315,6 +319,19 @@ export function createToolbarChrome(
     svgIcon('bar-chart')
   ) as HTMLButtonElement;
 
+  const raidBtn = el(
+    'button',
+    {
+      type: 'button',
+      className: iconBtnClass,
+      tooltip: s.tipRaid,
+      tooltipKbd: 'X',
+      ariaLabel: s.raidButtonTitle,
+      onClick: () => handlers.onToggleRaid?.(),
+    },
+    svgIcon('swords')
+  ) as HTMLButtonElement;
+
   const redactBtn = el(
     'button',
     {
@@ -416,6 +433,7 @@ export function createToolbarChrome(
           studioBtn,
           photoBtn,
           reportBtn,
+          raidBtn,
           el('span', { className: 'bw-toolbar-sep' }),
           redactBtn,
           langBtn,
@@ -451,6 +469,7 @@ export function createToolbarChrome(
           studioBtn,
           photoBtn,
           reportBtn,
+          raidBtn,
           el('span', { className: 'bw-toolbar-sep' }),
           redactBtn,
           langBtn,
@@ -480,6 +499,7 @@ export function createToolbarChrome(
     studioBtn,
     photoBtn,
     reportBtn,
+    raidBtn,
     redactBtn,
     langBtn,
     demoBtn,
@@ -612,6 +632,11 @@ export function syncToolbarChrome(chrome: ToolbarChrome, st: ToolbarSyncState): 
   setTooltip(chrome.reportBtn, s.tipReport, 'I');
   chrome.reportBtn.setAttribute('aria-label', s.reportButtonTitle);
   chrome.reportBtn.classList.toggle('bw-btn-active', st.reportOpen);
+
+  setButtonContent(chrome.raidBtn, 'swords');
+  setTooltip(chrome.raidBtn, s.tipRaid, 'X');
+  chrome.raidBtn.setAttribute('aria-label', s.raidButtonTitle);
+  chrome.raidBtn.classList.toggle('bw-btn-active', Boolean(st.raidOpen || st.raidActive));
 
   setButtonContent(
     chrome.redactBtn,

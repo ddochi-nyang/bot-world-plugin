@@ -8,6 +8,9 @@ export type WeatherMode = 'auto' | 'clear' | 'rain' | 'snow' | 'starlight';
 export type WeatherKind = 'clear' | 'rain' | 'snow' | 'starlight';
 export type SoundMode = 'off' | 'chimes' | 'ambient';
 export type ViewMode = 'office' | 'pet' | 'broadcast';
+export type BossRaidMode = 'auto' | 'off';
+export type BossKind = 'error_blob' | 'stall_golem' | 'ci_wyvern' | 'sprint_titan';
+export type PomodoroPresetMinutes = 15 | 25 | 50;
 export type BroadcastChromaKey = 'green' | 'blue' | 'black' | 'charcoal';
 export type PetToyKind = 'coffee' | 'ball' | 'treat';
 export type DeskPropId =
@@ -58,6 +61,48 @@ export const VALID_VIEW_MODES: readonly ViewMode[] = ['office', 'pet', 'broadcas
 export function isValidViewMode(value: unknown): value is ViewMode {
   return typeof value === 'string' && (VALID_VIEW_MODES as readonly string[]).includes(value);
 }
+
+export const VALID_BOSS_RAID_MODES: readonly BossRaidMode[] = ['auto', 'off'] as const;
+
+export function isValidBossRaidMode(value: unknown): value is BossRaidMode {
+  return typeof value === 'string' && (VALID_BOSS_RAID_MODES as readonly string[]).includes(value);
+}
+
+export const VALID_BOSS_KINDS: readonly BossKind[] = [
+  'error_blob',
+  'stall_golem',
+  'ci_wyvern',
+  'sprint_titan',
+] as const;
+
+export function isValidBossKind(value: unknown): value is BossKind {
+  return typeof value === 'string' && (VALID_BOSS_KINDS as readonly string[]).includes(value);
+}
+
+export const VALID_POMODORO_PRESETS: readonly PomodoroPresetMinutes[] = [15, 25, 50] as const;
+
+export function isValidPomodoroPreset(value: unknown): value is PomodoroPresetMinutes {
+  return value === 15 || value === 25 || value === 50;
+}
+
+export type BossRaidStats = {
+  version: 1;
+  raidsCleared: number;
+  pomodorosCompleted: number;
+  totalFocusMinutes: number;
+  totalDamage: number;
+  currentStreak: number;
+  bestStreak: number;
+  updatedAtMs: number;
+};
+
+export type RecordRaidOutcomeInput = {
+  cleared?: boolean;
+  pomodoroCompleted?: boolean;
+  focusMinutes?: number;
+  damageDealt?: number;
+  resetStreak?: boolean;
+};
 
 export const VALID_BROADCAST_CHROMA_KEYS: readonly BroadcastChromaKey[] = [
   'green',
@@ -1005,6 +1050,8 @@ export type BotWorldStatePayload = {
   desktopNotifications?: boolean;
   stuckThresholdMin?: number;
   stuckAlerts?: StuckAlert[];
+  bossRaidMode?: BossRaidMode;
+  bossRaidStats?: BossRaidStats;
   redactMode: boolean;
   botAppearances: Record<string, CharacterId>;
   rpgProfiles?: Record<string, BotRpgProfile>;

@@ -1,5 +1,11 @@
 import type { JsonValue, OrcaWorkerApi } from 'orca/worker';
 import {
+  applyRaidOutcomeToStats,
+  createEmptyBossRaidStats,
+  sanitizeBossRaidStats,
+  validateRecordRaidOutcomeInput,
+} from '../shared/boss-raid.ts';
+import {
   applyRpgActionToStore,
   applyWorldEventsToRpgStore,
   buildRpgProfilesForSnapshot,
@@ -54,6 +60,8 @@ import { TimelineBuffer, scrubFullSnapshot } from './timeline.ts';
 import {
   type ActorRef,
   type AtmosphereMode,
+  type BossRaidMode,
+  type BossRaidStats,
   type BotRpgStore,
   type BotWorldStatePayload,
   type CharacterId,
@@ -77,6 +85,7 @@ import {
   isPoolCharacterId,
   isSafeKey,
   isValidAtmosphereMode,
+  isValidBossRaidMode,
   isValidDeskPropId,
   isValidLanguageSetting,
   isValidRpgXpAction,
@@ -101,6 +110,7 @@ const STORAGE_TIMELINE_KEY = 'botWorld.timeline';
 const STORAGE_WEEKLY_TREND_KEY = 'botWorld.weeklyTrend';
 const STORAGE_RPG_KEY = 'botWorld.rpg.v1';
 const STORAGE_CREATOR_KEY = 'botWorld.creator.v1';
+const STORAGE_RAID_KEY = 'botWorld.raid.v1';
 export const MAX_IPC_PAYLOAD_BYTES = 220 * 1024;
 const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
 const LOCALE_TAG_RE = /^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{1,8}){0,6}$/;
@@ -598,6 +608,7 @@ export class BotWorldWorkerController {
   private weeklyTrendStore: WeeklyTrendStore = { days: [], seenIds: [] };
   private rpgStore: BotRpgStore = createEmptyBotRpgStore();
   private creatorStore: CreatorAssetsState = createEmptyCreatorAssetsState();
+  private raidStats: BossRaidStats = createEmptyBossRaidStats();
   private prefs: StoredPrefs = {
     activeTheme: 'startup_office',
     atmosphereMode: 'auto',
@@ -624,6 +635,7 @@ export class BotWorldWorkerController {
     allowQuickSend: boolean;
     desktopNotifications: boolean;
     stuckThresholdMin: number;
+    bossRaidMode: BossRaidMode;
     redactMode: boolean;
     pollIntervalSec: number;
     language: LanguageSetting;
@@ -635,6 +647,7 @@ export class BotWorldWorkerController {
     allowQuickSend: false,
     desktopNotifications: false,
     stuckThresholdMin: DEFAULT_STUCK_THRESHOLD_MIN,
+    bossRaidMode: 'auto',
     redactMode: false,
     pollIntervalSec: 5,
     language: 'auto',
@@ -718,6 +731,8 @@ export class BotWorldWorkerController {
     this.rpgStore = sanitizeBotRpgStore(storedRpg, initNowMs);
     const storedCreator = await this.orca.storage.get(STORAGE_CREATOR_KEY);
     this.creatorStore = sanitizeCreatorAssetsState(storedCreator, 0);
+    const storedRaid = await this.orca.storage.get(STORAGE_RAID_KEY);
+    this.raidStats = sanitizeBossRaidStats(storedRaid, 0);
     if (this.timeline.eventLog.length > 0) {
       const mergedInit = mergeWeeklyTrendStore(
         this.weeklyTrendStore,
@@ -764,6 +779,7 @@ export class BotWorldWorkerController {
     allowQuickSend: boolean;
     desktopNotifications: boolean;
     stuckThresholdMin: number;
+    bossRaidMode: BossRaidMode;
     redactMode: boolean;
     pollIntervalSec: number;
     language: LanguageSetting;
@@ -775,6 +791,7 @@ export class BotWorldWorkerController {
     let allowQuickSend = false;
     let desktopNotifications = false;
     let stuckThresholdMin = DEFAULT_STUCK_THRESHOLD_MIN;
+    let bossRaidMode: BossRaidMode = 'auto';
     let redactMode = false;
     let pollIntervalSec = 5;
     let language: LanguageSetting = 'auto';
@@ -802,6 +819,9 @@ export class BotWorldWorkerController {
         if (all.stuckThresholdMin !== undefined) {
           stuckThresholdMin = clampStuckThresholdMin(all.stuckThresholdMin);
         }
+        if (isValidBossRaidMode(all.bossRaidMode)) {
+          bossRaidMode = all.bossRaidMode;
+        }
         if (typeof all.redactMode === 'boolean') {
           redactMode = all.redactMode;
         }
@@ -821,6 +841,7 @@ export class BotWorldWorkerController {
       allowQuickSend,
       desktopNotifications,
       stuckThresholdMin,
+      bossRaidMode,
       redactMode,
       pollIntervalSec,
       language,
@@ -864,6 +885,8 @@ export class BotWorldWorkerController {
       desktopNotifications: this.lastSettings.desktopNotifications,
       stuckThresholdMin: this.lastSettings.stuckThresholdMin,
       stuckAlerts,
+      bossRaidMode: this.lastSettings.bossRaidMode,
+      bossRaidStats: { ...this.raidStats },
       redactMode: redact,
       botAppearances: { ...this.prefs.botAppearances },
       rpgProfiles: buildRpgProfilesForSnapshot(this.rpgStore, safeSnapshot),
@@ -1064,6 +1087,10 @@ export class BotWorldWorkerController {
       throw makeHostError('invalid_params', 'Creator assets exceed storage cap');
     }
     await this.orca.storage.set(STORAGE_CREATOR_KEY, this.creatorStore as unknown as JsonValue);
+  }
+
+  private async persistRaidStats(): Promise<void> {
+    await this.orca.storage.set(STORAGE_RAID_KEY, this.raidStats as unknown as JsonValue);
   }
 
   private nextCreatorTimestamp(): number {
@@ -1885,6 +1912,25 @@ export class BotWorldWorkerController {
           uiActive,
           fastIntervalMs: this.session.getFastIntervalMs(),
         };
+      }),
+
+      this.orca.panels.handle('botWorld.getRaidStats', async () => {
+        return { ...this.raidStats };
+      }),
+
+      this.orca.panels.handle('botWorld.recordRaidOutcome', async (input) => {
+        const validated = validateRecordRaidOutcomeInput(input);
+        if (!validated.ok) {
+          throw makeHostError('invalid_params', validated.error);
+        }
+        this.raidStats = applyRaidOutcomeToStats(
+          this.raidStats,
+          validated.value,
+          this.nowMs()
+        );
+        await this.persistRaidStats();
+        this.postStateUpdated();
+        return { ...this.raidStats };
       }),
 
       this.orca.events.on('agent.status.changed', () => {

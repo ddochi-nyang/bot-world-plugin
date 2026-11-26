@@ -39,6 +39,11 @@ import {
   createStageViewport,
 } from './camera.ts';
 import type { CollabEdge } from './collab-network.ts';
+import {
+  type BossRaidEngine,
+  type BossRaidStepInput,
+  paintBossRaidLayer,
+} from './boss-raid.ts';
 import { validateCustomAssetDataUrl } from './creator-studio.ts';
 import { tStrings } from './i18n.ts';
 import {
@@ -357,6 +362,8 @@ export type StageRenderInput = {
   customBackground?: string | null;
   customAvatars?: Readonly<Record<string, string>>;
   stuckAlerts?: readonly StuckAlert[];
+  bossRaid?: BossRaidEngine | null;
+  bossRaidSuppressed?: boolean;
 };
 
 type HitBox = {
@@ -391,12 +398,14 @@ export class StageRenderer {
   private readonly onMoveBot?: (botId: string, pos: DeskCoordinate) => void;
   private readonly onCameraChange?: () => void;
   private readonly onDoubleClickFloor?: (normX: number, normY: number) => void;
+  private readonly onStrikeBoss?: () => void;
   readonly camera: CameraController;
   readonly weather = new WeatherSystem();
   private lastInput: StageRenderInput | null = null;
   private lastViewport: ViewportTransform | null = null;
   private lastStageViewport: StageViewport | null = null;
   private hitBoxes: HitBox[] = [];
+  private bossHitRect: Rect | null = null;
   private dragCandidate: DragCandidate | null = null;
   private panDrag: PanDragState | null = null;
   private suppressNextClick = false;
@@ -424,6 +433,7 @@ export class StageRenderer {
       onMoveBot?: (botId: string, pos: DeskCoordinate) => void;
       onCameraChange?: () => void;
       onDoubleClickFloor?: (normX: number, normY: number) => void;
+      onStrikeBoss?: () => void;
       camera?: CameraController;
     }
   ) {
@@ -438,6 +448,7 @@ export class StageRenderer {
     this.onMoveBot = options.onMoveBot;
     this.onCameraChange = options.onCameraChange;
     this.onDoubleClickFloor = options.onDoubleClickFloor;
+    this.onStrikeBoss = options.onStrikeBoss;
     this.camera = options.camera ?? new CameraController();
 
     this.canvas.addEventListener('click', this.handleClick);
@@ -718,6 +729,7 @@ export class StageRenderer {
       return true;
     }
     if (input.showCollabNetwork && input.collabEdges && input.collabEdges.length > 0) return true;
+    if (input.bossRaid && !input.bossRaidSuppressed && input.bossRaid.hasActiveVisuals()) return true;
     if (input.motion.hasActiveAnimations()) return true;
     if (input.timelapseActive) return false;
     if (input.replay?.isReplay) {
@@ -766,6 +778,9 @@ export class StageRenderer {
     if (!isPlayingReplay && !input.timelapseActive) {
       input.motion.step(dtSecs, input.snapshot, theme, input.customDeskPositions);
       this.weather.step(dtSecs, weatherKind, theme.designSize);
+      if (input.bossRaid && !input.bossRaidSuppressed) {
+        input.bossRaid.stepVisuals(dtSecs);
+      }
     }
     if (this.camera.followBotId) {
       this.syncFollowTarget(input, theme.designSize, false);
@@ -785,6 +800,15 @@ export class StageRenderer {
     }
     this.ensureAnimationLoopIfNeeded();
   };
+
+  hitTestBoss(clientX: number, clientY: number): boolean {
+    if (!this.bossHitRect) return false;
+    const rect = this.canvas.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    const [rx, ry, rw, rh] = this.bossHitRect;
+    return x >= rx && x <= rx + rw && y >= ry && y <= ry + rh;
+  }
 
   private findHitBotId(clientX: number, clientY: number): string | null {
     const rect = this.canvas.getBoundingClientRect();
@@ -833,6 +857,10 @@ export class StageRenderer {
         return;
       }
     }
+    if (this.hitTestBoss(ev.clientX, ev.clientY) && this.onStrikeBoss) {
+      this.onStrikeBoss();
+      return;
+    }
     const botId = this.findHitBotId(ev.clientX, ev.clientY);
     if (botId) {
       this.onSelectBot(botId);
@@ -841,6 +869,9 @@ export class StageRenderer {
 
   private readonly handlePointerDown = (ev: PointerEvent): void => {
     if (ev.button !== 0 || !this.lastInput) return;
+    if (this.hitTestBoss(ev.clientX, ev.clientY) && this.onStrikeBoss) {
+      return;
+    }
     const botId = this.findHitBotId(ev.clientX, ev.clientY);
     if (botId && this.onMoveBot) {
       const desk = this.lastInput.motion.layout.botDesks.get(botId);
@@ -916,6 +947,12 @@ export class StageRenderer {
         this.renderNow();
         this.ensureAnimationLoopIfNeeded();
       }
+      return;
+    }
+
+    if (this.hitTestBoss(ev.clientX, ev.clientY) && this.onStrikeBoss) {
+      this.canvas.style.cursor = 'pointer';
+      this.onHoverBot?.(null);
       return;
     }
 
@@ -2022,6 +2059,17 @@ export class StageRenderer {
       });
     }
     this.hitBoxes = nextHitBoxes;
+
+    // Boss Raid & Pomodoro Co-op layer (suppressed during replay, terrarium, broadcast, or bossRaidMode=off)
+    if (input.bossRaid && !input.bossRaidSuppressed) {
+      this.bossHitRect = paintBossRaidLayer(ctx, vt, theme, input.bossRaid, {
+        locale,
+        uiScale,
+        fontFamily: CANVAS_FONT_FAMILY,
+      });
+    } else {
+      this.bossHitRect = null;
+    }
 
     // Speech bubbles (max 5, obstacle-avoiding)
     for (const bubble of motion.bubbles.slice(0, MAX_BUBBLES)) {

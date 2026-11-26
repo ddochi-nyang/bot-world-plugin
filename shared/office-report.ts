@@ -1,6 +1,7 @@
 import { eventRelatedBotId } from '../src/events.ts';
 import { scrubAll } from '../src/redact.ts';
 import {
+  type BossRaidStats,
   type BotRpgProfile,
   type DailyTrendPoint,
   type DeskPropId,
@@ -13,6 +14,7 @@ import {
   isSafeKey,
 } from '../src/types.ts';
 import { getLastSevenDaysTrend, mergeEventsIntoWeeklyTrend } from '../src/weekly-trend.ts';
+import { createEmptyBossRaidStats, sanitizeBossRaidStats } from './boss-raid.ts';
 import { propEmoji, rpgTitleForLevel } from './bot-rpg.ts';
 import { clearChildren, el } from './dom.ts';
 import { getBotRedactedAlias, orderedSnapshotBotIds } from './filter.ts';
@@ -85,6 +87,7 @@ export type OfficeReport = {
   badges: OfficeReportBadgeEntry[];
   topRpgBots?: OfficeReportRpgBot[];
   standupBots?: OfficeReportStandupBot[];
+  bossRaidStats?: BossRaidStats;
 };
 
 const HOUR_MS = 3600_000;
@@ -151,6 +154,7 @@ export function buildOfficeReport(
     weeklyTrend?: readonly DailyTrendPoint[];
     rpgProfiles?: Readonly<Record<string, BotRpgProfile>>;
     stuckAlerts?: readonly StuckAlert[];
+    bossRaidStats?: BossRaidStats;
   }
 ): OfficeReport {
   const s = tStrings(opts.locale);
@@ -464,6 +468,9 @@ export function buildOfficeReport(
     badges,
     topRpgBots,
     standupBots,
+    bossRaidStats: opts.bossRaidStats
+      ? sanitizeBossRaidStats(opts.bossRaidStats, nowMs)
+      : createEmptyBossRaidStats(nowMs),
   };
 }
 
@@ -548,6 +555,20 @@ export function formatReportMarkdown(
       );
     });
   }
+
+  const raid = report.bossRaidStats ?? createEmptyBossRaidStats(report.generatedAtMs);
+  lines.push('');
+  lines.push(`## ${s.reportSectionBossRaid}`);
+  lines.push(
+    `- ${s.reportBossRaidSummary(
+      raid.raidsCleared,
+      raid.pomodorosCompleted,
+      raid.totalFocusMinutes,
+      raid.totalDamage,
+      raid.currentStreak,
+      raid.bestStreak
+    )}`
+  );
 
   return lines.join('\n');
 }
@@ -861,6 +882,29 @@ export function renderOfficeReportModal(
         )
   );
 
+  const raid = report.bossRaidStats ?? createEmptyBossRaidStats(report.generatedAtMs);
+  const raidSection = el(
+    'div',
+    { className: 'bw-section' },
+    el('div', { className: 'bw-section-title' }, s.reportSectionBossRaid),
+    el(
+      'div',
+      { className: 'bw-card bw-raid-report-card' },
+      el(
+        'div',
+        { className: 'bw-card-text' },
+        s.reportBossRaidSummary(
+          raid.raidsCleared,
+          raid.pomodorosCompleted,
+          raid.totalFocusMinutes,
+          raid.totalDamage,
+          raid.currentStreak,
+          raid.bestStreak
+        )
+      )
+    )
+  );
+
   const standupMd = formatStandupMarkdown(report, { redactMode, locale: opts.locale });
   const standupSection = el(
     'div',
@@ -952,6 +996,7 @@ export function renderOfficeReportModal(
     ),
     badgesSection,
     rpgSection,
+    raidSection,
     topBotsSection,
     hourlyChart,
     weeklyChart,
