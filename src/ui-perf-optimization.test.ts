@@ -339,6 +339,7 @@ describe('Bot World Stage-1 Optimization & 0px Layout-Shift Toolbar', () => {
         panelChrome.photoBtn,
         panelChrome.reportBtn,
         panelChrome.raidBtn,
+        panelChrome.theaterBtn,
         panelChrome.redactBtn,
         panelChrome.langBtn,
         panelChrome.helpBtn,
@@ -362,6 +363,7 @@ describe('Bot World Stage-1 Optimization & 0px Layout-Shift Toolbar', () => {
         editorChrome.photoBtn,
         editorChrome.reportBtn,
         editorChrome.raidBtn,
+        editorChrome.theaterBtn,
         editorChrome.redactBtn,
         editorChrome.langBtn,
         editorChrome.demoBtn,
@@ -435,7 +437,7 @@ describe('Bot World Stage-1 Optimization & 0px Layout-Shift Toolbar', () => {
         });
       }
 
-      // Panel Row 2 buttons are strictly uniform 26x26px icon buttons
+      // Panel Row 2 buttons are strictly uniform 23x23px icon buttons
       const row2Buttons = [
         panelChrome.roamBtn,
         panelChrome.broadcastBtn,
@@ -449,6 +451,7 @@ describe('Bot World Stage-1 Optimization & 0px Layout-Shift Toolbar', () => {
         panelChrome.photoBtn,
         panelChrome.reportBtn,
         panelChrome.raidBtn,
+        panelChrome.theaterBtn,
         panelChrome.redactBtn,
         panelChrome.langBtn,
         panelChrome.helpBtn,
@@ -458,7 +461,7 @@ describe('Bot World Stage-1 Optimization & 0px Layout-Shift Toolbar', () => {
         assert.ok((btn as unknown as LocalFakeElement).classList.contains('bw-icon-btn'));
       }
 
-      // Editor toolbar converts 11 secondary action/modal buttons to uniform 26x26 icon buttons
+      // Editor toolbar converts 12 secondary action/modal buttons to uniform 26x26 icon buttons
       const editorIconButtons = [
         editorChrome.roamBtn,
         editorChrome.broadcastBtn,
@@ -469,6 +472,7 @@ describe('Bot World Stage-1 Optimization & 0px Layout-Shift Toolbar', () => {
         editorChrome.photoBtn,
         editorChrome.reportBtn,
         editorChrome.raidBtn,
+        editorChrome.theaterBtn,
         editorChrome.helpBtn,
         editorChrome.refreshBtn,
       ];
@@ -498,18 +502,18 @@ describe('Bot World Stage-1 Optimization & 0px Layout-Shift Toolbar', () => {
         `Panel Row 1 width ${panelRow1Total}px must fit within 440px`
       );
 
-      // Panel Row 2: 6px*2 padding + 16 * iconWidth + 18 * gap + 3 * 1px seps
+      // Panel Row 2: 6px*2 padding + 17 * iconWidth + 19 * gap + 3 * 1px seps
       const row2BtnMatch = /\.bw-toolbar-row-2\s+\.bw-icon-btn\s*\{[^}]*\bwidth:\s*(\d+)px/.exec(css);
       const row2IconWidth = row2BtnMatch ? Number(row2BtnMatch[1]) : 26;
       const row2GapMatch = /\.bw-toolbar-row-2\s*\{[^}]*\bgap:\s*(\d+)px/.exec(css);
       const row2Gap = row2GapMatch ? Number(row2GapMatch[1]) : 2;
-      const panelRow2Total = 12 + 16 * row2IconWidth + 18 * row2Gap + 3 * 1;
+      const panelRow2Total = 12 + 17 * row2IconWidth + 19 * row2Gap + 3 * 1;
       assert.ok(
         panelRow2Total <= 440,
         `Panel Row 2 width ${panelRow2Total}px must fit within 440px`
       );
 
-      // Wide Editor Toolbar: 6px*2 padding + 4px outer gap + left (title + conn + docSync + 2*2px gaps) + right (8 text controls + 11*26px icons + 21*2px gaps + 3*1px seps)
+      // Wide Editor Toolbar: 6px*2 padding + 4px outer gap + left (title + conn + docSync + 2*2px gaps) + right (8 text controls + 12*26px icons + 22*2px gaps + 3*1px seps)
       const editorLeftTotal =
         extractWidth('bw-tb-w-title-editor') +
         extractWidth('bw-tb-w-conn-editor') +
@@ -525,7 +529,7 @@ describe('Bot World Stage-1 Optimization & 0px Layout-Shift Toolbar', () => {
         extractWidth('bw-tb-w-lang') +
         extractWidth('bw-tb-w-demo');
       const editorToolbarTotal =
-        12 + 4 + editorLeftTotal + editorRightTextTotal + 11 * 26 + 21 * 2 + 3 * 1;
+        12 + 4 + editorLeftTotal + editorRightTextTotal + 12 * 26 + 22 * 2 + 3 * 1;
       assert.ok(
         editorToolbarTotal <= 1260,
         `Editor toolbar width ${editorToolbarTotal}px must fit cleanly within 1280px (<= 1260px budget)`

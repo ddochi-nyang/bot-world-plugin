@@ -15,6 +15,9 @@ import {
   DEFAULT_BOTWORLD_DOCUMENT,
   type DeskCoordinate,
   type DeskPropId,
+  type GitRangeDays,
+  type GitRepoSummary,
+  type GitTheaterReel,
   type LanguageSetting,
   type PetToyKind,
   type RecordRaidOutcomeInput,
@@ -76,6 +79,12 @@ import {
   isFilterActive,
   orderedSnapshotBotIds,
 } from '../shared/filter.ts';
+import {
+  GitTheaterEngine,
+  createDemoGitTheaterReel,
+  renderGitTheaterModal,
+  updateTheaterStageHud,
+} from '../shared/git-theater.ts';
 import { effectiveLocale, getHostLocale, resolveUiLocale, tStrings } from '../shared/i18n.ts';
 import { setButtonContent, svgIcon } from '../shared/icons.ts';
 import {
@@ -144,6 +153,7 @@ const state: {
   shortcutsOpen: boolean;
   reportOpen: boolean;
   raidOpen: boolean;
+  theaterOpen: boolean;
   zonesOpen: boolean;
   creatorOpen: boolean;
   creatorTab: CreatorStudioTab;
@@ -189,6 +199,7 @@ const state: {
   shortcutsOpen: false,
   reportOpen: false,
   raidOpen: false,
+  theaterOpen: false,
   zonesOpen: false,
   creatorOpen: false,
   creatorTab: 'avatars',
@@ -218,6 +229,20 @@ const demoRaidEngine = new BossRaidEngine();
 let liveRaidStats: BossRaidStats = createEmptyBossRaidStats();
 let demoRaidStats: BossRaidStats = createEmptyBossRaidStats();
 let raidTimerId: number | null = null;
+const theaterEngine = new GitTheaterEngine();
+let theaterLoading = false;
+let theaterRepos: GitRepoSummary[] = [];
+let theaterSelectedRepoId = 'demo';
+let theaterRangeDays: GitRangeDays = 14;
+let theaterError: string | null = null;
+let theaterRafId: number | null = null;
+let lastTheaterTickMs = 0;
+theaterEngine.onCommit((ev) => {
+  soundscape.playCue(
+    ev.commit.isMilestone ? 'theater_milestone' : 'theater_commit',
+    { suppressed: isPetMode() || isBroadcastMode() }
+  );
+});
 const prevBotLevels = new Map<string, number>();
 let ownerRoamRafId: number | null = null;
 let lastOwnerRoamMs = 0;
@@ -305,6 +330,7 @@ const toolbarChrome = createToolbarChrome('editor', initialLocale, {
   onTakePhoto: () => void triggerPhotoCardSnapshot().catch(() => {}),
   onToggleReport: () => toggleReportModal(),
   onToggleRaid: () => toggleRaidModal(),
+  onToggleTheater: () => toggleTheaterModal(),
   onToggleRedact: () => void toggleRedact().catch(() => {}),
   onToggleLanguage: () => void toggleLanguage().catch(() => {}),
   onToggleDemo: () => {
@@ -320,10 +346,12 @@ const toolbarChrome = createToolbarChrome('editor', initialLocale, {
       ownerAvatar.clearKeys();
       state.reportOpen = false;
       state.raidOpen = false;
+      state.theaterOpen = false;
       state.zonesOpen = false;
       state.creatorOpen = false;
       renderReportModal();
       renderRaidModal();
+      renderTheaterModal();
       renderZonesManager();
       renderCreatorStudio();
     }
@@ -562,6 +590,8 @@ const roamHud = el(
   roamHighFiveBtn,
   roamCoffeeBtn
 );
+const theaterTopHud = el('div', { className: 'bw-theater-top-hud bw-hidden' });
+const theaterBottomHud = el('div', { className: 'bw-theater-bottom-hud bw-hidden' });
 const stageWrap = el(
   'div',
   { className: 'bw-stage-wrap-editor' },
@@ -573,7 +603,9 @@ const stageWrap = el(
   cameraHud,
   roamHud,
   petActionStrip,
-  broadcastBar.root
+  broadcastBar.root,
+  theaterTopHud,
+  theaterBottomHud
 );
 stageWrap.addEventListener('pointermove', (ev) => {
   if (!isBroadcastMode()) return;
@@ -605,6 +637,7 @@ const playBtn = el(
     type: 'button',
     className: 'bw-btn',
     onClick: () => {
+      exitGitTheater(true);
       timelapse.stop();
       const locale = currentLocale();
       const theme = getThemeConfig(activeThemeId(), locale);
@@ -642,6 +675,7 @@ const liveBtn = el(
     type: 'button',
     className: 'bw-btn bw-btn-active',
     onClick: () => {
+      exitGitTheater(true);
       timelapse.stop();
       replay.returnToLive();
       syncReplayLoop();
@@ -683,6 +717,7 @@ const scrubber = el('input', {
   value: '1000',
   ariaLabel: initialStrings.scrubberAriaLabel,
   onInput: () => {
+    exitGitTheater(true);
     timelapse.stop();
     const frac = Number(scrubber.value) / 1000;
     const locale = currentLocale();
@@ -769,6 +804,14 @@ const raidBackdrop = el('div', {
     syncChromeLocale(currentLocale());
   },
 });
+const theaterBackdrop = el('div', {
+  className: 'bw-modal-backdrop bw-hidden',
+  onClick: () => {
+    state.theaterOpen = false;
+    renderTheaterModal();
+    syncChromeLocale(currentLocale());
+  },
+});
 
 root.appendChild(toolbar);
 root.appendChild(filterBar);
@@ -778,6 +821,7 @@ root.appendChild(timelineBar);
 root.appendChild(shortcutsBackdrop);
 root.appendChild(reportBackdrop);
 root.appendChild(raidBackdrop);
+root.appendChild(theaterBackdrop);
 root.appendChild(zonesBackdrop);
 root.appendChild(creatorBackdrop);
 
@@ -847,6 +891,7 @@ function currentRaidSuppression() {
     isReplay: replay.isReplay,
     viewMode: activeViewMode(),
     bossRaidMode: activeBossRaidMode(),
+    isTheater: theaterEngine.isActive(),
   });
 }
 
@@ -888,6 +933,7 @@ function buildRaidStepCtx(
     bossRaidMode: activeBossRaidMode(),
     viewMode: activeViewMode(),
     isReplay: replay.isReplay,
+    isTheater: theaterEngine.isActive(),
     demoMode: isDemoMode(),
     currentStreak: activeRaidStats().currentStreak,
     nowMs: Date.now(),
@@ -956,6 +1002,7 @@ function renderRaidModal(): void {
         bossRaidMode: ctx.bossRaidMode,
         viewMode: ctx.viewMode,
         isReplay: ctx.isReplay,
+        isTheater: ctx.isTheater,
         onSoundCue: ctx.onSoundCue,
       });
       syncRaidLoop();
@@ -974,6 +1021,7 @@ function renderRaidModal(): void {
         bossRaidMode: ctx.bossRaidMode,
         viewMode: ctx.viewMode,
         isReplay: ctx.isReplay,
+        isTheater: ctx.isTheater,
         onSoundCue: ctx.onSoundCue,
       });
       syncRaidLoop();
@@ -1011,14 +1059,259 @@ function toggleRaidModal(): void {
     ownerAvatar.clearKeys();
     state.shortcutsOpen = false;
     state.reportOpen = false;
+    state.theaterOpen = false;
     state.zonesOpen = false;
     state.creatorOpen = false;
     renderShortcutsHelp();
     renderReportModal();
+    renderTheaterModal();
     renderZonesManager();
     renderCreatorStudio();
   }
   renderRaidModal();
+  syncChromeLocale(currentLocale());
+}
+
+function updateTheaterHudNow(locale: UiLocale, redactMode: boolean): void {
+  updateTheaterStageHud(theaterTopHud, theaterBottomHud, {
+    engine: theaterEngine,
+    locale,
+    redactMode,
+    suppressed: isPetMode() || isBroadcastMode(),
+    onPlayPause: () => {
+      theaterEngine.togglePlay();
+      syncTheaterLoop();
+      renderUi();
+    },
+    onRestart: () => {
+      theaterEngine.restart();
+      syncTheaterLoop();
+      renderUi();
+    },
+    onPrevCommit: () => {
+      theaterEngine.prevCommit();
+      renderUi();
+    },
+    onNextCommit: () => {
+      theaterEngine.nextCommit();
+      renderUi();
+    },
+    onSeekFraction: (fraction) => {
+      theaterEngine.seekFraction(fraction);
+      renderUi();
+    },
+    onCycleSpeed: () => {
+      theaterEngine.cycleSpeed();
+      updateTheaterHudNow(currentLocale(), activeRedactMode());
+    },
+    onOpenSelector: () => {
+      if (!state.theaterOpen) toggleTheaterModal();
+    },
+    onExit: () => {
+      exitGitTheater();
+    },
+  });
+}
+
+function syncTheaterLoop(): void {
+  const needsLoop = theaterEngine.isPlaying() && !isPetMode() && visibilityWatcher.isVisible();
+  if (needsLoop) {
+    if (theaterRafId === null) {
+      lastTheaterTickMs = performance.now();
+      const tick = (nowMs: number) => {
+        if (!theaterEngine.isPlaying() || isPetMode() || !visibilityWatcher.isVisible()) {
+          theaterRafId = null;
+          return;
+        }
+        const dtMs = Math.max(0, Math.min(250, nowMs - lastTheaterTickMs));
+        lastTheaterTickMs = nowMs;
+        const events = theaterEngine.stepPlayback(dtMs / 1000);
+        updateTheaterHudNow(currentLocale(), activeRedactMode());
+        if (events.length > 0 || !theaterEngine.isPlaying()) {
+          renderUi();
+        }
+        if (theaterEngine.isPlaying() && !isPetMode() && visibilityWatcher.isVisible()) {
+          theaterRafId = requestAnimationFrame(tick);
+        } else {
+          theaterRafId = null;
+        }
+      };
+      theaterRafId = requestAnimationFrame(tick);
+    }
+  } else if (theaterRafId !== null) {
+    cancelAnimationFrame(theaterRafId);
+    theaterRafId = null;
+  }
+}
+
+function exitGitTheater(skipRender = false): void {
+  if (theaterRafId !== null) {
+    cancelAnimationFrame(theaterRafId);
+    theaterRafId = null;
+  }
+  if (!theaterEngine.isActive()) return;
+  theaterEngine.exit();
+  updateTheaterHudNow(currentLocale(), activeRedactMode());
+  if (!skipRender) {
+    renderUi();
+  }
+}
+
+async function openTheaterWithReel(reel: GitTheaterReel): Promise<void> {
+  state.theaterOpen = false;
+  timelapse.stop();
+  replay.returnToLive();
+  syncReplayLoop();
+  if (isPetMode() || isBroadcastMode()) {
+    await setViewModeValue('office');
+  }
+  theaterEngine.open(reel, {
+    themeId: activeThemeId(),
+    locale: currentLocale(),
+    redactMode: activeRedactMode(),
+    autoplay: true,
+  });
+  renderTheaterModal();
+  syncTheaterLoop();
+  renderUi();
+}
+
+function startDemoTheater(): void {
+  const reel = createDemoGitTheaterReel(currentLocale(), theaterRangeDays);
+  void openTheaterWithReel(reel);
+}
+
+async function refreshGitRepos(): Promise<void> {
+  if (isDemoMode() || typeof orca === 'undefined' || !orca.plugin?.request) {
+    theaterRepos = [];
+    theaterSelectedRepoId = 'demo';
+    theaterError = null;
+    theaterLoading = false;
+    renderTheaterModal();
+    return;
+  }
+  theaterLoading = true;
+  theaterError = null;
+  renderTheaterModal();
+  try {
+    const res = await orca.plugin.request('botWorld.listGitRepos');
+    theaterRepos = Array.isArray(res.repos) ? res.repos : [];
+    if (
+      theaterRepos.length > 0 &&
+      (theaterSelectedRepoId === 'demo' ||
+        !theaterRepos.some((r) => r.repoId === theaterSelectedRepoId))
+    ) {
+      theaterSelectedRepoId = theaterRepos[0].repoId;
+    } else if (theaterRepos.length === 0) {
+      theaterSelectedRepoId = 'demo';
+    }
+  } catch (err) {
+    theaterError = err instanceof Error ? err.message : String(err);
+  } finally {
+    theaterLoading = false;
+    renderTheaterModal();
+  }
+}
+
+async function startRepoTheater(): Promise<void> {
+  if (
+    theaterSelectedRepoId === 'demo' ||
+    theaterRepos.length === 0 ||
+    isDemoMode() ||
+    typeof orca === 'undefined' ||
+    !orca.plugin?.request
+  ) {
+    startDemoTheater();
+    return;
+  }
+  theaterLoading = true;
+  theaterError = null;
+  renderTheaterModal();
+  try {
+    const reel = await orca.plugin.request('botWorld.getGitHistoryReel', {
+      repoId: theaterSelectedRepoId,
+      rangeDays: theaterRangeDays,
+      maxCommits: 60,
+    });
+    if (!reel || reel.commits.length === 0) {
+      theaterError = tStrings(currentLocale()).theaterEmptyCommitsNote;
+      theaterLoading = false;
+      renderTheaterModal();
+      return;
+    }
+    theaterLoading = false;
+    await openTheaterWithReel(reel);
+  } catch (err) {
+    theaterError = err instanceof Error ? err.message : String(err);
+    theaterLoading = false;
+    renderTheaterModal();
+  }
+}
+
+function renderTheaterModal(): void {
+  const reel = theaterEngine.getReel();
+  renderGitTheaterModal(theaterBackdrop, {
+    open: state.theaterOpen,
+    locale: currentLocale(),
+    redactMode: activeRedactMode(),
+    loading: theaterLoading,
+    errorMessage: theaterError,
+    repos: theaterRepos,
+    selectedRepoId: theaterSelectedRepoId,
+    rangeDays: theaterRangeDays,
+    theaterActive: theaterEngine.isActive(),
+    isDemoReelActive: Boolean(reel?.isDemo),
+    onSelectRepo: (repoId) => {
+      theaterSelectedRepoId = repoId;
+      theaterError = null;
+      renderTheaterModal();
+    },
+    onSelectRange: (days) => {
+      theaterRangeDays = days;
+      theaterError = null;
+      renderTheaterModal();
+    },
+    onRefreshRepos: () => {
+      void refreshGitRepos();
+    },
+    onStartRepoTheater: () => {
+      void startRepoTheater();
+    },
+    onStartDemoTheater: () => {
+      startDemoTheater();
+    },
+    onExitTheater: () => {
+      state.theaterOpen = false;
+      renderTheaterModal();
+      exitGitTheater();
+    },
+    onClose: () => {
+      state.theaterOpen = false;
+      renderTheaterModal();
+      syncChromeLocale(currentLocale());
+    },
+  });
+}
+
+function toggleTheaterModal(): void {
+  state.theaterOpen = !state.theaterOpen;
+  if (state.theaterOpen) {
+    ownerAvatar.clearKeys();
+    state.shortcutsOpen = false;
+    state.reportOpen = false;
+    state.raidOpen = false;
+    state.zonesOpen = false;
+    state.creatorOpen = false;
+    renderShortcutsHelp();
+    renderReportModal();
+    renderRaidModal();
+    renderZonesManager();
+    renderCreatorStudio();
+    if (theaterRepos.length === 0 && !theaterLoading && !isDemoMode()) {
+      void refreshGitRepos();
+    }
+  }
+  renderTheaterModal();
   syncChromeLocale(currentLocale());
 }
 
@@ -1271,7 +1564,10 @@ function syncOwnerRoamLoop(): void {
           const nearbyBotId = updateOwnerRoamHud(snap, redactMode, locale);
           const s = tStrings(locale);
           const themeId = activeThemeId();
-          const appearances = mergedAppearances();
+          const appearances =
+    theaterEngine.isActive() && !isPetMode()
+      ? theaterEngine.buildCastAppearances()
+      : mergedAppearances();
           const selectedId = resolveSelectedBotId(snap);
           const displayTimestampMs = replay.isReplay
             ? replay.cursorMs
@@ -1329,6 +1625,7 @@ function syncOwnerRoamLoop(): void {
             stuckAlerts: activeStuckAlerts(snap, displayTimestampMs, redactMode, locale),
             bossRaid: activeRaidEngine(),
             bossRaidSuppressed: currentRaidSuppression() !== null,
+            gitTheater: theaterEngine.isActive() ? theaterEngine : null,
           });
         }
         if (ownerAvatar.roaming && !isPetMode() && visibilityWatcher.isVisible()) {
@@ -1442,6 +1739,12 @@ function resetCustomSeats(): void {
 }
 
 function currentDisplayedSnapshot(): WorldSnapshot {
+  if (theaterEngine.isActive() && !isPetMode()) {
+    return theaterEngine.buildTheaterSnapshot(
+      currentLocale(),
+      activeRedactMode()
+    );
+  }
   return replay.isReplay ? replay.snapshot : state.payload.snapshot;
 }
 
@@ -1713,12 +2016,14 @@ function toggleReportModal(): void {
     ownerAvatar.clearKeys();
     state.shortcutsOpen = false;
     state.raidOpen = false;
+    state.theaterOpen = false;
     state.zonesOpen = false;
     state.creatorOpen = false;
     state.reportCopied = false;
     state.standupCopied = false;
     renderShortcutsHelp();
     renderRaidModal();
+    renderTheaterModal();
     renderZonesManager();
     renderCreatorStudio();
   }
@@ -1783,10 +2088,12 @@ function toggleZonesModal(): void {
     state.shortcutsOpen = false;
     state.reportOpen = false;
     state.raidOpen = false;
+    state.theaterOpen = false;
     state.creatorOpen = false;
     renderShortcutsHelp();
     renderReportModal();
     renderRaidModal();
+    renderTheaterModal();
     renderCreatorStudio();
   }
   renderZonesManager();
@@ -2100,12 +2407,14 @@ function toggleCreatorStudioModal(forceTab?: CreatorStudioTab): void {
     state.shortcutsOpen = false;
     state.reportOpen = false;
     state.raidOpen = false;
+    state.theaterOpen = false;
     state.zonesOpen = false;
     state.creatorStatusMessage = null;
     state.creatorTargetBotId = resolveSelectedBotId(currentDisplayedSnapshot());
     renderShortcutsHelp();
     renderReportModal();
     renderRaidModal();
+    renderTheaterModal();
     renderZonesManager();
   }
   renderCreatorStudio();
@@ -2119,6 +2428,7 @@ function toggleTimelapse(): void {
     renderUi();
     return;
   }
+  exitGitTheater(true);
   const locale = currentLocale();
   const theme = getThemeConfig(activeThemeId(), locale);
   const bounds = replay.timeBounds(state.payload.keyframes, state.payload.events);
@@ -2252,6 +2562,8 @@ function syncChromeLocale(locale: UiLocale): void {
     reportOpen: state.reportOpen,
     raidOpen: state.raidOpen,
     raidActive: Boolean(activeRaidEngine().activeBoss || activeRaidEngine().isPomodoroActive()),
+    theaterOpen: state.theaterOpen,
+    theaterActive: theaterEngine.isActive(),
     shortcutsOpen: state.shortcutsOpen,
     connected: snap.runtime.connected,
     retryAfterSecs: snap.runtime.retryAfterSecs,
@@ -2313,6 +2625,8 @@ function renderToolbarOnly(
     reportOpen: state.reportOpen,
     raidOpen: state.raidOpen,
     raidActive: Boolean(activeRaidEngine().activeBoss || activeRaidEngine().isPomodoroActive()),
+    theaterOpen: state.theaterOpen,
+    theaterActive: theaterEngine.isActive(),
     shortcutsOpen: state.shortcutsOpen,
     connected: snap.runtime.connected,
     retryAfterSecs: snap.runtime.retryAfterSecs,
@@ -2460,6 +2774,12 @@ function renderStageFrame(
   if (!petActive) {
     const s = tStrings(locale);
     const nearbyBotId = updateOwnerRoamHud(snap, redactMode, locale);
+    theaterEngine.setContext({
+      themeId,
+      locale,
+      redactMode,
+    });
+    updateTheaterHudNow(locale, redactMode);
     const raidEngine = activeRaidEngine();
     const raidSuppressed = currentRaidSuppression() !== null;
     const themeCfg = getThemeConfig(themeId, locale);
@@ -2473,6 +2793,7 @@ function renderStageFrame(
       bossRaidMode: activeBossRaidMode(),
       viewMode: activeViewMode(),
       isReplay: replay.isReplay,
+      isTheater: theaterEngine.isActive(),
       demoMode: isDemoMode(),
       currentStreak: activeRaidStats().currentStreak,
       nowMs: Date.now(),
@@ -2520,10 +2841,12 @@ function renderStageFrame(
       stuckAlerts,
       bossRaid: raidEngine,
       bossRaidSuppressed: raidSuppressed,
+      gitTheater: theaterEngine.isActive() ? theaterEngine : null,
     });
   } else {
     roamHud.classList.add('bw-hidden');
     raidHudBtn.classList.add('bw-hidden');
+    updateTheaterHudNow(locale, redactMode);
     syncRaidLoop();
   }
 }
@@ -2678,6 +3001,7 @@ function renderSidePanelsIfNeeded(
         limit: 120,
         locale,
         onJumpToTime: (ts) => {
+          exitGitTheater(true);
           timelapse.stop();
           const curLocale = currentLocale();
           replay.seekTo(
@@ -2746,7 +3070,10 @@ function syncReplayLoop(): void {
         }
         const snap = currentDisplayedSnapshot();
         const redactMode = activeRedactMode();
-        const appearances = mergedAppearances();
+        const appearances =
+    theaterEngine.isActive() && !isPetMode()
+      ? theaterEngine.buildCastAppearances()
+      : mergedAppearances();
         const selectedId = resolveSelectedBotId(snap);
         renderTimelineControlsOnly(snap, locale);
         renderStageFrame(themeId, redactMode, appearances, snap, selectedId, locale);
@@ -2769,7 +3096,10 @@ function renderUi(forceSidePanels = false): void {
   const locale = currentLocale();
   const themeId = activeThemeId();
   const redactMode = activeRedactMode();
-  const appearances = mergedAppearances();
+  const appearances =
+    theaterEngine.isActive() && !isPetMode()
+      ? theaterEngine.buildCastAppearances()
+      : mergedAppearances();
   const snap = currentDisplayedSnapshot();
   const selectedId = resolveSelectedBotId(snap);
 
@@ -2781,6 +3111,7 @@ function renderUi(forceSidePanels = false): void {
   renderShortcutsHelp();
   renderReportModal();
   renderRaidModal();
+  renderTheaterModal();
   renderZonesManager();
   renderCreatorStudio();
   syncRaidLoop();
@@ -2834,6 +3165,7 @@ function syncDemoTick(advance: boolean, forceSidePanels = false): void {
       bossRaidMode: activeBossRaidMode(),
       viewMode: activeViewMode(),
       isReplay: false,
+      isTheater: theaterEngine.isActive(),
       demoMode: true,
       currentStreak: demoRaidStats.currentStreak,
       nowMs: Date.now(),
@@ -2890,6 +3222,7 @@ function enterDemoMode(): void {
   demoSession = createDemoOfficeSession();
   demoRaidEngine.reset();
   demoRaidStats = createEmptyBossRaidStats();
+  exitGitTheater(true);
   timelapse.stop();
   replay.returnToLive();
   liveMotion.clearTransients();
@@ -2939,6 +3272,7 @@ function exitDemoMode(): void {
   demoMilestones.reset();
   demoRaidEngine.reset();
   demoRaidStats = createEmptyBossRaidStats();
+  exitGitTheater(true);
   timelapse.stop();
   replay.returnToLive();
   liveMotion.clearTransients();
@@ -2963,6 +3297,9 @@ function applyIncomingPayload(nextPayload: BotWorldStatePayload): void {
   }
   if (isDemoMode()) {
     return;
+  }
+  if (nextPayload.viewMode === 'pet' || nextPayload.viewMode === 'broadcast') {
+    exitGitTheater(true);
   }
   soundscape.setMode(nextPayload.soundMode ?? 'off', { fromUserGesture: false });
   const locale = effectiveLocale(nextPayload.languageSetting, getHostLocale());
@@ -2994,6 +3331,7 @@ function applyIncomingPayload(nextPayload: BotWorldStatePayload): void {
         bossRaidMode: nextPayload.bossRaidMode ?? 'auto',
         viewMode: nextPayload.viewMode ?? 'office',
         isReplay: replay.isReplay,
+        isTheater: theaterEngine.isActive(),
         demoMode: false,
         currentStreak: liveRaidStats.currentStreak,
         nowMs: Date.now(),
@@ -3005,6 +3343,7 @@ function applyIncomingPayload(nextPayload: BotWorldStatePayload): void {
                 isReplay: replay.isReplay,
                 viewMode: nextPayload.viewMode ?? 'office',
                 bossRaidMode: nextPayload.bossRaidMode ?? 'auto',
+                isTheater: theaterEngine.isActive(),
               }) !== null,
           });
         },
@@ -3121,6 +3460,7 @@ async function setViewModeValue(nextMode: ViewMode): Promise<void> {
   }
   if (nextMode === 'pet' || nextMode === 'broadcast') {
     ownerAvatar.clearKeys();
+    exitGitTheater(true);
   }
   if (isDemoMode()) {
     demoViewMode = nextMode;
@@ -3527,14 +3867,16 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
   handleGestureUnlock();
   const modalOpen = state.shortcutsOpen || state.reportOpen || state.raidOpen || state.zonesOpen || state.creatorOpen;
   if (shouldIgnoreShortcutEvent(ev, { modalOpen })) return;
-  if (!modalOpen && ownerAvatar.roaming && activeViewMode() === 'office') {
+  const anyModalOpen = modalOpen || state.theaterOpen;
+  if (state.theaterOpen && shouldIgnoreShortcutEvent(ev, { modalOpen: anyModalOpen })) return;
+  if (!anyModalOpen && ownerAvatar.roaming && activeViewMode() === 'office') {
     if (ownerAvatar.setMoveKey(ev.key, true)) {
       ev.preventDefault();
       syncOwnerRoamLoop();
       return;
     }
   }
-  const action = mapKeyToShortcutAction(ev.key, { isEditor: true, modalOpen });
+  const action = mapKeyToShortcutAction(ev.key, { isEditor: true, modalOpen: anyModalOpen });
   if (!action) return;
   switch (action) {
     case 'toggleTheme': {
@@ -3562,6 +3904,12 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
       break;
     case 'toggleReplayPlay': {
       ev.preventDefault();
+      if (theaterEngine.isActive()) {
+        theaterEngine.togglePlay();
+        syncTheaterLoop();
+        renderUi();
+        break;
+      }
       if (timelapse.active) {
         timelapse.stop();
         replay.isPlaying = false;
@@ -3588,6 +3936,9 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
       break;
     case 'toggleRaid':
       toggleRaidModal();
+      break;
+    case 'toggleTheater':
+      toggleTheaterModal();
       break;
     case 'takePhotoCard':
       void triggerPhotoCardSnapshot().catch(() => {});
@@ -3637,10 +3988,12 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
         ownerAvatar.clearKeys();
         state.reportOpen = false;
         state.raidOpen = false;
+        state.theaterOpen = false;
         state.zonesOpen = false;
         state.creatorOpen = false;
         renderReportModal();
         renderRaidModal();
+        renderTheaterModal();
         renderZonesManager();
         renderCreatorStudio();
       }
@@ -3653,6 +4006,10 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
         searchInput.value = '';
         searchInput.blur();
         renderUi();
+      } else if (state.theaterOpen) {
+        state.theaterOpen = false;
+        renderTheaterModal();
+        syncChromeLocale(currentLocale());
       } else if (state.creatorOpen) {
         state.creatorOpen = false;
         state.creatorStatusMessage = null;
@@ -3680,6 +4037,8 @@ const handleKeyDown = (ev: KeyboardEvent): void => {
         timelapse.stop();
         syncReplayLoop();
         renderUi();
+      } else if (theaterEngine.isActive()) {
+        exitGitTheater();
       } else if (renderer.camera.followBotId !== null) {
         renderer.camera.releaseFollow();
         updateCameraHud(currentLocale());
@@ -3717,6 +4076,7 @@ const visibilityWatcher = watchDocumentVisibility((visible) => {
   syncOwnerRoamLoop();
   syncReplayLoop();
   syncRaidLoop();
+  syncTheaterLoop();
   syncDemoInterval();
   if (visible && isDemoMode() && !replay.isReplay) {
     syncDemoTick(false);
@@ -3764,6 +4124,7 @@ function cleanup(): void {
     stageToastTimer = null;
   }
   timelapse.stop();
+  exitGitTheater(true);
   if (replayTimerId !== null) {
     cancelAnimationFrame(replayTimerId);
     replayTimerId = null;

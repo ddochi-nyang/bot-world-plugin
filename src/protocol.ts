@@ -8,6 +8,9 @@ import type {
   CreatorAssetsState,
   DeskPropId,
   FocusTerminalResponse,
+  GitRangeDays,
+  GitRepoSummary,
+  GitTheaterReel,
   ItemReplyResponse,
   LanguageSetting,
   OpenWorkspaceResponse,
@@ -131,6 +134,19 @@ declare module 'orca' {
     'botWorld.recordRaidOutcome': {
       input: RecordRaidOutcomeInput;
       output: BossRaidStats;
+    };
+    'botWorld.listGitRepos': {
+      input?: { locale?: string };
+      output: { repos: GitRepoSummary[] };
+    };
+    'botWorld.getGitHistoryReel': {
+      input: {
+        repoId: string;
+        rangeDays?: GitRangeDays;
+        maxCommits?: number;
+        locale?: string;
+      };
+      output: GitTheaterReel;
     };
   }
 

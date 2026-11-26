@@ -33,6 +33,7 @@ export type ShortcutAction =
   | 'toggleBroadcast'
   | 'toggleCreatorStudio'
   | 'toggleRaid'
+  | 'toggleTheater'
   | 'toggleRoam'
   | 'highFiveNearby'
   | 'handCoffeeNearby'
@@ -71,7 +72,13 @@ export function shouldIgnoreShortcutEvent(
     }
   }
   if (options?.modalOpen) {
-    return lowerKey !== '?' && lowerKey !== 'i' && lowerKey !== 'u' && lowerKey !== 'x';
+    return (
+      lowerKey !== '?' &&
+      lowerKey !== 'i' &&
+      lowerKey !== 'u' &&
+      lowerKey !== 'x' &&
+      lowerKey !== 'y'
+    );
   }
   return false;
 }
@@ -87,6 +94,7 @@ export function mapKeyToShortcutAction(
     if (lower === 'i') return 'toggleReport';
     if (lower === 'u') return 'toggleCreatorStudio';
     if (lower === 'x') return 'toggleRaid';
+    if (lower === 'y') return 'toggleTheater';
     if (lower === 'escape') return 'closeOrClearSelection';
     return null;
   }
@@ -131,6 +139,8 @@ export function mapKeyToShortcutAction(
       return 'toggleCreatorStudio';
     case 'x':
       return 'toggleRaid';
+    case 'y':
+      return 'toggleTheater';
     case 'v':
       return 'toggleRoam';
     case 'h':
@@ -243,6 +253,7 @@ export function renderShortcutsModal(
     { keyLabel: 'B', description: s.shortcutToggleBroadcast },
     { keyLabel: 'U', description: s.shortcutToggleCreatorStudio },
     { keyLabel: 'X', description: s.shortcutToggleRaid },
+    { keyLabel: 'Y', description: s.shortcutToggleTheater },
     { keyLabel: 'V', description: s.shortcutToggleRoam },
     { keyLabel: 'H', description: s.shortcutHighFive },
     { keyLabel: 'K', description: s.shortcutHandCoffee },

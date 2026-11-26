@@ -37,7 +37,8 @@ export type IconName =
   | 'coffee'
   | 'ball'
   | 'cookie'
-  | 'swords';
+  | 'swords'
+  | 'film';
 
 type SvgShape =
   | { tag: 'path'; attrs: Record<string, string> }
@@ -245,6 +246,16 @@ const ICON_SHAPES: Readonly<Record<IconName, readonly SvgShape[]>> = Object.free
     { tag: 'line', attrs: { x1: '5', y1: '14', x2: '9', y2: '18' } },
     { tag: 'line', attrs: { x1: '7', y1: '17', x2: '4', y2: '20' } },
     { tag: 'line', attrs: { x1: '3', y1: '19', x2: '5', y2: '21' } },
+  ],
+  film: [
+    { tag: 'rect', attrs: { x: '2', y: '4', width: '20', height: '16', rx: '2' } },
+    { tag: 'line', attrs: { x1: '7', y1: '4', x2: '7', y2: '20' } },
+    { tag: 'line', attrs: { x1: '17', y1: '4', x2: '17', y2: '20' } },
+    { tag: 'line', attrs: { x1: '2', y1: '12', x2: '22', y2: '12' } },
+    { tag: 'line', attrs: { x1: '2', y1: '8', x2: '7', y2: '8' } },
+    { tag: 'line', attrs: { x1: '2', y1: '16', x2: '7', y2: '16' } },
+    { tag: 'line', attrs: { x1: '17', y1: '8', x2: '22', y2: '8' } },
+    { tag: 'line', attrs: { x1: '17', y1: '16', x2: '22', y2: '16' } },
   ],
 });
 

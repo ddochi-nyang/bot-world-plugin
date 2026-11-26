@@ -597,7 +597,7 @@ export type UiDictionary = {
   raidPracticeTag: string;
   raidCalmTitle: string;
   raidCalmDesc: string;
-  raidSuppressedNote: (reason: 'off' | 'replay' | 'pet' | 'broadcast') => string;
+  raidSuppressedNote: (reason: 'off' | 'replay' | 'pet' | 'broadcast' | 'theater') => string;
   raidCoopStrike: string;
   raidSummonPractice: string;
   raidTopContributor: (name: string, dmg: number) => string;
@@ -632,6 +632,39 @@ export type UiDictionary = {
     streak: number,
     bestStreak: number
   ) => string;
+  shortcutToggleTheater: string;
+  toolbarTheater: string;
+  toolbarTheaterTitle: string;
+  tipTheater: string;
+  theaterTitle: string;
+  theaterSubtitle: string;
+  theaterClose: string;
+  theaterRepoLabel: string;
+  theaterRangeLabel: string;
+  theaterRangeOption: (days: 7 | 14 | 30) => string;
+  theaterDemoRepoOption: string;
+  theaterStartAction: string;
+  theaterWatchDemoAction: string;
+  theaterExitAction: string;
+  theaterRefreshAction: string;
+  theaterLoading: string;
+  theaterNoReposNote: string;
+  theaterEmptyCommitsNote: string;
+  theaterPrivacyNote: string;
+  theaterModeActiveBadge: string;
+  theaterMainBranchHub: string;
+  theaterPlay: string;
+  theaterPause: string;
+  theaterRestart: string;
+  theaterPrevCommit: string;
+  theaterNextCommit: string;
+  theaterSwitchRepo: string;
+  theaterSpeedTitle: (speed: number) => string;
+  theaterScrubLabel: string;
+  theaterCommitCounter: (current: number, total: number) => string;
+  theaterStatsLine: (files: number, ins: number, del: number) => string;
+  theaterMilestoneTag: string;
+  theaterErrorTitle: string;
 };
 
 export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
@@ -1223,6 +1256,8 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
           return 'Boss Raid is hidden while viewing Pocket Pet Terrarium.';
         case 'broadcast':
           return 'Boss Raid is hidden in Broadcast Chroma Bar mode.';
+        case 'theater':
+          return 'Boss Raid is paused while Git History Theater is playing.';
       }
     },
     raidCoopStrike: '⚡ Co-op Strike',
@@ -1253,6 +1288,42 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     reportSectionBossRaid: 'Boss Raid & Pomodoro',
     reportBossRaidSummary: (cleared, pomodoros, focusMin, damage, streak, bestStreak) =>
       `Cleared ${cleared} · Pomodoros ${pomodoros} (${focusMin}m) · Damage ${damage} · Streak ${streak} (Best ${bestStreak})`,
+    shortcutToggleTheater: 'Toggle Git History Theater',
+    toolbarTheater: 'Theater',
+    toolbarTheaterTitle: 'Git History Theater (Y)',
+    tipTheater: 'Watch Git commit history in 30s office theater',
+    theaterTitle: 'Git History Theater',
+    theaterSubtitle: 'Watch local repository commits animate as a 30-second office show',
+    theaterClose: 'Close',
+    theaterRepoLabel: 'Repository',
+    theaterRangeLabel: 'Time Range',
+    theaterRangeOption: (days) => `Last ${days} days`,
+    theaterDemoRepoOption: 'Demo Office Reel (24 commits)',
+    theaterStartAction: 'Watch in Theater',
+    theaterWatchDemoAction: 'Watch Demo Reel',
+    theaterExitAction: 'Exit Theater',
+    theaterRefreshAction: 'Refresh Repos',
+    theaterLoading: 'Scanning git history...',
+    theaterNoReposNote:
+      'No local .git repositories detected. You can still play the built-in 24-commit Demo Reel.',
+    theaterEmptyCommitsNote:
+      'No commits found in the selected period. Try a wider range or the Demo Reel.',
+    theaterPrivacyNote:
+      'Read-only local git log (emails excluded, secrets scrubbed, never saved to storage).',
+    theaterModeActiveBadge: 'THEATER',
+    theaterMainBranchHub: 'main',
+    theaterPlay: 'Play',
+    theaterPause: 'Pause',
+    theaterRestart: 'Restart',
+    theaterPrevCommit: 'Prev',
+    theaterNextCommit: 'Next',
+    theaterSwitchRepo: 'Reel',
+    theaterSpeedTitle: (speed) => `Playback speed ${speed}x`,
+    theaterScrubLabel: 'Git Theater Scrubber',
+    theaterCommitCounter: (current, total) => `${current}/${total} commits`,
+    theaterStatsLine: (files, ins, del) => `${files} files  +${ins} / -${del}`,
+    theaterMilestoneTag: 'MILESTONE',
+    theaterErrorTitle: 'Could not load repository history',
   },
   ko: {
     appTitlePanel: '봇 월드',
@@ -1839,6 +1910,8 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
           return '포켓 펫 테라리움 화면에서는 보스 레이드를 숨깁니다.';
         case 'broadcast':
           return '방송 크로마 바 화면에서는 보스 레이드를 숨깁니다.';
+        case 'theater':
+          return 'Git 히스토리 극장 재생 중에는 보스 레이드가 일시 중지됩니다.';
       }
     },
     raidCoopStrike: '⚡ 코옵 일격',
@@ -1869,6 +1942,42 @@ export const UI_STRINGS: Readonly<Record<UiLocale, UiDictionary>> = {
     reportSectionBossRaid: '보스 레이드 & 포모도로',
     reportBossRaidSummary: (cleared, pomodoros, focusMin, damage, streak, bestStreak) =>
       `처치 ${cleared}회 · 포모도로 ${pomodoros}회 (${focusMin}분) · 피해 ${damage} · 연속 ${streak}회 (최고 ${bestStreak}회)`,
+    shortcutToggleTheater: 'Git 히스토리 극장 전환',
+    toolbarTheater: '극장',
+    toolbarTheaterTitle: 'Git 히스토리 극장 (Y)',
+    tipTheater: 'Git 커밋 이력을 30초 오피스 극장으로 재생',
+    theaterTitle: 'Git 히스토리 극장',
+    theaterSubtitle: '로컬 저장소 커밋 이력을 30초 오피스 공연으로 재생합니다',
+    theaterClose: '닫기',
+    theaterRepoLabel: '저장소',
+    theaterRangeLabel: '기간',
+    theaterRangeOption: (days) => `최근 ${days}일`,
+    theaterDemoRepoOption: '데모 오피스 릴 (24커밋)',
+    theaterStartAction: '극장에서 보기',
+    theaterWatchDemoAction: '데모 릴 보기',
+    theaterExitAction: '극장 종료',
+    theaterRefreshAction: '저장소 새로고침',
+    theaterLoading: 'Git 이력을 불러오는 중...',
+    theaterNoReposNote:
+      '로컬 .git 저장소가 감지되지 않았습니다. 내장 24커밋 데모 릴은 바로 재생할 수 있습니다.',
+    theaterEmptyCommitsNote:
+      '선택한 기간에 커밋이 없습니다. 기간을 넓히거나 데모 릴을 선택하세요.',
+    theaterPrivacyNote:
+      '읽기 전용 로컬 git log만 사용하며 이메일 제외·시크릿 마스킹 후 저장소에 보관하지 않습니다.',
+    theaterModeActiveBadge: '극장 모드',
+    theaterMainBranchHub: 'main',
+    theaterPlay: '재생',
+    theaterPause: '일시정지',
+    theaterRestart: '처음부터',
+    theaterPrevCommit: '이전',
+    theaterNextCommit: '다음',
+    theaterSwitchRepo: '릴 선택',
+    theaterSpeedTitle: (speed) => `재생 배속 ${speed}x`,
+    theaterScrubLabel: 'Git 극장 탐색 막대',
+    theaterCommitCounter: (current, total) => `${current}/${total} 커밋`,
+    theaterStatsLine: (files, ins, del) => `${files}개 파일  +${ins} / -${del}`,
+    theaterMilestoneTag: '마일스톤',
+    theaterErrorTitle: '저장소 이력을 불러오지 못했습니다',
   },
 };
 

@@ -38,6 +38,8 @@ export type ToolbarSyncState = {
   reportOpen: boolean;
   raidOpen?: boolean;
   raidActive?: boolean;
+  theaterOpen?: boolean;
+  theaterActive?: boolean;
   shortcutsOpen: boolean;
   connected: boolean;
   retryAfterSecs: number | null;
@@ -60,6 +62,7 @@ export type ToolbarChromeHandlers = {
   onTakePhoto: () => void;
   onToggleReport: () => void;
   onToggleRaid?: () => void;
+  onToggleTheater?: () => void;
   onToggleRedact: () => void;
   onToggleLanguage: () => void;
   onToggleDemo: () => void;
@@ -88,6 +91,7 @@ export type ToolbarChrome = {
   photoBtn: HTMLButtonElement;
   reportBtn: HTMLButtonElement;
   raidBtn: HTMLButtonElement;
+  theaterBtn: HTMLButtonElement;
   redactBtn: HTMLButtonElement;
   langBtn: HTMLButtonElement;
   demoBtn: HTMLButtonElement;
@@ -332,6 +336,19 @@ export function createToolbarChrome(
     svgIcon('swords')
   ) as HTMLButtonElement;
 
+  const theaterBtn = el(
+    'button',
+    {
+      type: 'button',
+      className: iconBtnClass,
+      tooltip: s.tipTheater,
+      tooltipKbd: 'Y',
+      ariaLabel: s.toolbarTheaterTitle,
+      onClick: () => handlers.onToggleTheater?.(),
+    },
+    svgIcon('film')
+  ) as HTMLButtonElement;
+
   const redactBtn = el(
     'button',
     {
@@ -434,6 +451,7 @@ export function createToolbarChrome(
           photoBtn,
           reportBtn,
           raidBtn,
+          theaterBtn,
           el('span', { className: 'bw-toolbar-sep' }),
           redactBtn,
           langBtn,
@@ -470,6 +488,7 @@ export function createToolbarChrome(
           photoBtn,
           reportBtn,
           raidBtn,
+          theaterBtn,
           el('span', { className: 'bw-toolbar-sep' }),
           redactBtn,
           langBtn,
@@ -500,6 +519,7 @@ export function createToolbarChrome(
     photoBtn,
     reportBtn,
     raidBtn,
+    theaterBtn,
     redactBtn,
     langBtn,
     demoBtn,
@@ -637,6 +657,11 @@ export function syncToolbarChrome(chrome: ToolbarChrome, st: ToolbarSyncState): 
   setTooltip(chrome.raidBtn, s.tipRaid, 'X');
   chrome.raidBtn.setAttribute('aria-label', s.raidButtonTitle);
   chrome.raidBtn.classList.toggle('bw-btn-active', Boolean(st.raidOpen || st.raidActive));
+
+  setButtonContent(chrome.theaterBtn, 'film');
+  setTooltip(chrome.theaterBtn, s.tipTheater, 'Y');
+  chrome.theaterBtn.setAttribute('aria-label', s.toolbarTheaterTitle);
+  chrome.theaterBtn.classList.toggle('bw-btn-active', Boolean(st.theaterOpen || st.theaterActive));
 
   setButtonContent(
     chrome.redactBtn,

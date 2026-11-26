@@ -11,6 +11,73 @@ export type ViewMode = 'office' | 'pet' | 'broadcast';
 export type BossRaidMode = 'auto' | 'off';
 export type BossKind = 'error_blob' | 'stall_golem' | 'ci_wyvern' | 'sprint_titan';
 export type PomodoroPresetMinutes = 15 | 25 | 50;
+export type GitCommitKind =
+  | 'feat'
+  | 'fix'
+  | 'refactor'
+  | 'test'
+  | 'docs'
+  | 'chore'
+  | 'merge'
+  | 'other';
+export type GitRangeDays = 7 | 14 | 30;
+export type GitRepoSummary = {
+  repoId: string;
+  repoLabel: string;
+  branch: string;
+  isDemo?: boolean;
+};
+export type GitCastMember = {
+  authorKey: string;
+  authorName: string;
+  redactedName: string;
+  commitCount: number;
+  characterId: CharacterId;
+  seatSlot: number;
+};
+export type GitCommitEvent = {
+  shortHash: string;
+  timestampMs: number;
+  authorKey: string;
+  authorName: string;
+  subject: string;
+  filesChanged: number;
+  insertions: number;
+  deletions: number;
+  commitKind: GitCommitKind;
+  topArea: string;
+  isMilestone: boolean;
+};
+export type GitTheaterReel = {
+  repoId: string;
+  repoLabel: string;
+  branch: string;
+  rangeDays: GitRangeDays;
+  generatedAtMs: number;
+  isDemo: boolean;
+  cast: GitCastMember[];
+  commits: GitCommitEvent[];
+  totalCommits: number;
+  totalInsertions: number;
+  totalDeletions: number;
+};
+
+export const VALID_GIT_RANGE_DAYS: readonly GitRangeDays[] = [7, 14, 30] as const;
+
+export function isValidGitRangeDays(value: unknown): value is GitRangeDays {
+  return value === 7 || value === 14 || value === 30;
+}
+
+export const VALID_GIT_COMMIT_KINDS: readonly GitCommitKind[] = [
+  'feat',
+  'fix',
+  'refactor',
+  'test',
+  'docs',
+  'chore',
+  'merge',
+  'other',
+] as const;
 export type BroadcastChromaKey = 'green' | 'blue' | 'black' | 'charcoal';
 export type PetToyKind = 'coffee' | 'ball' | 'treat';
 export type DeskPropId =

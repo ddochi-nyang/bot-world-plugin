@@ -44,6 +44,16 @@ import {
   resolveHandle,
 } from './events.ts';
 import {
+  type GitExecRunner,
+  GitHistoryError,
+  GitRepoRegistry,
+  type LocalRepoCandidate,
+  redactGitRepoSummaries,
+  redactGitTheaterReel,
+  summarizeGitFailure,
+  validateGetGitHistoryReelInput,
+} from './git-history.ts';
+import {
   type CliEnvelope,
   MAX_ITEM_NUMBER,
   OrcaCli,
@@ -601,6 +611,8 @@ export class BotWorldWorkerController {
   private readonly seenRpgEventIds = new Set<string>();
   private readonly desktopNotifier = new DesktopNotificationManager();
   private readonly watchdogTracker = new StuckWatchdogTracker();
+  private readonly gitRepoRegistry: GitRepoRegistry;
+  private readonly injectedRepoRoots: LocalRepoCandidate[];
   private lastStuckAlerts: StuckAlert[] = [];
   private lastStuckSig = '';
   private readonly session = new PollerSession();
@@ -667,7 +679,13 @@ export class BotWorldWorkerController {
   constructor(
     orca: OrcaWorkerApi,
     cli?: OrcaClient,
-    options?: { quickSend?: QuickSendFn; replyNeedsOwnerItem?: ItemReplyFn; nowMs?: () => number }
+    options?: {
+      quickSend?: QuickSendFn;
+      replyNeedsOwnerItem?: ItemReplyFn;
+      nowMs?: () => number;
+      gitExec?: GitExecRunner;
+      localRepoRoots?: readonly LocalRepoCandidate[];
+    }
   ) {
     this.orca = orca;
     this.cli = cli ?? new OrcaCli();
@@ -677,6 +695,8 @@ export class BotWorldWorkerController {
       options?.replyNeedsOwnerItem ??
       ((botName, itemNumber, answerText) => replyNeedsOwnerItem(botName, itemNumber, answerText));
     this.nowMs = options?.nowMs ?? (() => Date.now());
+    this.gitRepoRegistry = new GitRepoRegistry({ execRunner: options?.gitExec });
+    this.injectedRepoRoots = options?.localRepoRoots ? [...options.localRepoRoots] : [];
     try {
       this.hostLocale = Intl.DateTimeFormat().resolvedOptions().locale || 'en';
     } catch {
@@ -1060,6 +1080,39 @@ export class BotWorldWorkerController {
         totalBytes = utf8ByteLength(payload);
       }
     }
+  }
+
+  private async collectLocalRepoCandidates(): Promise<LocalRepoCandidate[]> {
+    const candidates: LocalRepoCandidate[] = [...this.injectedRepoRoots];
+    if (this.orca.host.has('project.list')) {
+      try {
+        const res = await this.orca.host.call('project.list');
+        if (res && Array.isArray(res.projects)) {
+          for (const proj of res.projects) {
+            if (proj && typeof proj.path === 'string' && !proj.hidden) {
+              candidates.push({ path: proj.path, hostId: proj.hostId ?? null });
+            }
+          }
+        }
+      } catch {
+        // Ignore host refusal or unavailability
+      }
+    }
+    if (this.orca.host.has('workspace.list')) {
+      try {
+        const res = await this.orca.host.call('workspace.list');
+        if (res && Array.isArray(res.workspaces)) {
+          for (const ws of res.workspaces) {
+            if (ws && typeof ws.path === 'string') {
+              candidates.push({ path: ws.path, hostId: ws.hostId ?? null });
+            }
+          }
+        }
+      } catch {
+        // Ignore host refusal or unavailability
+      }
+    }
+    return candidates;
   }
 
   private async persistPrefs(): Promise<void> {
@@ -1931,6 +1984,87 @@ export class BotWorldWorkerController {
         await this.persistRaidStats();
         this.postStateUpdated();
         return { ...this.raidStats };
+      }),
+
+      this.orca.panels.handle('botWorld.listGitRepos', async (input) => {
+        let reqLocale = this.currentLocale();
+        if (input !== undefined && input !== null) {
+          if (typeof input !== 'object' || Array.isArray(input)) {
+            throw makeHostError('invalid_params', 'input must be an object');
+          }
+          const clean = stripDangerousKeys(input as Record<string, unknown>);
+          if (clean.locale !== undefined && clean.locale !== null) {
+            if (
+              typeof clean.locale !== 'string' ||
+              clean.locale.length > 64 ||
+              CONTROL_CHAR_RE.test(clean.locale) ||
+              !LOCALE_TAG_RE.test(clean.locale.trim())
+            ) {
+              throw makeHostError('invalid_params', 'Invalid locale');
+            }
+            reqLocale = effectiveLocale(this.prefs.languageSetting, clean.locale.trim());
+          }
+        }
+        const candidates = await this.collectLocalRepoCandidates();
+        const repos = await this.gitRepoRegistry.refreshFromCandidates(candidates);
+        return {
+          repos: this.prefs.redactMode ? redactGitRepoSummaries(repos, reqLocale) : repos,
+        };
+      }),
+
+      this.orca.panels.handle('botWorld.getGitHistoryReel', async (input) => {
+        let parsed;
+        try {
+          parsed = validateGetGitHistoryReelInput(input);
+        } catch (err) {
+          if (err instanceof GitHistoryError) {
+            throw makeHostError('invalid_params', err.message);
+          }
+          throw makeHostError('invalid_params', 'Invalid git history request');
+        }
+        if (!this.gitRepoRegistry.getVerifiedRepo(parsed.repoId)) {
+          throw makeHostError('invalid_params', 'Unknown or disallowed repoId');
+        }
+        const reqLocale = parsed.locale
+          ? effectiveLocale(this.prefs.languageSetting, parsed.locale)
+          : this.currentLocale();
+        let reel;
+        try {
+          reel = await this.gitRepoRegistry.getHistoryReel({
+            repoId: parsed.repoId,
+            rangeDays: parsed.rangeDays,
+            maxCommits: parsed.maxCommits,
+            nowMs: this.nowMs(),
+            locale: reqLocale,
+          });
+        } catch (err) {
+          if (err instanceof GitHistoryError && err.code === 'invalid_params') {
+            throw makeHostError('invalid_params', err.message);
+          }
+          const safeError =
+            err instanceof Error
+              ? summarizeGitFailure(err.message)
+              : 'Failed to read git history';
+          throw makeHostError('action_failed', safeError);
+        }
+        if (this.prefs.redactMode) {
+          reel = redactGitTheaterReel(
+            reel,
+            reqLocale,
+            this.gitRepoRegistry.getRepoIndex1Based(parsed.repoId)
+          );
+        }
+        let trimmed = false;
+        while (utf8ByteLength(reel) > MAX_IPC_PAYLOAD_BYTES && reel.commits.length > 0) {
+          reel.commits.shift();
+          trimmed = true;
+        }
+        if (trimmed) {
+          reel.totalCommits = reel.commits.length;
+          reel.totalInsertions = reel.commits.reduce((sum, c) => sum + c.insertions, 0);
+          reel.totalDeletions = reel.commits.reduce((sum, c) => sum + c.deletions, 0);
+        }
+        return reel;
       }),
 
       this.orca.events.on('agent.status.changed', () => {

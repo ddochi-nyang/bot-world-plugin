@@ -44,6 +44,10 @@ import {
   type BossRaidStepInput,
   paintBossRaidLayer,
 } from './boss-raid.ts';
+import {
+  type GitTheaterEngine,
+  paintGitTheaterLayer,
+} from './git-theater.ts';
 import { validateCustomAssetDataUrl } from './creator-studio.ts';
 import { tStrings } from './i18n.ts';
 import {
@@ -364,6 +368,7 @@ export type StageRenderInput = {
   stuckAlerts?: readonly StuckAlert[];
   bossRaid?: BossRaidEngine | null;
   bossRaidSuppressed?: boolean;
+  gitTheater?: GitTheaterEngine | null;
 };
 
 type HitBox = {
@@ -730,6 +735,13 @@ export class StageRenderer {
     }
     if (input.showCollabNetwork && input.collabEdges && input.collabEdges.length > 0) return true;
     if (input.bossRaid && !input.bossRaidSuppressed && input.bossRaid.hasActiveVisuals()) return true;
+    if (
+      input.gitTheater &&
+      input.gitTheater.isActive() &&
+      (input.gitTheater.isPlaying() || input.gitTheater.hasActiveVisuals())
+    ) {
+      return true;
+    }
     if (input.motion.hasActiveAnimations()) return true;
     if (input.timelapseActive) return false;
     if (input.replay?.isReplay) {
@@ -781,6 +793,9 @@ export class StageRenderer {
       if (input.bossRaid && !input.bossRaidSuppressed) {
         input.bossRaid.stepVisuals(dtSecs);
       }
+      if (input.gitTheater?.isActive()) {
+        input.gitTheater.stepVisuals(dtSecs);
+      }
     }
     if (this.camera.followBotId) {
       this.syncFollowTarget(input, theme.designSize, false);
@@ -791,6 +806,7 @@ export class StageRenderer {
       !camStillAnimating &&
       weatherKind === 'clear' &&
       !(input.showCollabNetwork && input.collabEdges && input.collabEdges.length > 0) &&
+      !(input.gitTheater?.isActive() && (input.gitTheater.isPlaying() || input.gitTheater.hasActiveVisuals())) &&
       !isPlayingReplay &&
       !this.hasActiveOrWorkingAnimation(input) &&
       this.hasAmbientIdleAnimation(input);
@@ -2060,7 +2076,7 @@ export class StageRenderer {
     }
     this.hitBoxes = nextHitBoxes;
 
-    // Boss Raid & Pomodoro Co-op layer (suppressed during replay, terrarium, broadcast, or bossRaidMode=off)
+    // Boss Raid & Pomodoro Co-op layer (suppressed during replay, terrarium, broadcast, theater, or bossRaidMode=off)
     if (input.bossRaid && !input.bossRaidSuppressed) {
       this.bossHitRect = paintBossRaidLayer(ctx, vt, theme, input.bossRaid, {
         locale,
@@ -2069,6 +2085,14 @@ export class StageRenderer {
       });
     } else {
       this.bossHitRect = null;
+    }
+
+    // Git History Theater cinema overlay (strictly vector)
+    if (input.gitTheater?.isActive()) {
+      paintGitTheaterLayer(ctx, vt, theme, input.gitTheater, {
+        locale,
+        redactMode,
+      });
     }
 
     // Speech bubbles (max 5, obstacle-avoiding)

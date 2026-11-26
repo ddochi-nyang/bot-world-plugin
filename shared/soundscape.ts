@@ -13,7 +13,9 @@ export type SoundCueKind =
   | 'handoff'
   | 'raid_spawn'
   | 'raid_hit'
-  | 'raid_victory';
+  | 'raid_victory'
+  | 'theater_commit'
+  | 'theater_milestone';
 export type AmbientProfile = 'rain' | 'cafe_hum' | 'night_breeze';
 
 export const MAX_ACTIVE_CUES = 16;
@@ -26,6 +28,8 @@ export const DEFAULT_CUE_COOLDOWNS_MS: Readonly<Record<SoundCueKind, number>> = 
   raid_spawn: 4000,
   raid_hit: 180,
   raid_victory: 3000,
+  theater_commit: 220,
+  theater_milestone: 1200,
 });
 
 export function classifyEventSoundCue(event: WorldEvent): SoundCueKind | null {
@@ -395,6 +399,18 @@ export class SoundscapeEngine {
         this.scheduleTone(ctx, 659.25, 0.09, 0.13, 0.08, 'sine');
         this.scheduleTone(ctx, 783.99, 0.18, 0.14, 0.085, 'sine');
         this.scheduleTone(ctx, 1046.5, 0.27, 0.28, 0.09, 'triangle');
+        break;
+      case 'theater_commit':
+        // Crisp projector/typewriter chime (E5 -> A5)
+        this.scheduleTone(ctx, 659.25, 0, 0.06, 0.065, 'triangle');
+        this.scheduleTone(ctx, 880.0, 0.035, 0.08, 0.055, 'sine');
+        break;
+      case 'theater_milestone':
+        // Warm theater milestone arpeggio (C5 -> E5 -> G5 -> B5)
+        this.scheduleTone(ctx, 523.25, 0, 0.12, 0.075, 'sine');
+        this.scheduleTone(ctx, 659.25, 0.075, 0.12, 0.075, 'sine');
+        this.scheduleTone(ctx, 783.99, 0.15, 0.14, 0.08, 'sine');
+        this.scheduleTone(ctx, 987.77, 0.225, 0.22, 0.08, 'triangle');
         break;
       case 'handoff': {
         // Ultra-subtle short filtered noise brush (~45ms, gain ~0.04)

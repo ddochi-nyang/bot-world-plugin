@@ -248,14 +248,16 @@ export function applyRaidOutcomeToStats(
   };
 }
 
-export type RaidSuppressionReason = 'off' | 'replay' | 'pet' | 'broadcast';
+export type RaidSuppressionReason = 'off' | 'replay' | 'pet' | 'broadcast' | 'theater';
 
 export function resolveRaidSuppressionReason(opts: {
   isReplay?: boolean;
   viewMode?: ViewMode;
   bossRaidMode?: BossRaidMode;
+  isTheater?: boolean;
 }): RaidSuppressionReason | null {
   if (opts.bossRaidMode === 'off') return 'off';
+  if (opts.isTheater) return 'theater';
   if (opts.isReplay) return 'replay';
   if (opts.viewMode === 'pet') return 'pet';
   if (opts.viewMode === 'broadcast') return 'broadcast';
@@ -441,6 +443,7 @@ export type BossRaidStepInput = {
   bossRaidMode?: BossRaidMode;
   viewMode?: ViewMode;
   isReplay?: boolean;
+  isTheater?: boolean;
   demoMode?: boolean;
   currentStreak?: number;
   nowMs?: number;
@@ -657,6 +660,7 @@ export class BossRaidEngine {
       bossRaidMode?: BossRaidMode;
       viewMode?: ViewMode;
       isReplay?: boolean;
+      isTheater?: boolean;
       onSoundCue?: RaidSoundCallback;
     }
   ): void {
@@ -674,6 +678,7 @@ export class BossRaidEngine {
       bossRaidMode: opts?.bossRaidMode,
       viewMode: opts?.viewMode,
       isReplay: opts?.isReplay,
+      isTheater: opts?.isTheater,
     });
     if (!suppression) {
       const kind: BossKind = (opts?.currentStreak ?? 0) >= 2 ? 'ci_wyvern' : 'sprint_titan';
@@ -732,6 +737,7 @@ export class BossRaidEngine {
       bossRaidMode?: BossRaidMode;
       viewMode?: ViewMode;
       isReplay?: boolean;
+      isTheater?: boolean;
       onSoundCue?: RaidSoundCallback;
     }
   ): BossKind | null {
@@ -739,6 +745,7 @@ export class BossRaidEngine {
       bossRaidMode: opts?.bossRaidMode,
       viewMode: opts?.viewMode,
       isReplay: opts?.isReplay,
+      isTheater: opts?.isTheater,
     });
     if (suppression || this.isPomodoroActive() || this.activeBoss?.source === 'threat') {
       return null;
@@ -782,6 +789,7 @@ export class BossRaidEngine {
       isReplay: input.isReplay,
       viewMode: input.viewMode,
       bossRaidMode: input.bossRaidMode,
+      isTheater: input.isTheater,
     });
     this.suppressionReason = suppression;
     this.suppressed = suppression !== null;
@@ -1229,7 +1237,9 @@ export class BossRaidEngine {
           this.spawnVictoryParticles(bossPos);
           this.activeBoss = null;
         }
-        ctx?.onSoundCue?.('raid_victory');
+        if (!this.suppressed) {
+          ctx?.onSoundCue?.('raid_victory');
+        }
         const damageToRecord = this.consumePendingDamage();
         ctx?.onOutcome?.({
           pomodoroCompleted: true,
